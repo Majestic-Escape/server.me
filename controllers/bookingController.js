@@ -13,6 +13,8 @@ const getUnavailableDates = require("../services/getUnavailableDates");
 const { blockedDates } = require("../services/blockedDates");
 const { parseMDYToUTC, parseMDYToUTCBooking } = require("../utils/convertDate");
 const HostPayout = require("../models/HostPayout");
+const { changeToUpperCase } = require("../utils/convertToUpperCase");
+const { paramsToObject } = require("../utils/paramsObject");
 const TOKEN_EXPIRATION = "14d";
 const mongoConnectionString = process.env.DB_URI;
 const baseUrl = process.env.NEXTAUTH_URL;
@@ -430,14 +432,34 @@ exports.modifyBooking = async (req, res) => {
 exports.updateFlag = async (req, res) => {
   try {
     const { id, email } = req.query;
-    const data = await Booking.findByIdAndUpdate(id, { flag: true });
+    const data = await Booking.findByIdAndUpdate(id, { flag: true }).populate(
+      "hostId propertyId userId payment"
+    );
     if (!data) {
       return res
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
     console.log(email);
-    const params = { firstName: "Ad" };
+    const params = paramsToObject(userName, lastName, data);
+    // const params = {
+    //   userName: userName,
+    //   hostName: hostName,
+    //   hostEmail: data.hostId.email,
+    //   hostContact: data.hostId.phoneNumber,
+    //   guestEmail: data.userId.email,
+    //   guestContact: data.userId.phoneNumber,
+    //   bookingId: data._id,
+    //   from: new Date(data.checkIn).toLocaleDateString(),
+    //   to: new Date(data.checkOut).toLocaleDateString(),
+    //   checkInTime: changeTime(data.propertyId.checkinTime),
+    //   checkOutTime: changeTime(data.propertyId.checkoutTime),
+    //   propertyTitle: data.propertyId.title,
+    //   adults: data.adults,
+    //   children: data.children,
+    //   amount: data.price,
+    //   paymentId: data.payment.paymentId,
+    // };
     await sendEmail(email, 39, params);
     res.status(200).json({ success: true, data: data });
   } catch (error) {
@@ -966,7 +988,7 @@ exports.cancelBooking = async (req, res) => {
     const booking = await Booking.findByIdAndUpdate(bookingId, {
       status: "rejected",
     });
-    const params = { userName: userName, hostName: hostName };
+    const params = paramsToObject(userName, hostName, booking);
     if (!booking)
       return res
         .status(404)
@@ -1014,7 +1036,7 @@ exports.cancelBooking = async (req, res) => {
 
     const adminEmail = "majesticescape.in@gmail.com";
     await sendEmail(userEmail, 11, params);
-    // await sendEmail(adminEmail, 16, params);
+    await sendEmail(adminEmail, 16, params);
     await sendEmail(hostEmail, 17, params);
     res.status(200).json({ success: true, data: booking });
   } catch (error) {
@@ -1028,19 +1050,23 @@ exports.cancelAdminBooking = async (req, res) => {
     console.log("testc", bookingId);
     const booking = await Booking.findByIdAndUpdate(bookingId, {
       status: "cancelled",
-    });
+    }).populate("userId hostId propertyId payment");
     if (!booking)
       return res
         .status(404)
         .json({ success: false, message: "Booking not found" });
-    const data = await Booking.findById(bookingId).populate("userId hostId");
-    if (!data) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User data not found" });
-    }
-    const userName = data?.userId?.firstName + " " + data?.userId?.lastName;
-    const hostName = data?.hostId?.firstName + " " + data?.hostId?.lastName;
+    // const data = await Booking.findById(bookingId).populate("userId hostId");
+    // if (!data) {
+    //   return res
+    //     .status(404)
+    //     .json({ success: false, message: "User data not found" });
+    // }
+    const userName = changeToUpperCase(
+      booking?.userId?.firstName + " " + booking?.userId?.lastName
+    );
+    const hostName = changeToUpperCase(
+      booking?.hostId?.firstName + " " + booking?.hostId?.lastName
+    );
 
     const instance = new Razorpay({ key_id: key, key_secret: secret });
     let refundSuccessful = false;
@@ -1081,14 +1107,12 @@ exports.cancelAdminBooking = async (req, res) => {
       { new: true }
     );
     await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
-    const params = { userName: userName, hostName: hostName };
+    const params = paramsToObject(userName, hostName, booking);
 
-    const userEmail = data?.userId?.email;
-    const hostEmail = data?.hostId?.email;
-    const adminEmail = "majesticescape.in@gmail.com";
-    await sendEmail(userEmail, 32, params);
-    // await sendEmail(adminEmail, 31, params);
-    await sendEmail(hostEmail, 33, params);
+    const adminEmail = "admin@majesticescape.in";
+    await sendEmail(booking.userId.email, 32, params);
+    await sendEmail(adminEmail, 31, params);
+    await sendEmail(booking.hostId.email, 33, params);
     res.status(200).json({
       success: true,
       message: refundSuccessful
@@ -1266,12 +1290,14 @@ exports.terminateBooking = async (req, res) => {
     const id = new ObjectId(`${bookingId}`);
     const booking = await Booking.findByIdAndUpdate(bookingId, {
       status: "cancelled",
-    });
-    const params = { userName: userName, hostName: hostName };
+    }).populate("userId hostId propertyId payment");
+
     if (!booking)
       return res
         .status(404)
         .json({ success: false, message: "Booking not found" });
+
+    const params = paramsToObject(userName, hostName, booking);
 
     const instance = new Razorpay({ key_id: key, key_secret: secret });
 
@@ -1314,11 +1340,11 @@ exports.terminateBooking = async (req, res) => {
       { paymentType: "refunded" }
     );
     await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
-    const adminEmail = "majesticescape.in@gmail.com";
+    const adminEmail = "admin@majesticescape.in";
 
     await sendEmail(userEmail, 13, params);
     await sendEmail(hostEmail, 14, params);
-    // await sendEmail(adminEmail, 15, params);
+    await sendEmail(adminEmail, 15, params);
 
     res.status(200).json({ success: true, data: booking });
   } catch (err) {
@@ -1442,21 +1468,21 @@ exports.terminateUserBooking = async (req, res) => {
 
     const booking = await Booking.findByIdAndUpdate(bookingId, {
       status: "cancelled",
-    });
+    }).populate("userId hostId propertyId payment");
     if (!booking) {
       return res
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
 
-    const bookingData = await Booking.findById(bookingId);
-    if (!bookingData) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Check Out date not found" });
-    }
+    // const bookingData = await Booking.findById(bookingId);
+    // if (!bookingData) {
+    //   return res
+    //     .status(404)
+    //     .json({ success: false, message: "Check Out date not found" });
+    // }
 
-    const futureDate = new Date(bookingData?.checkIn);
+    const futureDate = new Date(booking?.checkIn);
     const now = new Date();
     const differenceInSeconds = (futureDate - now) / 1000;
 
@@ -1465,9 +1491,9 @@ exports.terminateUserBooking = async (req, res) => {
     let refundSuccessful = false;
 
     if (
-      (bookingData.cancellationPolicy === "moderate" &&
+      (booking.cancellationPolicy === "moderate" &&
         differenceInSeconds >= moderate) ||
-      (bookingData.cancellationPolicy === "flexible" &&
+      (booking.cancellationPolicy === "flexible" &&
         differenceInSeconds >= flexible)
     ) {
       const paymentData = await Payment.findOneAndUpdate(
@@ -1505,11 +1531,14 @@ exports.terminateUserBooking = async (req, res) => {
       );
       await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
     }
+    const params = paramsToObject(userName, hostName, booking);
 
+    const adminEmail = "admin@majesticescape.in";
     // Email Notifications
-    const params = { userName, hostName };
+
     await sendEmail(userEmail, 22, params);
     await sendEmail(hostEmail, 20, params);
+    await sendEmail(adminEmail, 21, params);
 
     res.status(200).json({
       success: true,
@@ -1649,21 +1678,23 @@ exports.confirmBooking = async (req, res) => {
     // await sendOTPEmail(recipient, firstName, otp);
 
     // var secsFromNow = findSecondsDifference(new Date(), futureDate);
-    const params = { userName: userName, hostName: hostName };
+
     const booking = await Booking.findByIdAndUpdate(bookingId, {
       status: "confirmed",
-    });
+    }).populate("propertyId payment hostId userId");
 
     if (!booking) {
       return res
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
-    const adminEmail = "majesticescape.in@gmail.com";
+    const params = paramsToObject(userName, hostName, booking);
+
+    const adminEmail = "admin@majesticescape.in";
 
     await sendEmail(userEmail, 10, params);
     await sendEmail(hostEmail, 19, params);
-    // await sendEmail(adminEmail, 18, params);
+    await sendEmail(adminEmail, 18, params);
     // (async function () {
     //   try {
     //     await agenda.start();
@@ -1758,11 +1789,13 @@ exports.confirmInstantBooking = async (req, res) => {
 // Mark booking as paid
 exports.markBookingAsPaid = async (req, res) => {
   try {
-    const { bookingId, hostEmail, userId, manual } = req.body;
+    const { bookingId, hostEmail, userId, manual, payment } = req.body;
 
-    const booking = await Booking.findByIdAndUpdate(bookingId, {
-      paymentStatus: "paid",
-    });
+    const booking = await Booking.findByIdAndUpdate(
+      bookingId,
+      { paymentStatus: "paid", payment: payment },
+      { new: true }
+    ).populate("userId hostId propertyId");
 
     if (!booking)
       return res
@@ -1776,19 +1809,37 @@ exports.markBookingAsPaid = async (req, res) => {
         .json({ success: false, message: "User not found" });
 
     const userEmail = await data.email;
+    console.log("inside the mark");
 
-    const adminEmail = "majesticescape.in@gmail.com";
+    const adminEmail = "admin@majesticescape.in";
 
+    console.log("inside the mark2");
+
+    const bank = await Payment.findOne({ bookingId: booking._id });
+    if (!bank) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Payment not found" });
+    }
+    const userName = changeToUpperCase(
+      booking.userId.firstName + " " + booking.userId.lastName
+    );
+    const hostName = changeToUpperCase(
+      booking.hostId.firstName + " " + booking.hostId.lastName
+    );
+    const params = paramsToObject(userName, hostName, booking);
+
+    console.log("inside the mark3");
     if (manual) {
       await sendEmail(hostEmail, 8);
-
-      // await sendEmail("majesticescape.in@gmail.com", 9);
+      await sendEmail(hostEmail, 42, params);
+      await sendEmail("majesticescape.in@gmail.com", 9);
       return res.status(200).json({ success: true, data: booking });
     }
-
-    await sendEmail(userEmail, 35);
-    await sendEmail(hostEmail, 34);
-    // await sendEmail(adminEmail, 36);
+    console.log("inside the mark4");
+    await sendEmail(booking.userId.email, 35, params);
+    await sendEmail(hostEmail, 34, params);
+    await sendEmail(adminEmail, 36, params);
     res.status(200).json({ success: true, data: booking });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });

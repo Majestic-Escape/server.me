@@ -35,7 +35,7 @@ const gstInfoSchema = {
 
 const acceptedTermsSchema = {
   general: { type: Boolean, default: false },
-  goa: { type: Boolean, default: false },
+  // goa: { type: Boolean, default: false },
 };
 
 const kycHostSchema = new mongoose.Schema(

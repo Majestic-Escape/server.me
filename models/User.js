@@ -12,6 +12,8 @@ const userSchema = new mongoose.Schema(
       unique: true,
       required: true,
     },
+    about: { type: String },
+    languages: { type: [String], default: [] },
     isVerified: { type: Boolean, default: false },
     otp: {
       value: { type: String },
@@ -83,6 +85,8 @@ const userSchema = new mongoose.Schema(
     updatedAt: { type: Date, default: Date.now },
     averageRating: { type: Number, default: 0 },
     reviewCount: { type: Number, default: 0 },
+    avgPropertyRating: { type: Number, default: 0 },
+    propertyReviewCount: { type: Number, default: 0 },
     wishlist: [
       {
         propertyId: { type: mongoose.Schema.Types.ObjectId, ref: "Property" },

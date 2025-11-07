@@ -9,6 +9,7 @@ const {
 } = require("../utils/data");
 const User = require("../models/User");
 const { default: mongoose } = require("mongoose");
+const { changeToUpperCase } = require("../utils/convertToUpperCase");
 
 // exports.getCustomSearch = async (req, res) => {
 //   try {
@@ -602,24 +603,32 @@ exports.approveListing = async (req, res) => {
     console.log("entered in new op");
     const { id } = req.params; // listing ID
 
-    const property = await ListingProperty.findById(id);
-    const host = await User.findById(property?.host);
-    console.log("new riv", host);
+    // const property = await ListingProperty.findById(id);
+    // const host = await User.findById(property?.host);
+
     const updatedListing = await ListingProperty.findByIdAndUpdate(
       id,
       { status: "active" },
       { new: true }
-    );
+    ).populate("host");
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
     }
 
-    const hostName = host?.firstName + " " + host?.lastName;
-    const params = { hostName: hostName };
-    const adminEmail = "majesticescape.in@gmail.com";
-    await sendEmail(host?.email, 25, params);
-    // await sendEmail(adminEmail, 26, params);
-
+    const hostName =
+      updatedListing.host.firstName + " " + updatedListing.host.lastName;
+    const params = {
+      hostName: hostName,
+      propertyId: id,
+      propertyTitle: updatedListing.title,
+      createdAt: new Date().toLocaleDateString(),
+      state: updatedListing.address.state,
+      city: updatedListing.address.city,
+    };
+    const adminEmail = "admin@majesticescape.in";
+    await sendEmail(updatedListing.hostEmail, 25, params);
+    await sendEmail(adminEmail, 26, params);
+    console.log("Approve Listing");
     return res.status(200).json({
       message: "Listing approved successfully",
       listing: updatedListing,
@@ -645,16 +654,24 @@ exports.deListing = async (req, res) => {
       id,
       { status: "inactive" },
       { new: true }
-    );
+    ).populate("host");
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
     }
 
     const hostName = host?.firstName + " " + host?.lastName;
-    const params = { hostName: hostName };
-    const adminEmail = "majesticescape.in@gmail.com";
+    const params = {
+      hostName: hostName,
+      propertyId: updatedListing._id,
+      city: updatedListing.address.city,
+      state: updatedListing.state,
+      delistDate: new Date().toLocaleDateString(),
+      hostEmail: updatedListing.hostEmail,
+      hostContact: updatedListing.host.phoneNumber,
+    };
+    const adminEmail = "admin@majesticescape.in";
     await sendEmail(host?.email, 27, params);
-    // await sendEmail(adminEmail, 28, params);
+    await sendEmail(adminEmail, 28, params);
 
     return res.status(200).json({
       message: "Listing approved successfully",
@@ -790,21 +807,32 @@ exports.deleteProperty = async (req, res) => {
   try {
     const { id } = req.params; // listing ID
 
-    const propertyData = await ListingProperty.findById(id);
-    const host = await User.findById(propertyData?.host);
+    // const propertyData = await ListingProperty.findById(id);
+    // const host = await User.findById(propertyData?.host);
 
-    const property = await ListingProperty.findByIdAndDelete(req.params.id);
+    const property = await ListingProperty.findByIdAndDelete(
+      req.params.id
+    ).populate("host");
     if (!property) {
       console.log("deleteProperty", "No property found");
 
       return res.status(404).json({ message: "Property not found" });
     }
 
-    const hostName = host?.firstName + " " + host?.lastName;
-    const params = { hostName: hostName };
-    const adminEmail = "majesticescape.in@gmail.com";
-    await sendEmail(host.email, 23, params);
-    // await sendEmail(adminEmail, 24, params);
+    const hostName = changeToUpperCase(
+      property.host.firstName + " " + property.host.lastName
+    );
+    const params = {
+      hostName: hostName,
+      propertyId: property._id,
+      propertyTitle: property.title,
+      city: property.address.city,
+      state: property.address.state,
+      deleteDate: new Date().toLocaleDateString(),
+    };
+    const adminEmail = "admin@majesticescape.in";
+    await sendEmail(host.email, 29, params);
+    await sendEmail(adminEmail, 44, params);
 
     const hostId = await res
       .status(200)
@@ -830,9 +858,9 @@ exports.deleteHostProperty = async (req, res) => {
 
     const hostName = host?.firstName + " " + host?.lastName;
     const params = { hostName: hostName };
-    const adminEmail = "majesticescape.in@gmail.com";
+    const adminEmail = "admin@majesticescape.in";
     await sendEmail(host.email, 29, params);
-    // await sendEmail(adminEmail, 30, params);
+    await sendEmail(adminEmail, 44, params);
 
     const hostId = await res
       .status(200)

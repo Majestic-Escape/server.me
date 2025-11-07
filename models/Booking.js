@@ -9,6 +9,10 @@ const bookingSchema = new mongoose.Schema({
     ref: "ListingProperty",
     required: true,
   },
+  payment: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Payment",
+  },
   hostId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   checkIn: { type: Date, required: true },
   checkOut: { type: Date, required: true },

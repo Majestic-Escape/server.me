@@ -7,6 +7,7 @@ const mongoose = require("mongoose");
 const HostReview = require("../models/HostReview");
 const User = require("../models/User");
 const { sendEmail } = require("../utils/sendEmail");
+const { changeToUpperCase } = require("../utils/convertToUpperCase");
 
 // exports.submitReview = async (req, res) => {
 //   try {
@@ -221,7 +222,9 @@ exports.submitHostReview = async (req, res) => {
     }
 
     // 1) Find booking
-    const booking = await Booking.findById(bookingId);
+    const booking = await Booking.findById(bookingId).populate(
+      "hostId propertyId"
+    );
     if (!booking) {
       return res
         .status(404)
@@ -283,7 +286,18 @@ exports.submitHostReview = async (req, res) => {
     // 5) Mark booking as reviewed (optional, if model supports)
     booking.hostReviewed = true;
     await booking.save();
-
+    const hostName = changeToUpperCase(
+      booking.hostId.firstName + " " + booking.hostId.lastName
+    );
+    const userName = changeToUpperCase(
+      booking.userId.firstName + " " + booking.userId.lastName
+    );
+    const params = {
+      hostName: hostName,
+      userName: userName,
+      propertyTitle: booking.propertyId.title,
+    };
+    await sendEmail(booking.hostId.email, 43, params);
     // 6) Respond with created review and updated host
     return res.status(201).json({
       success: true,
@@ -412,14 +426,32 @@ exports.updateReview = async (req, res) => {
       { bookingId: new mongoose.Types.ObjectId(bookingId) },
       updateFields,
       { new: true } // return updated review
-    );
+    ).populate("user bookingId property hostId");
 
     if (!review) {
       return res
         .status(404)
         .json({ success: false, message: "Review not found" });
     }
-    const params = { firstName: "Ad" };
+    const params = {
+      userName: changeToUpperCase(
+        review.user.firstName + " " + review.user.lastName
+      ),
+      bookingId: review.bookingId._id,
+      from: new Date(review.bookingId.checkIn).toLocaleDateString(),
+      to: new Date(review.bookingId.checkOut).toLocaleDateString(),
+      userId: new Date(review.user._id),
+      propertyTitle: review.property.title,
+      rating: review.rating,
+      review: review.content,
+      hostName: changeToUpperCase(
+        review.hostId.firstName + " " + review.hostId.lastName
+      ),
+      guestEmail: review.user.email,
+      guestContact: review.user.phoneNumber,
+      hostEmail: review.hostId.email,
+      hostContact: review.hostId.phoneNumber,
+    };
     if (status == "accept") {
       await sendEmail(property.hostEmail, 37, params);
     } else if (status == "reject") {

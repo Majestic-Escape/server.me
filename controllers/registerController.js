@@ -87,9 +87,9 @@ const requestOTP = async (req, res) => {
 
         // Save new user and send OTP
         await user.save();
-
+        const name = user.firstName + " " + user.lastName;
         try {
-          await sendOTP(email, otp, user.firstName);
+          await sendOTP(email, otp, name);
         } catch (error) {
           console.error("Error sending OTP:", error);
           return res.status(500).json({
@@ -247,7 +247,8 @@ const verifyOTP = async (req, res) => {
 
     // Send welcome email
     try {
-      await sendWelcomeMail(user.email, user.firstName);
+      const name = user.firstName + " " + user.lastName;
+      await sendWelcomeMail(user.email, name);
     } catch (error) {
       console.error("Error sending welcome email:", error);
     }

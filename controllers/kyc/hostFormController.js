@@ -3,6 +3,8 @@ const KycLogs = require("../../models/KycLogs");
 const kycHostForm = require("../../models/KycHostForm");
 const User = require("../../models/User");
 const mongoose = require("mongoose");
+const { changeToUpperCase } = require("../../utils/convertToUpperCase");
+const { sendEmail } = require("../../utils/sendEmail");
 require("dotenv").config();
 
 exports.createhostKycForm = async (req, res) => {
@@ -20,18 +22,31 @@ exports.updatehostKycForm = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const property = await kycHostForm.findOneAndUpdate(
-      { _id: id },
-      { $set: req.body },
-      { new: true, runValidators: true }
-    );
+    const property = await kycHostForm
+      .findOneAndUpdate(
+        { _id: id },
+        { $set: req.body },
+        { new: true, runValidators: true }
+      )
+      .populate("hostId");
 
     if (!property) {
       return res
         .status(404)
         .json({ message: "Property not found or unauthorized to update" });
     }
+    const adminEmail = "admin@majesticescape.in";
+    const params = {
+      hostName: changeToUpperCase(
+        property.hostId.firstName + " " + property.hostId.lastName
+      ),
+      hostEmail: property.hostId.email,
+      hostContact: property.hostId.email,
+      kycDate: new Date().toLocaleDateString(),
+    };
 
+    await sendEmail(adminEmail, 4, params);
+    await sendEmail(property.hostId.email, 45, params);
     res.status(200).json(property);
   } catch (error) {
     res.status(400).json({ message: error.message });

@@ -70,7 +70,8 @@ const requestOTP = async (req, res) => {
     };
     // Save user and send OTP
     await existingUser.save();
-    await sendOTP(email, otp, existingUser.firstName);
+    const name = existingUser.firstName + " " + existingUser.lastName;
+    await sendOTP(email, otp, name);
 
     return res.status(200).json({
       requestType: "LOGIN_OTP_REQUEST",

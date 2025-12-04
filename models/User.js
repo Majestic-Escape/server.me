@@ -12,6 +12,7 @@ const userSchema = new mongoose.Schema(
       unique: true,
       required: true,
     },
+    tokenVersion: { type: Number, default: 0 },
     about: { type: String },
     languages: { type: [String], default: [] },
     isVerified: { type: Boolean, default: false },
@@ -31,20 +32,27 @@ const userSchema = new mongoose.Schema(
     },
     bio: { type: String },
     role: { type: String, enum: ["user", "host", "admin"], default: "user" },
+    hostOffer: {
+      type: Boolean,
+    },
     status: {
       active: { type: Boolean, default: true },
       banned: { type: Boolean, default: false },
       bannedReason: { type: String },
     },
     kyc: {
-      govDoc: {
-        docType: { type: String, enum: ["pan", "voterId", "passport"] },
-        docInfo: { type: Object },
-      },
-      isVerified: { type: Boolean, default: false },
-      verifiedAt: { type: Date, default: Date.now },
-      verificationRequestId: { type: String },
+      type: Boolean,
+      default: false,
     },
+    // kyc: {
+    //   govDoc: {
+    //     docType: { type: String, enum: ["pan", "voterId", "passport"] },
+    //     docInfo: { type: Object },
+    //   },
+    //   isVerified: { type: Boolean, default: false },
+    //   verifiedAt: { type: Date, default: Date.now },
+    //   verificationRequestId: { type: String },
+    // },
     address: {
       street: String,
       city: String,

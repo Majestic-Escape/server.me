@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const hostController = require("../controllers/hostUserController");
-
+const authMiddleware = require("../middleware/authMiddleware");
 // Get all hosts (with pagination, filtering, and sorting)
 router.get("/", hostController.getAllHosts);
 
@@ -26,8 +26,9 @@ router.get("/report", hostController.generateReport);
 // Export hosts data
 router.get("/export", hostController.exportHosts);
 
+router.get("/single/:id", authMiddleware, hostController.getSingleHostById);
 // Get a single host by ID
-router.get("/:id", hostController.getHostById);
+router.get("/:id", authMiddleware, hostController.getHostById);
 
 // Update a host
 router.put("/:id", hostController.updateHost);

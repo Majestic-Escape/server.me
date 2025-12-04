@@ -20,9 +20,14 @@ router.get(
   bookingController.blockedDates
 );
 router.get(
-  "/analytics-filter",
+  "/admin/analytics-filter",
   authMiddleware,
   bookingController.getAllFilterBookings
+);
+router.get(
+  "/analytics-filter",
+  authMiddleware,
+  bookingController.getHostFilterBookings
 );
 
 router.get(

@@ -1,3 +1,4 @@
+require("dotenv").config();
 const User = require("../models/User");
 const { generateOTP, sendOTP } = require("../utils/otpUtils");
 const { sendWelcomeMail } = require("../utils/sendWelcomeMail");
@@ -72,13 +73,19 @@ const requestOTP = async (req, res) => {
       const otp = generateOTP();
       const otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
 
+      const offer = process.env.HOST_COMMISSION_OFFER.trim() === "true";
+
+      console.log("la famli", offer, typeof offer);
+      // let user;
       try {
+        // if (offer == "true") {
         const user = new User({
           firstName: capitalize(firstName),
           lastName: capitalize(lastName),
           email: email.toLowerCase(),
           phoneNumber,
           dob,
+          hostOffer: offer,
           otp: {
             value: otp,
             expiry: otpExpiry,
@@ -86,6 +93,22 @@ const requestOTP = async (req, res) => {
         });
 
         // Save new user and send OTP
+        // } else if (offer == "false") {
+        // user = new User({
+        //   firstName: capitalize(firstName),
+        //   lastName: capitalize(lastName),
+        //   email: email.toLowerCase(),
+        //   phoneNumber,
+        //   dob,
+        //   hostOffer: false,
+        //   otp: {
+        //     value: otp,
+        //     expiry: otpExpiry,
+        //   },
+        // });
+
+        // Save new user and send OTP
+        // }
         await user.save();
         const name = user.firstName + " " + user.lastName;
         try {

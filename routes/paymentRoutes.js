@@ -18,14 +18,14 @@ router.get("/payment/:id", paymentController.getPayment);
 
 router.get("/booking", paymentController.getPaymentByBooking);
 
-router.post(
-  "/payout/update",
-  express.raw({ type: "application/json" }),
-  paymentController.update
-);
+// router.post(
+//   "/payout/update",
+//   express.raw({ type: "application/json" }),
+//   paymentController.update
+// );
 
 router.post("/create-payout", paymentController.createPayout);
 
 // router.post("/payout", paymentController.payout);
-
+router.post("/schedule-cron", paymentController.schedulecron);
 module.exports = router;

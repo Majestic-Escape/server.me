@@ -24,7 +24,10 @@ const propertySchema = new mongoose.Schema({
     enum: ["self-check-in", "me", "family", "guests", "flatmates"],
     default: [],
   },
-
+  ban: {
+    type: Boolean,
+    default: false,
+  },
   guests: {
     type: Number,
     min: 1,
@@ -47,7 +50,10 @@ const propertySchema = new mongoose.Schema({
     min: 1,
     default: 1,
   },
-
+  delist: {
+    type: String,
+    enum: ["host", "admin"],
+  },
   photos: [String],
   address: {
     registrationNumber: String,

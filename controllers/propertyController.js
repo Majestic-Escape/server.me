@@ -302,6 +302,39 @@ exports.timing = async (req, res) => {
     res.status(400).json({ success: false, error: error.message });
   }
 };
+
+exports.getTiming = async (req, res) => {
+  try {
+    console.log("enetered the gettim");
+    const { propertyId } = req.params;
+
+    console.log("propertyId:", propertyId);
+    if (!propertyId || propertyId === "undefined") {
+      return res
+        .status(400)
+        .json({ success: false, message: "propertyId missing" });
+    }
+    if (!mongoose.Types.ObjectId.isValid(propertyId)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid propertyId" });
+    }
+    const property = await ListingProperty.findById(propertyId);
+    if (!property) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Property not found" });
+    }
+    console.log("dsajhjkhdsjkhdajhsdjhaj");
+    res.status(200).json({ success: true, data: property });
+  } catch (error) {
+    res.status(500).json({
+      message: "Failed to fetch properties time",
+      error: error.message,
+    });
+  }
+};
+
 exports.getAllStays = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -352,7 +385,8 @@ exports.getAllStays = async (req, res) => {
 };
 exports.getIdandName = async (req, res) => {
   try {
-    const filter = { status: "active" };
+    const hostId = req.params.id;
+    const filter = { status: "active", host: hostId };
     const data = await ListingProperty.find(filter);
 
     if (!data) {
@@ -605,15 +639,23 @@ exports.approveListing = async (req, res) => {
 
     // const property = await ListingProperty.findById(id);
     // const host = await User.findById(property?.host);
-
-    const updatedListing = await ListingProperty.findByIdAndUpdate(
-      id,
-      { status: "active" },
-      { new: true }
-    ).populate("host");
+    let updatedListing = await ListingProperty.findById(id).populate("host");
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
     }
+    if (updatedListing.delist == "host") {
+      return res.status(200).json({
+        message: "Listing approved successfully",
+        data: "hostDelist",
+      });
+    }
+    updatedListing.status = "active";
+
+    // const updatedListing = await ListingProperty.findByIdAndUpdate(
+    //   id,
+    //   { status: "active" },
+    //   { new: true }
+    // ).populate("host");
 
     const hostName =
       updatedListing.host.firstName + " " + updatedListing.host.lastName;
@@ -631,6 +673,58 @@ exports.approveListing = async (req, res) => {
     console.log("Approve Listing");
     return res.status(200).json({
       message: "Listing approved successfully",
+      data: updatedListing,
+    });
+  } catch (error) {
+    console.error("Error approving listing:", error);
+    return res.status(500).json({
+      message: "Failed to approve listing",
+      error: error.message,
+    });
+  }
+};
+exports.reactivate = async (req, res) => {
+  try {
+    console.log("entered in new op");
+    const { id } = req.params; // listing ID
+
+    // const property = await ListingProperty.findById(id);
+    // const host = await User.findById(property?.host);
+    let updatedListing = await ListingProperty.findById(id).populate("host");
+    if (!updatedListing) {
+      return res.status(404).json({ message: "Listing not found" });
+    }
+    if (updatedListing.delist == "admin") {
+      return res.status(200).json({
+        message: "Listing reactivation failed",
+        listing: "adminDelist",
+      });
+    }
+    // const updatedListing = await ListingProperty.findByIdAndUpdate(
+    //   id,
+    //   { status: "active", delist: "host" },
+    //   { new: true }
+    // ).populate("host");
+    // if (!updatedListing) {
+    //   return res.status(404).json({ message: "Listing not found" });
+    // }
+    updatedListing.status = "active";
+    const hostName =
+      updatedListing.host.firstName + " " + updatedListing.host.lastName;
+    const params = {
+      hostName: hostName,
+      propertyId: id,
+      propertyTitle: updatedListing.title,
+      createdAt: new Date().toLocaleDateString(),
+      state: updatedListing.address.state,
+      city: updatedListing.address.city,
+    };
+    const adminEmail = "admin@majesticescape.in";
+    // await sendEmail(updatedListing.hostEmail, 25, params);
+    // await sendEmail(adminEmail, 26, params);
+
+    return res.status(200).json({
+      message: "Listing reactivated successfully",
       listing: updatedListing,
     });
   } catch (error) {
@@ -641,46 +735,75 @@ exports.approveListing = async (req, res) => {
     });
   }
 };
-
 exports.deListing = async (req, res) => {
   try {
     console.log("entered in new op");
     const { id } = req.params; // listing ID
+    const { hostSide } = req.query;
 
-    const property = await ListingProperty.findById(id);
-    const host = await User.findById(property?.host);
-    console.log("new riv", host);
-    const updatedListing = await ListingProperty.findByIdAndUpdate(
-      id,
-      { status: "inactive" },
-      { new: true }
-    ).populate("host");
-    if (!updatedListing) {
-      return res.status(404).json({ message: "Listing not found" });
-    }
-
-    const hostName = host?.firstName + " " + host?.lastName;
-    const params = {
-      hostName: hostName,
-      propertyId: updatedListing._id,
-      city: updatedListing.address.city,
-      state: updatedListing.state,
-      delistDate: new Date().toLocaleDateString(),
-      hostEmail: updatedListing.hostEmail,
-      hostContact: updatedListing.host.phoneNumber,
-    };
     const adminEmail = "admin@majesticescape.in";
-    await sendEmail(host?.email, 27, params);
-    await sendEmail(adminEmail, 28, params);
+    if (hostSide && hostSide == "true") {
+      const updatedListing = await ListingProperty.findByIdAndUpdate(
+        id,
+        { status: "inactive", delist: "host" },
+        { new: true }
+      ).populate("host");
+      if (!updatedListing) {
+        return res.status(404).json({ message: "Listing not found" });
+      }
 
-    return res.status(200).json({
-      message: "Listing approved successfully",
-      listing: updatedListing,
-    });
+      const hostName =
+        updatedListing.host.firstName + " " + updatedListing.host.lastName;
+      const params = {
+        hostName: hostName,
+        propertyId: updatedListing._id,
+        city: updatedListing.address.city,
+        state: updatedListing.state,
+        delistDate: new Date().toLocaleDateString(),
+        hostEmail: updatedListing.hostEmail,
+        hostContact: updatedListing.host.phoneNumber,
+      };
+
+      await sendEmail(params.hostEmail, 29, params);
+      await sendEmail(adminEmail, 49, params);
+      return res.status(200).json({
+        sucess: true,
+        message: "Listing delisted successfully",
+        listing: updatedListing,
+      });
+    } else {
+      const updatedListing = await ListingProperty.findByIdAndUpdate(
+        id,
+        { status: "inactive", delist: "admin" },
+        { new: true }
+      ).populate("host");
+      if (!updatedListing) {
+        return res.status(404).json({ message: "Listing not found" });
+      }
+
+      const hostName =
+        updatedListing.host.firstName + " " + updatedListing.host.lastName;
+      const params = {
+        hostName: hostName,
+        propertyId: updatedListing._id,
+        city: updatedListing.address.city,
+        state: updatedListing.state,
+        delistDate: new Date().toLocaleDateString(),
+        hostEmail: updatedListing.hostEmail,
+        hostContact: updatedListing.host.phoneNumber,
+      };
+      await sendEmail(params.hostEmail, 27, params);
+      await sendEmail(adminEmail, 28, params);
+      return res.status(200).json({
+        sucess: true,
+        message: "Listing delisted successfully",
+        data: updatedListing,
+      });
+    }
   } catch (error) {
-    console.error("Error approving listing:", error);
+    console.error("Error approving delisting:", error);
     return res.status(500).json({
-      message: "Failed to approve listing",
+      message: "Failed to approve delisting",
       error: error.message,
     });
   }
@@ -803,72 +926,72 @@ exports.updateProperty = async (req, res) => {
   }
 };
 
-exports.deleteProperty = async (req, res) => {
-  try {
-    const { id } = req.params; // listing ID
+// exports.deleteProperty = async (req, res) => {
+//   try {
+//     const { id } = req.params; // listing ID
 
-    // const propertyData = await ListingProperty.findById(id);
-    // const host = await User.findById(propertyData?.host);
+//     // const propertyData = await ListingProperty.findById(id);
+//     // const host = await User.findById(propertyData?.host);
 
-    const property = await ListingProperty.findByIdAndDelete(
-      req.params.id
-    ).populate("host");
-    if (!property) {
-      console.log("deleteProperty", "No property found");
+//     const property = await ListingProperty.findByIdAndDelete(
+//       req.params.id
+//     ).populate("host");
+//     if (!property) {
+//       console.log("deleteProperty", "No property found");
 
-      return res.status(404).json({ message: "Property not found" });
-    }
+//       return res.status(404).json({ message: "Property not found" });
+//     }
 
-    const hostName = changeToUpperCase(
-      property.host.firstName + " " + property.host.lastName
-    );
-    const params = {
-      hostName: hostName,
-      propertyId: property._id,
-      propertyTitle: property.title,
-      city: property.address.city,
-      state: property.address.state,
-      deleteDate: new Date().toLocaleDateString(),
-    };
-    const adminEmail = "admin@majesticescape.in";
-    await sendEmail(host.email, 29, params);
-    await sendEmail(adminEmail, 44, params);
+//     const hostName = changeToUpperCase(
+//       property.host.firstName + " " + property.host.lastName
+//     );
+//     const params = {
+//       hostName: hostName,
+//       propertyId: property._id,
+//       propertyTitle: property.title,
+//       city: property.address.city,
+//       state: property.address.state,
+//       deleteDate: new Date().toLocaleDateString(),
+//     };
+//     const adminEmail = "admin@majesticescape.in";
+//     await sendEmail(host.email, 29, params);
+//     await sendEmail(adminEmail, 44, params);
 
-    const hostId = await res
-      .status(200)
-      .json({ message: "Property deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+//     const hostId = await res
+//       .status(200)
+//       .json({ message: "Property deleted successfully" });
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
 
-exports.deleteHostProperty = async (req, res) => {
-  try {
-    const { id } = req.params; // listing ID
+// exports.deleteHostProperty = async (req, res) => {
+//   try {
+//     const { id } = req.params; // listing ID
 
-    const propertyData = await ListingProperty.findById(id);
-    const host = await User.findById(propertyData?.host);
+//     const propertyData = await ListingProperty.findById(id);
+//     const host = await User.findById(propertyData?.host);
 
-    const property = await ListingProperty.findByIdAndDelete(req.params.id);
-    if (!property) {
-      console.log("deleteProperty", "No property found");
+//     const property = await ListingProperty.findByIdAndDelete(req.params.id);
+//     if (!property) {
+//       console.log("deleteProperty", "No property found");
 
-      return res.status(404).json({ message: "Property not found" });
-    }
+//       return res.status(404).json({ message: "Property not found" });
+//     }
 
-    const hostName = host?.firstName + " " + host?.lastName;
-    const params = { hostName: hostName };
-    const adminEmail = "admin@majesticescape.in";
-    await sendEmail(host.email, 29, params);
-    await sendEmail(adminEmail, 44, params);
+//     const hostName = host?.firstName + " " + host?.lastName;
+//     const params = { hostName: hostName };
+//     const adminEmail = "admin@majesticescape.in";
+//     await sendEmail(host.email, 29, params);
+//     await sendEmail(adminEmail, 44, params);
 
-    const hostId = await res
-      .status(200)
-      .json({ message: "Property deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
+//     const hostId = await res
+//       .status(200)
+//       .json({ message: "Property deleted successfully" });
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
 
 exports.createListingProperty = async (req, res) => {
   try {

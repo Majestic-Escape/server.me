@@ -6,7 +6,7 @@ const authMiddleware = require("../middleware/authMiddleware");
 router.get("/", propertyController.getAllProperties);
 router.get("/static", propertyController.getAllStaticProperties);
 router.get("/dynamic", propertyController.getAllStays);
-router.get("/id-and-name", propertyController.getIdandName);
+router.get("/id-and-name/:id", propertyController.getIdandName);
 router.get(
   "/active/:id",
   authMiddleware,
@@ -44,18 +44,24 @@ router.patch(
 );
 
 router.patch("/admin/delist/:id", authMiddleware, propertyController.deListing);
-
-router.delete(
-  "/user-property/:id",
+router.patch("/host/delist/:id", authMiddleware, propertyController.deListing);
+router.patch(
+  "/host/reactivate/:id",
   authMiddleware,
-  propertyController.deleteProperty
+  propertyController.reactivate
 );
 
-router.delete(
-  "/host/user-property/:id",
-  authMiddleware,
-  propertyController.deleteHostProperty
-);
+// router.delete(
+//   "/user-property/:id",
+//   authMiddleware,
+//   propertyController.deleteProperty
+// );
+
+// router.delete(
+//   "/host/user-property/:id",
+//   authMiddleware,
+//   propertyController.deleteHostProperty
+// );
 
 router.post(
   "/create-listing-property",
@@ -72,6 +78,11 @@ router.get(
   authMiddleware,
   propertyController.getUserPropertyListings
 );
-
+router.get(
+  "/get-timings/:propertyId",
+  authMiddleware,
+  propertyController.getTiming
+);
 router.post("/timings", propertyController.timing);
+
 module.exports = router;

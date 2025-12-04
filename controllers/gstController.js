@@ -55,6 +55,8 @@ async function performPanCheck(requestData) {
       ? JSON.stringify(error.response.data.error, null, 2)
       : error.message;
     console.log("PAN not validated", errorMessage);
+
+    throw new Error(errorMessage);
   }
 }
 
@@ -63,7 +65,7 @@ exports.verifyGst = async (req, res) => {
     const { userId, panNumber, gstNumber } = req.body;
 
     if (!userId) return res.status(400).json({ error: "userId required" });
-
+    console.log("midway0");
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -77,28 +79,55 @@ exports.verifyGst = async (req, res) => {
         client_ref_num: statusClientRefNum,
       },
     });
-    const statusResult = await performPanCheck(statusLog.requestData);
-    if (statusResult.http_response_code != 200) {
+    let statusResult;
+    try {
+      statusResult = await performPanCheck(statusLog.requestData);
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: "Invalid PAN Number or Network Issue",
+      });
+    }
+    // const statusResult = await performPanCheck(statusLog.requestData);
+    if (statusResult?.http_response_code !== 200) {
       return res
         .status(404)
         .json({ success: false, message: "Business PAN not found " });
     }
+    console.log("midway1", statusResult);
     statusLog.status = "success";
     statusLog.responseData = statusResult;
     await statusLog.save();
 
-    const data = statusResult?.result?.gstinResList.filter(
-      (item) => item.gstin == gstNumber
-    );
-
-    if (!data) {
+    const list = statusResult?.result?.gstinResList;
+    if (!Array.isArray(list)) {
       return res.status(404).json({
         success: false,
-        message: "Gst associated with Business PAN not found ",
+        message: "No GST data found for this PAN",
       });
     }
 
-    if (data[0].authStatus != "Active") {
+    const filtered = list.filter((item) => item?.gstin == gstNumber);
+
+    if (!filtered?.length) {
+      return res.status(404).json({
+        success: false,
+        message: "GST associated with Business PAN not found",
+      });
+    }
+    const matched = filtered[0];
+    // const data = statusResult?.result?.gstinResList.filter(
+    //   (item) => item.gstin == gstNumber
+    // );
+    // console.log("midway2", data);
+    // if (!data) {
+    //   return res.status(404).json({
+    //     success: false,
+    //     message: "Gst associated with Business PAN not found ",
+    //   });
+    // }
+    // console.log("midway3", data[0]);
+    if (matched.authStatus != "Active") {
       return res.status(404).json({
         success: false,
         message: "Gst associated with Business PAN inactive ",
@@ -116,9 +145,17 @@ exports.verifyGst = async (req, res) => {
         client_ref_num: statusGstClientRefNum,
       },
     });
-
-    const statusGstResult = await performGstCheck(statusGstLog.requestData);
-    if (statusGstResult.http_response_code != 200) {
+    let statusGstResult;
+    try {
+      statusGstResult = await performGstCheck(statusGstLog.requestData);
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to verify GST",
+      });
+    }
+    // const statusGstResult = await performGstCheck(statusGstLog.requestData);
+    if (statusGstResult.http_response_code !== 200) {
       return res
         .status(404)
         .json({ success: false, message: "Gst data not found " });
@@ -129,11 +166,15 @@ exports.verifyGst = async (req, res) => {
 
     return res.json({ success: true, data: statusGstResult });
   } catch (error) {
-    console.error("verifyKYC error:", err.response?.data || err.message || err);
+    console.error(
+      "verifyGST error:",
+      error.response?.data || error.message || error
+    );
+
     return res.status(500).json({
       success: false,
-      message: err.message || "Server error",
-      details: err.response?.data,
+      message: "Incorrect PAN or GST Number" || "Server error",
+      details: error.response?.data,
     });
   }
 };

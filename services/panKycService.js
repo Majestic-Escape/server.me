@@ -139,20 +139,29 @@ exports.performOCR = async (imageInput, clientRefId, doc) => {
   }
 };
 exports.performStatusCheck = async (requestData, doc) => {
+  console.log("entered the status check", doc);
   try {
     if (doc == "pan") {
-      const response = await axios.post(
-        `${STATUS_API}/pan_basic`,
-        requestData,
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: getAuthHeader(),
-          },
-        }
-      );
-      return response.data;
+      console.log("entered the status check2");
+      try {
+        const response = await axios.post(
+          `${STATUS_API}/pan_basic`,
+          requestData,
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: getAuthHeader(),
+            },
+          }
+        );
+        console.log("Pan response", response);
+
+        return response.data;
+      } catch (error) {
+        console.log("Pan error check", error);
+      }
     } else if (doc == "voterId") {
+      console.log("entered the status check voter", requestData);
       const response = await axios.post(`${STATUS_API}/voter`, requestData, {
         headers: {
           "Content-Type": "application/json",
@@ -171,10 +180,16 @@ exports.performStatusCheck = async (requestData, doc) => {
     }
   } catch (error) {
     console.log("status check valida", error);
-    const errorMessage = error.response?.data
-      ? JSON.stringify(error.response.data.error, null, 2)
-      : error.message;
+    // const errorMessage = error.response?.data
+    //   ? JSON.stringify(error.response.data.error, null, 2)
+    //   : error.message;
+    const message =
+      error.response?.data?.error ||
+      error.response?.data?.message ||
+      error.message ||
+      "Status check failed";
 
+    throw new Error(message);
     // console.log(errorMessage);
   }
 };

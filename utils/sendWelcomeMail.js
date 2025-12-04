@@ -1,5 +1,6 @@
 // utils/otpUtils.js
 const axios = require("axios");
+const { sendEmail } = require("./sendEmail");
 require("dotenv").config();
 
 // Configuration constants
@@ -11,15 +12,48 @@ const DEFAULT_SENDER = {
 
 async function sendWelcomeMail(recipientEmail, firstName) {
   // Prepare the request payload for Brevo API
-  const requestPayload = {
-    sender: DEFAULT_SENDER,
-    to: [{ email: recipientEmail }],
-    templateId: parseInt(process.env.WELCOME_MAIL_TEMPLATE_ID),
-    params: {
-      firstName: firstName,
-      // otp: otp
-    },
-  };
+  const offer = process.env.HOST_COMMISSION_OFFER.trim() === "true";
+  let requestPayload;
+  let requestOfferPayload;
+  if (offer) {
+    requestPayload = {
+      sender: DEFAULT_SENDER,
+      to: [{ email: recipientEmail }],
+      templateId: parseInt(process.env.WELCOME_MAIL_TEMPLATE_ID),
+      params: {
+        firstName: firstName,
+        // header: process.env.WELCOME_MESSAGE_HEADER,
+        // body: process.env.WELCOME_MESSAGE_BODY,
+        // bottom: process.env.WELCOME_MESSAGE_BOTTOM,
+        // otp: otp
+      },
+    };
+    requestOfferPayload = {
+      sender: DEFAULT_SENDER,
+      to: [{ email: recipientEmail }],
+      templateId: parseInt(process.env.OFFER_MAIL_TEMPLATE_ID),
+      params: {
+        firstName: firstName,
+        // header: process.env.WELCOME_MESSAGE_HEADER,
+        // body: process.env.WELCOME_MESSAGE_BODY,
+        // bottom: process.env.WELCOME_MESSAGE_BOTTOM,
+        // otp: otp
+      },
+    };
+  } else {
+    requestPayload = {
+      sender: DEFAULT_SENDER,
+      to: [{ email: recipientEmail }],
+      templateId: parseInt(process.env.WELCOME_MAIL_TEMPLATE_ID),
+      params: {
+        firstName: firstName,
+        // header: process.env.WELCOME_MESSAGE_HEADER,
+        // body: process.env.WELCOME_MESSAGE_BODY,
+        // bottom: process.env.WELCOME_MESSAGE_BOTTOM,
+        // otp: otp
+      },
+    };
+  }
   try {
     // Make API request to Brevo
     const response = await axios.post(BREVO_API_URL, requestPayload, {
@@ -29,7 +63,15 @@ async function sendWelcomeMail(recipientEmail, firstName) {
         "content-type": "application/json",
       },
     });
-
+    if (offer) {
+      const offer = await axios.post(BREVO_API_URL, requestOfferPayload, {
+        headers: {
+          accept: "application/json",
+          "api-key": process.env.BREVO_API_KEY,
+          "content-type": "application/json",
+        },
+      });
+    }
     console.log("Email sent successfully:", {
       messageId: response.data.messageId,
       recipient: recipientEmail,

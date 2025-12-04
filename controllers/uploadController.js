@@ -15,6 +15,7 @@ exports.uploadImages = async (req, res) => {
         Key: `${Date.now()}-${file.originalname}`,
         Body: file.buffer,
         ACL: "public-read",
+        ContentType: file.mimetype,
       };
       return s3.upload(params).promise();
     });
@@ -26,7 +27,27 @@ exports.uploadImages = async (req, res) => {
     res.json({ urls }); // Return array of URLs
   } catch (error) {
     console.error("Upload error:", error);
-    res.status(500).json({ error: "Upload failed" });
+    // res.status(500).json({ error: "Upload failed" });
+    res.status(500).json({ error: error.message || "Upload failed" });
+  }
+};
+
+exports.deleteImages = async (req, res) => {
+  try {
+    const { url } = req.body;
+    const key = url.split(".digitaloceanspaces.com/")[1];
+
+    await s3
+      .deleteObject({
+        Bucket: process.env.DO_SPACES_BUCKET,
+        Key: key,
+      })
+      .promise();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Delete failed" });
   }
 };
 exports.generatePresignedUrl = (req, res) => {

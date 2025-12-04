@@ -51,84 +51,100 @@ exports.submitBankDetails = async (req, res) => {
     }
 
     // Check if bank details already exist for this host
-    const user = await User.findById(id);
+    const bankAccount = await BankDetail.findOne({ hostId: id });
+    if (bankAccount) {
+      bankAccount.accountNumber = accountNumber;
+      bankAccount.ifsc = ifsc;
+      bankAccount.name = accountHolderName;
+      bankAccount.bankName = bankName;
 
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "No Data",
+      await bankAccount.save();
+
+      return res.status(200).json({
+        success: true,
+        data: bankAccount,
+        message: "Bank details added successfully",
+      });
+    } else {
+      const user = await User.findById(id);
+
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "No Data",
+        });
+      }
+      console.log("enter");
+      // Update existing record
+      const createContact = await axios.post(
+        `${API_URL}/contacts`,
+        {
+          name: accountHolderName,
+          email: user.email,
+          contact: user.phoneNumber,
+          type: "vendor",
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${auth}`,
+          },
+        }
+      );
+
+      if (createContact.status != 200 && createContact.status !== 201) {
+        return res.json({ success: false, message: createContact.status });
+      }
+      console.log("reach");
+
+      const fundAccount = await axios.post(
+        `${API_URL}/fund_accounts`,
+        {
+          contact_id: `${createContact.data.id}`,
+          account_type: "bank_account",
+          bank_account: {
+            name: accountHolderName,
+            ifsc: ifsc,
+            account_number: accountNumber,
+          },
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Basic ${auth}`,
+          },
+        }
+      );
+      console.log("reach2");
+      if (fundAccount.status !== 200 && fundAccount.status !== 201) {
+        return res.json({ success: false, message: fundAccount.status });
+      }
+      console.log("reach3");
+      const accountNumberEncrypt = encrypt(accountNumber);
+      const data = new BankDetail({
+        hostId: id,
+        accountNumber: accountNumberEncrypt,
+        bankName: bankName,
+        ifsc: ifsc,
+        name: accountHolderName,
+        contactId: createContact.data.id,
+        fundId: fundAccount.data.id,
+      });
+      await data.save();
+      const filter = { host: id };
+      const update = { $set: { bankDetails: true } };
+      const property = await ListingProperty.updateMany(filter, update);
+      if (!property) {
+        return res
+          .status(400)
+          .json({ success: false, message: "No property found " });
+      }
+      console.log("reach4");
+      return res.status(200).json({
+        success: true,
+        message: "Bank details added successfully",
       });
     }
-    console.log("enter");
-    // Update existing record
-    const createContact = await axios.post(
-      `${API_URL}/contacts`,
-      {
-        name: accountHolderName,
-        email: user.email,
-        contact: user.phoneNumber,
-        type: "vendor",
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${auth}`,
-        },
-      }
-    );
-
-    if (createContact.status != 200 && createContact.status !== 201) {
-      return res.json({ success: false, message: createContact.status });
-    }
-    console.log("reach");
-
-    const fundAccount = await axios.post(
-      `${API_URL}/fund_accounts`,
-      {
-        contact_id: `${createContact.data.id}`,
-        account_type: "bank_account",
-        bank_account: {
-          name: accountHolderName,
-          ifsc: ifsc,
-          account_number: accountNumber,
-        },
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Basic ${auth}`,
-        },
-      }
-    );
-    console.log("reach2");
-    if (fundAccount.status !== 200 && fundAccount.status !== 201) {
-      return res.json({ success: false, message: fundAccount.status });
-    }
-    console.log("reach3");
-    const accountNumberEncrypt = encrypt(accountNumber);
-    const data = new BankDetail({
-      hostId: id,
-      accountNumber: accountNumberEncrypt,
-      bankName: bankName,
-      ifsc: ifsc,
-      name: accountHolderName,
-      contactId: createContact.data.id,
-      fundId: fundAccount.data.id,
-    });
-    await data.save();
-    const filter = { host: id };
-    const update = { $set: { bankDetails: true } };
-    const property = await ListingProperty.updateMany(filter, update);
-    if (!property) {
-      return res
-        .status(400)
-        .json({ success: false, message: "No property found " });
-    }
-    console.log("reach4");
-    return res.status(200).json({
-      success: true,
-      message: "Bank details added successfully",
-    });
   } catch (error) {
     console.error("Error saving bank details:", error);
     res

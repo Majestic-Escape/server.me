@@ -21,7 +21,8 @@ exports.createhostKycForm = async (req, res) => {
 exports.updatehostKycForm = async (req, res) => {
   try {
     const { id } = req.params;
-
+    const isCompleted = req.body.status === "completed";
+    console.log("time1");
     const property = await kycHostForm
       .findOneAndUpdate(
         { _id: id },
@@ -29,24 +30,45 @@ exports.updatehostKycForm = async (req, res) => {
         { new: true, runValidators: true }
       )
       .populate("hostId");
-
+    console.log("time2");
     if (!property) {
       return res
         .status(404)
         .json({ message: "Property not found or unauthorized to update" });
     }
     const adminEmail = "admin@majesticescape.in";
-    const params = {
-      hostName: changeToUpperCase(
-        property.hostId.firstName + " " + property.hostId.lastName
-      ),
-      hostEmail: property.hostId.email,
-      hostContact: property.hostId.email,
-      kycDate: new Date().toLocaleDateString(),
-    };
+    if (isCompleted) {
+      const data = await User.findByIdAndUpdate(
+        { _id: property.hostId._id },
+        {
+          kyc: true,
+        },
+        { new: true }
+      );
+      console.log("time3", id, property.hostId._id);
+      if (!data) {
+        return res
+          .status(404)
+          .json({ message: "Host not found or unauthorized to update kyc" });
+      }
 
-    await sendEmail(adminEmail, 4, params);
-    await sendEmail(property.hostId.email, 45, params);
+      const params = {
+        hostName: changeToUpperCase(
+          property.hostId.firstName + " " + property.hostId.lastName
+        ),
+        hostEmail: property.hostId.email,
+        hostContact: property.hostId.email,
+        kycDate: new Date().toLocaleDateString(),
+      };
+
+      if (data.hostOffer && data.hostOffer == true) {
+        await sendEmail(property.hostId.email, 47, params);
+      }
+
+      await sendEmail(adminEmail, 4, params);
+      await sendEmail(property.hostId.email, 45, params);
+      // res.status(200).json(property);
+    }
     res.status(200).json(property);
   } catch (error) {
     res.status(400).json({ message: error.message });

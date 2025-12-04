@@ -1,3 +1,4 @@
+const ListingProperty = require("../models/ListingProperty");
 const User = require("../models/User");
 
 // Get user information by ID
@@ -5,12 +6,14 @@ exports.getGuests = async (req, res) => {
   try {
     const { search } = req.query;
     const total = await User.countDocuments();
+    console.log("entered get guests 1");
     if (!total) {
       return res
         .status(404)
         .json({ success: false, message: "Document count failed" });
     }
     if (!search && search == "") {
+      console.log("entered get guests 2");
       const limit = parseInt(req.query.limit) || 2;
       const skip = parseInt(req.query.skip) || 0;
       const users = await User.find().limit(limit).skip(skip);
@@ -19,6 +22,7 @@ exports.getGuests = async (req, res) => {
           .status(404)
           .json({ success: false, message: "User data could not be found" });
       }
+      console.log("entered get guests 3");
       res.json({ data: users, total: total });
     } // Fetch all users
     else {
@@ -106,9 +110,29 @@ exports.banUser = async (req, res) => {
       user.status.active = false;
       user.status.banned = true;
       // user.status.bannedReason = bannedReason || "No reason provided";
+      user.tokenVersion += 1;
+      const property = await ListingProperty.updateMany(
+        { host: userId, status: "active" },
+        { status: "inactive", ban: true }
+      );
+      if (!property) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Properties of host not found" });
+      }
     } else {
       user.status.active = true;
       user.status.banned = false;
+
+      const property = await ListingProperty.updateMany(
+        { host: userId, ban: true },
+        { status: "active" }
+      );
+      if (!property) {
+        return res
+          .status(404)
+          .json({ success: false, message: "Properties of host not found" });
+      }
     }
 
     await user.save();

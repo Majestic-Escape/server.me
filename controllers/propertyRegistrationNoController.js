@@ -1,27 +1,27 @@
-const PropertyRegistrationNo = require('../models/PropertyRegistrationNo');
-
+const PropertyRegistrationNo = require("../models/PropertyRegistrationNo");
 
 exports.getAll = async (req, res) => {
-    try {
-        const properties = await PropertyRegistrationNo.find();
-        res.status(200).json({ success: true, data: properties });
-    } catch (error) {
-        console.error('Error fetching properties:', error);
-        res.status(500).json({ success: false, message: error.message });
-    }
+  try {
+    const properties = await PropertyRegistrationNo.find();
+    res.status(200).json({ success: true, data: properties });
+  } catch (error) {
+    console.error("Error fetching properties:", error);
+    res.status(500).json({ success: false, message: error.message });
+  }
 };
 // Controller to save an array of property objects
 exports.saveProperties = async (req, res) => {
   try {
     const properties = req.body; // expects an array of property objects
-    const result = await PropertyRegistrationNo.insertMany(properties, { ordered: false });
+    const result = await PropertyRegistrationNo.insertMany(properties, {
+      ordered: false,
+    });
     res.status(201).json({ success: true, data: result });
   } catch (error) {
-    console.error('Error saving properties:', error);
+    console.error("Error saving properties:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 
 exports.checkRegistrationNoExists = async (req, res) => {
   try {
@@ -30,15 +30,18 @@ exports.checkRegistrationNoExists = async (req, res) => {
     console.log("registrationNo: ", req.params);
 
     const property = await PropertyRegistrationNo.findOne({
-      registrationNo: { $regex: new RegExp(`^${registrationNo}$`, 'i') }
+      registrationNo: { $regex: new RegExp(`^${registrationNo}$`, "i") },
     });
     if (property) {
       return res.status(200).json({ exists: true, property });
     } else {
-      return res.status(404).json({ exists: false, message: 'Registration number not found' });
+      return res.status(404).json({
+        exists: false,
+        message: "Registration not found. Ensure number starts with HOT",
+      });
     }
   } catch (error) {
-    console.error('Error checking registration number:', error);
+    console.error("Error checking registration number:", error);
     res.status(500).json({ success: false, message: error.message });
   }
 };

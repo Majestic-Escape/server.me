@@ -97,7 +97,7 @@ const requestOTP = async (req, res) => {
 
 const verifyOTP = async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const { email, otp, admin = false } = req.body;
 
     // Validate OTP presence
     if (!otp) {
@@ -198,10 +198,15 @@ const verifyOTP = async (req, res) => {
     user.otp = { value: null, expiry: null }; // Clear OTP
     user.otpRetries = 0;
     await user.save();
-
+    console.log("We are setting the token", admin, typeof admin);
     // Generate authentication token
     const token = jwt.sign(
-      { userId: user._id, firstName: user.firstName },
+      {
+        userId: user._id,
+        firstName: user.firstName,
+        tokenVersion: user.tokenVersion,
+        admin: admin ? 1 : 0,
+      },
       process.env.JWT_SECRET,
       {
         expiresIn: TOKEN_EXPIRATION,

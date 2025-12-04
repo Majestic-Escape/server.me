@@ -238,6 +238,13 @@ exports.verifyKYC = async (req, res) => {
       });
 
       const statusResult = await performStatusCheck(statusLog.requestData, doc);
+      console.log("Pan status result", statusResult);
+      if (!statusResult) {
+        return res.status(400).json({
+          success: false,
+          message: "Status check failed",
+        });
+      }
       statusLog.status = "success";
       statusLog.responseData = statusResult;
       await statusLog.save();
@@ -264,10 +271,16 @@ exports.verifyKYC = async (req, res) => {
         type: "Status",
         requestData: {
           client_ref_num: statusClientRefNum,
-          voter,
+          epic_number: voter,
         },
       });
-      const statusResult = await performStatusCheck(statusLog.requestData);
+      const statusResult = await performStatusCheck(statusLog.requestData, doc);
+      if (!statusResult) {
+        return res.status(400).json({
+          success: false,
+          message: "Status check failed",
+        });
+      }
       statusLog.status = "success";
       statusLog.responseData = statusResult;
       await statusLog.save();
@@ -300,6 +313,12 @@ exports.verifyKYC = async (req, res) => {
         },
       });
       const statusResult = await performStatusCheck(statusLog.requestData);
+      if (!statusResult) {
+        return res.status(400).json({
+          success: false,
+          message: "Status check failed ",
+        });
+      }
       statusLog.status = "success";
       statusLog.responseData = statusResult;
       await statusLog.save();
@@ -308,9 +327,29 @@ exports.verifyKYC = async (req, res) => {
     }
   } catch (err) {
     console.error("verifyKYC error:", err.response?.data || err.message || err);
+    if (err.status === 413 || err.response?.status === 413) {
+      return res.status(413).json({
+        success: false,
+        message: "Upload file size is more than 4MB",
+      });
+    }
+    if (err.response?.status >= 400 && err.response?.status < 500) {
+      return res.status(err.response.status).json({
+        success: false,
+        message:
+          err.response.data?.error ||
+          err.response.data?.message ||
+          err.message ||
+          "Status check failed",
+      });
+    }
+    // return res.status(400).json({
+    //   success: false,
+    //   message: err.message || "Status check failed",
+    // });
     return res.status(500).json({
       success: false,
-      message: err.message || "Server error",
+      message: "Upload Correct Image and check your network" || "Server error",
       details: err.response?.data,
     });
   }

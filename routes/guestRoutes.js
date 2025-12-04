@@ -14,7 +14,7 @@ router.get("/", authMiddleware, getGuests);
 // Get user information
 router.get("/info/:userId", getUserInfo);
 
-router.get("/guest-by-id", getGuestsById);
+router.get("/guest-by-id", authMiddleware, getGuestsById);
 
 // Delete user
 router.delete("/delete/:userId", authMiddleware, deleteUser);

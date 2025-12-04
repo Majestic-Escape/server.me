@@ -8,13 +8,64 @@ require("dotenv").config();
 const app = express();
 
 // Middleware
-app.use(cors());
-app.options("*", cors()); // Handle preflight OPTIONS requests explicitly
+// app.use(cors());
+// app.options("*", cors());
+
+// app.use((req, res, next) => {
+//   console.log(`${req.method} ${req.url} received`);
+//   next();
+// });
+
+// app.use(cors());
+// app.options("*", cors());
+
+// app.use((req, res, next) => {
+//   console.log(`${req.method} ${req.url} received`);
+//   next();
+// });
+
+const allowedOrigins = [
+  // "https://apidemo.digitap.work/validation/kyc/v1/pan-basic",
+  "https://user-navy-five.vercel.app",
+  "https://me-admin-swart.vercel.app",
+  "https://me-backend-one.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:5005",
+  "http://localhost:3001",
+  "https://apidemo.digitap.work",
+  "https://svcdemo.digitap.work",
+  "https://svc.digitap.ai",
+  "https://majestic-escape-host-properties.blr1.digitaloceanspaces.com/",
+  "https://apidemo.digitap.work/validation/kyc/v1",
+  "https://svcdemo.digitap.work/validation/kyb/v1",
+  "https://apidemo.digitap.work/ocr/v1",
+  "https://api.razorpay.com/v1",
+  "https://ifsc.razorpay.com",
+];
 
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url} received`);
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Credentials", "true");
+    res.header(
+      "Access-Control-Allow-Methods",
+      "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
+    );
+    res.header(
+      "Access-Control-Allow-Headers",
+      "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+    );
+  }
+  // For OPTIONS requests, short-circuit and respond immediately:
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204); // No Content
+  }
   next();
 });
+const webhookRoutes = require("./routes/webhookRoutes");
+
+app.use("/api/v1/paymentforpayout", webhookRoutes);
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
@@ -140,7 +191,7 @@ app.use("/api/v1/accounts", accountsRoutes);
 app.use("/api/v1/kyc", kycRoutes);
 app.use("/api/v1/booking", bookingRoutes);
 app.use("/api/v1/uploads", uploadRoutes);
-app.use("/api/v1/host-bank", uploadRoutes);
+// app.use("/api/v1/host-bank", uploadRoutes);
 app.use("/api/v1/property-registration-no", propertyRegistrationNoRoutes);
 // app.use("/api/v1/stay", stayRoutes);
 app.use("/api/v1/review", reviewRoutes);

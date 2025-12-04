@@ -8,5 +8,5 @@ const router = express.Router();
 
 // Verify token route (used by the ProtectedRoute component)
 router.get("/verify", authMiddleware, authController.verifyToken);
-
+router.post("/check-token", authController.checkToken);
 module.exports = router;

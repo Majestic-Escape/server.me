@@ -437,6 +437,20 @@ exports.bulkAction = async (req, res) => {
       .json({ message: "Error performing bulk action", error: error.message });
   }
 };
+exports.getSingleHostById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const host = await User.findById(id);
+    if (!host) {
+      return res.status(404).json({ message: "Host not found" });
+    }
+    res.status(200).json(host);
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Error fetching host details", error: error.message });
+  }
+};
 
 exports.getHostById = async (req, res) => {
   try {

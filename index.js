@@ -35,12 +35,15 @@ const allowedOrigins = [
   "https://apidemo.digitap.work",
   "https://svcdemo.digitap.work",
   "https://svc.digitap.ai",
+  "https://api.digitap.ai",
   "https://majestic-escape-host-properties.blr1.digitaloceanspaces.com/",
   "https://apidemo.digitap.work/validation/kyc/v1",
   "https://svcdemo.digitap.work/validation/kyb/v1",
   "https://apidemo.digitap.work/ocr/v1",
   "https://api.razorpay.com/v1",
   "https://ifsc.razorpay.com",
+  "https://majesticescape.in",
+  "https://admin.majesticescape.in",
 ];
 
 app.use((req, res, next) => {

@@ -198,18 +198,32 @@ exports.getCustomSearch = async (req, res) => {
       filteredProperties = availableProperties.filter((property) => {
         const propertyLocation = property.address || {};
         return (
-          (propertyLocation.district &&
+          (propertyLocation.title &&
             propertyLocation.district
               .toLowerCase()
-              .includes(location.toLowerCase())) ||
+              .replace(/\s+/g, "")
+              .trim()
+              .includes(location.toLowerCase())
+              .replace(/\s+/g, "")
+              .trim()) ||
           (propertyLocation.city &&
             propertyLocation.city
               .toLowerCase()
-              .includes(location.toLowerCase())) ||
+              .replace(/\s+/g, "")
+              .trim()
+              .includes(location.toLowerCase().replace(/\s+/g, "").trim())) ||
           (propertyLocation.state &&
             propertyLocation.state
               .toLowerCase()
-              .includes(location.toLowerCase()))
+              .replace(/\s+/g, "")
+              .trim()
+              .includes(location.toLowerCase().replace(/\s+/g, "").trim())) ||
+          (propertyLocation.district &&
+            propertyLocation.district
+              .toLowerCase()
+              .replace(/\s+/g, "")
+              .trim()
+              .includes(location.toLowerCase().replace(/\s+/g, "").trim()))
         );
       });
     }
@@ -639,37 +653,44 @@ exports.approveListing = async (req, res) => {
 
     // const property = await ListingProperty.findById(id);
     // const host = await User.findById(property?.host);
-    let updatedListing = await ListingProperty.findById(id).populate("host");
+    // let updatedListing = await ListingProperty.findById(id).populate("host");
+
+    // if (updatedListing.delist == "host") {
+    //   return res.status(200).json({
+    //     message: "Listing approved successfully",
+    //     data: "hostDelist",
+    //   });
+    // }
+    // updatedListing.status = "active";
+
+    const updatedListing = await ListingProperty.findByIdAndUpdate(
+      id,
+      { status: "active" },
+      { new: true }
+    ).populate("host");
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
     }
-    if (updatedListing.delist == "host") {
-      return res.status(200).json({
-        message: "Listing approved successfully",
-        data: "hostDelist",
-      });
-    }
-    updatedListing.status = "active";
-
-    // const updatedListing = await ListingProperty.findByIdAndUpdate(
-    //   id,
-    //   { status: "active" },
-    //   { new: true }
-    // ).populate("host");
-
     const hostName =
       updatedListing.host.firstName + " " + updatedListing.host.lastName;
     const params = {
       hostName: hostName,
       propertyId: id,
+      hostEmail: updatedListing.hostEmail,
       propertyTitle: updatedListing.title,
       createdAt: new Date().toLocaleDateString(),
+      updatedAt: new Date().toLocaleDateString(),
       state: updatedListing.address.state,
       city: updatedListing.address.city,
     };
     const adminEmail = "admin@majesticescape.in";
-    await sendEmail(updatedListing.hostEmail, 25, params);
-    await sendEmail(adminEmail, 26, params);
+    if (updatedListing.delist == "admin") {
+      await sendEmail(adminEmail, 48, params);
+      await sendEmail(params.hostEmail, 49, params);
+    } else {
+      await sendEmail(params.hostEmail, 25, params);
+      await sendEmail(adminEmail, 26, params);
+    }
     console.log("Approve Listing");
     return res.status(200).json({
       message: "Listing approved successfully",
@@ -745,7 +766,7 @@ exports.deListing = async (req, res) => {
     if (hostSide && hostSide == "true") {
       const updatedListing = await ListingProperty.findByIdAndUpdate(
         id,
-        { status: "inactive", delist: "host" },
+        { status: "inactive" },
         { new: true }
       ).populate("host");
       if (!updatedListing) {

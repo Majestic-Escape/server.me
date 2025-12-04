@@ -328,7 +328,12 @@ exports.getHostFilterBookings = async (req, res) => {
       source: "local",
       action: "user",
     };
-    const date = parseMDYToUTC(from, to);
+    let date;
+    if (to == from) {
+      return res.json({ success: false, error: "toDate" });
+    } else {
+      date = parseMDYToUTC(from, to);
+    }
 
     console.log("rub testing", title, date.from, date.to, hostId);
     if (status && status.toLowerCase() !== "all") {
@@ -337,16 +342,15 @@ exports.getHostFilterBookings = async (req, res) => {
     if (hostId) {
       filter.hostId = hostId;
     }
-    if (from || to) {
-      filter.checkIn = {};
-      if (from) filter.checkIn.$gte = date.from;
-      if (to) filter.checkIn.$lte = date.to;
-    }
+
+    filter.checkIn = {};
+    if (from) filter.checkIn.$gte = date.from;
+    if (to) filter.checkIn.$lte = date.to;
 
     // Fetch bookings first
     let bookings = await Booking.find(filter)
       .populate("userId propertyId hostId")
-      .sort({ createdAt: -1 })
+      .sort({ checkIn: 1 })
       .lean();
 
     // Apply property title & user search in JS

@@ -1,7 +1,8 @@
 const ExternalCalendar = require("../models/ExternalCalendar");
 const crypto = require("crypto");
 const Booking = require("../models/Booking");
-const ical = require("ical-generator").default;
+// const ical = require("ical-generator").default;
+const ical = require("node-ical");
 const axios = require("axios");
 const cron = require("node-cron");
 const ListingProperty = require("../models/ListingProperty");
@@ -286,6 +287,7 @@ async function syncCalendars(hostId) {
               checkIn: start,
               checkOut: end,
               price: 0,
+              subTotal: 0,
               currency: "INR",
               status: "confirmed",
               paymentStatus: "paid",

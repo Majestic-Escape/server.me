@@ -7,8 +7,8 @@ const { parseMDYToUTC } = require("../utils/convertDate");
 const axios = require("axios");
 const { encrypt } = require("../utils/encrypt");
 const razorpay = new Razorpay({
-  key_id: "rzp_test_RRelkKgMDh3dun",
-  key_secret: "gYeQi2lZFvXMMBRs1lWjGANA",
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 // const YOUR_KEY = "rzp_test_RRelkKgMDh3dun";

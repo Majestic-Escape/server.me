@@ -129,7 +129,9 @@ const connectDB = async () => {
   try {
     await mongoose.connect(
       // "mongodb://localhost:27017/me"
-      "mongodb+srv://admin:10VToU0WupyAbo4M@majestic-escape.nk49u.mongodb.net/master-db?retryWrites=true&w=majority&appName=Majestic-Escape&authSource=admin"
+
+      process.env.DB_URI
+      //"mongodb+srv://admin:10VToU0WupyAbo4M@majestic-escape.nk49u.mongodb.net/master-db?retryWrites=true&w=majority&appName=Majestic-Escape&authSource=admin"
     );
     console.log("MongoDB connected");
   } catch (err) {

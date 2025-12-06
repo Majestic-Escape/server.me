@@ -1853,13 +1853,21 @@ exports.confirmBooking = async (req, res) => {
     const checkoutDate = new Date(booking.checkOut);
     const delayMs = checkoutDate.getTime() + 5 * 60 * 60 * 1000 - now.getTime();
     const delaySeconds = Math.max(0, Math.round(delayMs / 1000));
-
-    await agenda.schedule(`40 seconds`, "sendReviewEmail", {
-      userEmail,
-      hostEmail,
-      params,
-      bookingStatus,
-    });
+    if (process.env.NODE_ENV == "local" || process.env.NODE_ENV == "dev") {
+      await agenda.schedule(`40 seconds`, "sendReviewEmail", {
+        userEmail,
+        hostEmail,
+        params,
+        bookingStatus,
+      });
+    } else {
+      await agenda.schedule(`${delaySeconds} seconds`, "sendReviewEmail", {
+        userEmail,
+        hostEmail,
+        params,
+        bookingStatus,
+      });
+    }
 
     console.log("✅ Job scheduled successfully");
     res.status(200).json({ success: true });

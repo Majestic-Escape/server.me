@@ -13,8 +13,8 @@ const { generateUniqueString } = require("../utils/generateString");
 const HostPayout = require("../models/HostPayout");
 const Configure = require("../models/Configure");
 const razorpay = new Razorpay({
-  key_id: "rzp_test_RRelkKgMDh3dun",
-  key_secret: "gYeQi2lZFvXMMBRs1lWjGANA",
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 // const YOUR_KEY = "rzp_test_RRelkKgMDh3dun";
@@ -667,7 +667,7 @@ exports.update = async (req, res) => {
   // res.status(200).json({ received: true, timestamp: new Date().toISOString() });
   console.log("Payment payout started");
   try {
-    const secret = "secret10142025";
+    const secret = process.env.RAZORPAY_WEBHOOK_KEY;
     console.log("🟢 Webhook received at:", new Date().toISOString());
 
     const signature = req.headers["x-razorpay-signature"];

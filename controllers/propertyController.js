@@ -884,7 +884,7 @@ exports.getPropertyById = async (req, res) => {
       path: "host",
       model: "User",
       select:
-        "firstName lastName languages address dob about averageRating reviewCount avgPropertyRating propertyReviewCount",
+        "firstName lastName languages profilePicture address dob about averageRating reviewCount avgPropertyRating propertyReviewCount",
     });
     console.log("si", property);
     if (!property) {

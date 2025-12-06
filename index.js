@@ -66,6 +66,19 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// No-cache middleware: ensure responses are not cached by clients or proxies
+app.use((req, res, next) => {
+  res.set(
+    "Cache-Control",
+    "no-store, no-cache, must-revalidate, proxy-revalidate"
+  );
+  res.set("Pragma", "no-cache");
+  res.set("Expires", "0");
+  res.set("Surrogate-Control", "no-store");
+  next();
+});
+
 const webhookRoutes = require("./routes/webhookRoutes");
 
 app.use("/api/v1/paymentforpayout", webhookRoutes);

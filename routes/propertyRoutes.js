@@ -6,6 +6,7 @@ const authMiddleware = require("../middleware/authMiddleware");
 router.get("/", propertyController.getAllProperties);
 router.get("/static", propertyController.getAllStaticProperties);
 router.get("/dynamic", propertyController.getAllStays);
+router.get("/front/dynamic", propertyController.getFrontPageAllStays);
 router.get("/id-and-name/:id", propertyController.getIdandName);
 router.get(
   "/active/:id",

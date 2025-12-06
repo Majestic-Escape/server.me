@@ -20,7 +20,7 @@ exports.getProfile = async (req, res) => {
       lastName: user?.lastName,
       email: user.email,
       phone: user.phoneNumber,
-      profilePicture: user?.profilePicture,
+      profilePicture: user?.profilePicture ? user?.profilePicture : "",
       dob: user.dob,
       languages: user?.languages,
       about: user?.about,

@@ -348,11 +348,58 @@ exports.getTiming = async (req, res) => {
     });
   }
 };
+exports.getFrontPageAllStays = async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 16;
+    const skip = (page - 1) * limit;
 
+    // Get filter parameters
+    const { type } = req.query;
+
+    // Build query object
+    let query = {};
+    if (type) {
+      query.propertyType = type;
+    }
+    // Only include documents with status 'processing' or 'completed'
+    query.status = { $in: ["active", "completed"] };
+
+    // Execute queries in parallel for better performance
+    const [properties, totalProperties] = await Promise.all([
+      ListingProperty.find(query)
+        .sort({ createdAt: -1 }) // Sort by newest first
+        .skip(skip)
+        .limit(limit)
+        .lean(), // Use lean() for better performance
+      ListingProperty.countDocuments(query),
+    ]);
+
+    // Calculate pagination metadata
+    const totalPages = Math.ceil(totalProperties / limit);
+    const hasMore = page * limit < totalProperties;
+
+    // Send response
+    res.status(200).json({
+      properties,
+      currentPage: page,
+      totalPages,
+      totalProperties,
+      hasMore,
+      resultsPerPage: limit,
+    });
+  } catch (error) {
+    console.error("Error fetching properties:", error);
+    res.status(500).json({
+      message: "Failed to fetch properties",
+      error: error.message,
+    });
+  }
+};
 exports.getAllStays = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 12;
+    const limit = parseInt(req.query.limit) || 16;
     const skip = (page - 1) * limit;
 
     // Get filter parameters
@@ -833,9 +880,12 @@ exports.deListing = async (req, res) => {
 exports.getPropertyById = async (req, res) => {
   try {
     console.log(req.params.id);
-    const property = await ListingProperty.findById(req.params.id).populate(
-      "host"
-    );
+    const property = await ListingProperty.findById(req.params.id).populate({
+      path: "host",
+      model: "User",
+      select:
+        "firstName lastName languages address dob about averageRating reviewCount avgPropertyRating propertyReviewCount",
+    });
     console.log("si", property);
     if (!property) {
       return res.status(404).json({ message: "Property not found" });

@@ -246,7 +246,15 @@ async function syncCalendars(hostId) {
         try {
           // Use our correction function instead of direct Date conversion
           const { start, end, isAllDayEvent } = correctICalDates(vevent);
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
 
+          if (start < today) {
+            console.log(
+              `⏭️ Skipping past booking UID ${uid} - start: ${start}`
+            );
+            continue;
+          }
           console.log("FINAL DATES FOR BOOKING:");
           console.log(
             "Start:",
@@ -301,6 +309,7 @@ async function syncCalendars(hostId) {
             await newB.save();
             console.log("✅ Created new booking:", newB._id);
           }
+          return resp.status;
         } catch (dateError) {
           console.error(
             "Error processing dates for UID:",
@@ -429,25 +438,68 @@ exports.saveCalendarUrl = async (req, res) => {
       return res.json({ success: true, url, secret });
     }
 
-    if (kind === "import") {
-      const cal = new ExternalCalendar({ propertyId, url, kind });
-      await cal.save();
+    // if (kind === "import") {
+    //   const cal = new ExternalCalendar({ propertyId, url, kind });
+    //   await cal.save();
 
+    //   await syncCalendars(userData.host);
+
+    //   if (!isCalendarCronRunning) {
+    //     cron.schedule("*/5 * * * *", async () => {
+    //       console.log("Running calendar sync...");
+    //       await syncCalendars(userData.host);
+    //     });
+    //     isCalendarCronRunning = true;
+    //     console.log("✅ Calendar sync cron job started");
+    //   }
+    //   return res.json({
+    //     success: true,
+    //     calendar: cal,
+    //     message: firstTimeSync
+    //       ? "Calendar sync has started. Please wait a few minutes and refresh the page."
+    //       : "Calendar already synced. We will keep checking for updates.",
+    //   });
+    //   // return res.json({
+    //   //   success: true,
+    //   //   message: "Calendar imported",
+    //   //   calendar: cal,
+    //   // });
+    // }
+
+    if (kind === "import") {
+      const existingImport = await ExternalCalendar.findOne({
+        propertyId,
+        kind: "import",
+      });
+
+      let firstTimeSync = false;
+
+      if (!existingImport) {
+        // FIRST TIME IMPORT → SAVE URL
+        const cal = new ExternalCalendar({ propertyId, url, kind });
+        await cal.save();
+        firstTimeSync = true;
+      }
+
+      // START SYNC IMMEDIATELY
       await syncCalendars(userData.host);
 
+      // START CRON ONLY ON FIRST SUBMISSION
       if (!isCalendarCronRunning) {
         cron.schedule("*/5 * * * *", async () => {
-          console.log("Running calendar sync...");
+          console.log("⏳ Running periodic calendar sync...");
           await syncCalendars(userData.host);
         });
+
         isCalendarCronRunning = true;
-        console.log("✅ Calendar sync cron job started");
+        console.log("🚀 Calendar sync cron job started");
       }
 
       return res.json({
         success: true,
-        message: "Calendar imported",
-        calendar: cal,
+        message: firstTimeSync
+          ? "Calendar sync has started. Please wait a few minutes and refresh the page."
+          : "Calendar already synced. We will keep checking for updates.",
       });
     }
   } catch (err) {

@@ -1,4 +1,5 @@
 const s3 = require("../config/digitalOcean.config");
+const User = require("../models/User");
 
 exports.uploadImages = async (req, res) => {
   try {
@@ -31,7 +32,40 @@ exports.uploadImages = async (req, res) => {
     res.status(500).json({ error: error.message || "Upload failed" });
   }
 };
+exports.profileImage = async (req, res) => {
+  try {
+    const file = req.file; // ✅ Correct way for single() upload
+    const userId = req.query.userId;
 
+    if (!file) {
+      return res.status(400).json({ error: "No files uploaded" });
+    }
+    const key = `${Date.now()}-${file.originalname}`;
+
+    const upload = await s3
+      .upload({
+        Bucket: process.env.DO_SPACES_BUCKET,
+        Key: key,
+        Body: file.buffer,
+        ACL: "public-read",
+        ContentType: file.mimetype,
+      })
+      .promise();
+    const user = await User.findByIdAndUpdate(userId, {
+      profilePicture: upload.Location,
+    });
+
+    if (!user) {
+      return res.status(404).json({ message: "Profile not found" });
+    }
+
+    return res.json({ url: upload.Location });
+  } catch (error) {
+    console.error("Upload error:", error);
+    // res.status(500).json({ error: "Upload failed" });
+    res.status(500).json({ error: error.message || "Upload failed" });
+  }
+};
 exports.deleteImages = async (req, res) => {
   try {
     const { url } = req.body;

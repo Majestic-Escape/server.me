@@ -17,7 +17,13 @@ const upload = multer({
     cb(null, true);
   },
 });
+
+const uploads = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
 router.post("/", upload.array("images", 10), uploadController.uploadImages);
+router.post("/profile", uploads.single("file"), uploadController.profileImage);
 router.delete("/delete", uploadController.deleteImages);
 router.post("/generate-presigned-url", uploadController.generatePresignedUrl);
 

@@ -8,7 +8,7 @@ const DEFAULT_SENDER = {
   email: process.env.EMAIL_SENDER_ADDRESS || "notify@majesticescape.in",
 };
 
-async function sendEmail(recipientEmail, templateId, params) {
+async function sendEmail(recipientEmail, templateId, params, attachments = []) {
   // Prepare the request payload for Brevo API
   const requestPayload = {
     sender: DEFAULT_SENDER,
@@ -16,6 +16,10 @@ async function sendEmail(recipientEmail, templateId, params) {
     templateId: parseInt(templateId),
     params: params,
   };
+
+  if (attachments.length > 0) {
+    requestPayload.attachment = attachments;
+  }
 
   try {
     // Make API request to Brevo

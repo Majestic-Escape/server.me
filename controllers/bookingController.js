@@ -17,6 +17,8 @@ const HostPayout = require("../models/HostPayout");
 const { changeToUpperCase } = require("../utils/convertToUpperCase");
 const { paramsToObject } = require("../utils/paramsObject");
 const agenda = require("../utils/agenda");
+const generateInvoiceHTML = require("../utils/generateInvoiceHTML");
+const generateInvoicePDF = require("../utils/generateInvoicePDF");
 const TOKEN_EXPIRATION = "14d";
 const mongoConnectionString = process.env.DB_URI;
 const baseUrl = process.env.NEXTAUTH_URL;
@@ -2059,6 +2061,22 @@ exports.markBookingAsPaid = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Payment not found" });
     }
+
+    const html = generateInvoiceHTML(booking, bank);
+
+    // Generate PDF buffer
+    const pdfBuffer = await generateInvoicePDF(html);
+
+    // Convert buffer → base64
+    const attachmentBase64 = pdfBuffer.toString("base64");
+
+    const invoiceAttachment = [
+      {
+        name: `invoice-${booking._id}.pdf`,
+        content: attachmentBase64,
+      },
+    ];
+
     const userName = changeToUpperCase(
       booking.userId.firstName + " " + booking.userId.lastName
     );
@@ -2069,13 +2087,13 @@ exports.markBookingAsPaid = async (req, res) => {
 
     console.log("inside the mark3");
     if (manual) {
-      await sendEmail(hostEmail, 8);
+      await sendEmail(booking.userId.email, 8, params, invoiceAttachment);
       await sendEmail(hostEmail, 42, params);
       await sendEmail("majesticescape.in@gmail.com", 9);
       return res.status(200).json({ success: true, data: booking });
     }
     console.log("inside the mark4");
-    await sendEmail(booking.userId.email, 35, params);
+    await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
     await sendEmail(hostEmail, 34, params);
     await sendEmail(adminEmail, 36, params);
     res.status(200).json({ success: true, data: booking });

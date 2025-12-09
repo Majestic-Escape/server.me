@@ -95,8 +95,11 @@ exports.getCustomSearch = async (req, res) => {
       bookingType,
       pets,
       amenities,
+      page = 1,
+      limit = 16,
     } = req.query;
 
+    const skip = (Number(page) - 1) * Number(limit);
     // Build the base filter with status always active
     let filter = { status: "active" };
 
@@ -187,9 +190,11 @@ exports.getCustomSearch = async (req, res) => {
         $regex: new RegExp(propertyType, "i"),
       };
     }
-
+    const totalCount = await ListingProperty.countDocuments(filter);
     // 4. Find properties based on the built filter
-    const availableProperties = await ListingProperty.find(filter);
+    const availableProperties = await ListingProperty.find(filter)
+      .skip(skip)
+      .limit(limit);
 
     // 5. Handle location filtering (if provided) - using JavaScript filter for more complex matching
     let filteredProperties = availableProperties;
@@ -235,6 +240,12 @@ exports.getCustomSearch = async (req, res) => {
     res.status(200).json({
       success: true,
       data: filteredProperties,
+      pagination: {
+        totalCount: totalCount,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil(totalCount / limit),
+      },
       filtersApplied: {
         location: !!location,
         dates: !!(from && to),

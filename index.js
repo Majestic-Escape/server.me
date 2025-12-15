@@ -12,7 +12,9 @@ const app = express();
 // app.options("*", cors());
 
 // app.use((req, res, next) => {
+//   process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
 //   console.log(`${req.method} ${req.url} received`);
+// }
 //   next();
 // });
 
@@ -20,7 +22,9 @@ const app = express();
 // app.options("*", cors());
 
 // app.use((req, res, next) => {
+//   process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
 //   console.log(`${req.method} ${req.url} received`);
+// }
 //   next();
 // });
 
@@ -146,7 +150,9 @@ const connectDB = async () => {
       process.env.DB_URI
       //"mongodb+srv://admin:10VToU0WupyAbo4M@majestic-escape.nk49u.mongodb.net/master-db?retryWrites=true&w=majority&appName=Majestic-Escape&authSource=admin"
     );
-    console.log("MongoDB connected");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("MongoDB connected");
+    }
   } catch (err) {
     console.error(`Error connecting to MongoDB: ${err.message}`);
     process.exit(1); // Exit process with failure

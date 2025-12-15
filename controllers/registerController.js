@@ -75,7 +75,9 @@ const requestOTP = async (req, res) => {
 
       const offer = process.env.HOST_COMMISSION_OFFER.trim() === "true";
 
-      console.log("la famli", offer, typeof offer);
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("la famli", offer, typeof offer);
+      }
       // let user;
       try {
         // if (offer == "true") {

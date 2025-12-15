@@ -27,7 +27,9 @@ exports.checkRegistrationNoExists = async (req, res) => {
   try {
     const { registrationNo } = req.params;
 
-    console.log("registrationNo: ", req.params);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("registrationNo: ", req.params);
+    }
 
     const property = await PropertyRegistrationNo.findOne({
       registrationNo: { $regex: new RegExp(`^${registrationNo}$`, "i") },

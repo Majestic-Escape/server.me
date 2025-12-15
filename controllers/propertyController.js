@@ -27,7 +27,9 @@ const { changeToUpperCase } = require("../utils/convertToUpperCase");
 //       ],
 //     }).select("propertyId"); // only fetch propertyId
 
-//     console.log("big big", propertyType);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("big big", propertyType);
+// }
 //     // 2. Collect booked property IDs
 //     const bookedPropertyIds = bookings.map((b) => b.propertyId);
 
@@ -148,7 +150,9 @@ exports.getCustomSearch = async (req, res) => {
       filter.amenities = { $in: amenities };
     }
 
-    console.log("amenities", filter);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("amenities", filter);
+    }
     // 1. Handle date filtering only if both from and to are provided
     if (from && to) {
       const checkin = new Date(from);
@@ -190,69 +194,85 @@ exports.getCustomSearch = async (req, res) => {
         $regex: new RegExp(propertyType, "i"),
       };
     }
+    // const totalCount = await ListingProperty.countDocuments(filter);
+    // // 4. Find properties based on the built filter
+    // const availableProperties = await ListingProperty.find(filter)
+    //   .skip(skip)
+    //   .limit(limit);
+
+    // 5. Handle location filtering (if provided) - using JavaScript filter for more complex matching
+    // let filteredProperties = availableProperties;
+
+    // if (location && location !== "null" && location !== "undefined") {
+    //   filteredProperties = availableProperties.filter((property) => {
+    //     const propertyLocation = property.address || {};
+    //     return (
+    //       (propertyLocation.title &&
+    //         propertyLocation.district
+    //           .toLowerCase()
+    //           .replace(/\s+/g, "")
+    //           .trim()
+    //           .includes(location.toLowerCase())
+    //           .replace(/\s+/g, "")
+    //           .trim()) ||
+    //       (propertyLocation.city &&
+    //         propertyLocation.city
+    //           .toLowerCase()
+    //           .replace(/\s+/g, "")
+    //           .trim()
+    //           .includes(location.toLowerCase().replace(/\s+/g, "").trim())) ||
+    //       (propertyLocation.state &&
+    //         propertyLocation.state
+    //           .toLowerCase()
+    //           .replace(/\s+/g, "")
+    //           .trim()
+    //           .includes(location.toLowerCase().replace(/\s+/g, "").trim())) ||
+    //       (propertyLocation.district &&
+    //         propertyLocation.district
+    //           .toLowerCase()
+    //           .replace(/\s+/g, "")
+    //           .trim()
+    //           .includes(location.toLowerCase().replace(/\s+/g, "").trim()))
+    //     );
+    //   });
+    // }
+    if (location && location !== "null" && location !== "undefined") {
+      filter.$or = [
+        { "address.district": { $regex: location, $options: "i" } },
+        { "address.city": { $regex: location, $options: "i" } },
+        { "address.state": { $regex: location, $options: "i" } },
+      ];
+    }
     const totalCount = await ListingProperty.countDocuments(filter);
-    // 4. Find properties based on the built filter
+
     const availableProperties = await ListingProperty.find(filter)
       .skip(skip)
       .limit(limit);
 
-    // 5. Handle location filtering (if provided) - using JavaScript filter for more complex matching
-    let filteredProperties = availableProperties;
-
-    if (location && location !== "null" && location !== "undefined") {
-      filteredProperties = availableProperties.filter((property) => {
-        const propertyLocation = property.address || {};
-        return (
-          (propertyLocation.title &&
-            propertyLocation.district
-              .toLowerCase()
-              .replace(/\s+/g, "")
-              .trim()
-              .includes(location.toLowerCase())
-              .replace(/\s+/g, "")
-              .trim()) ||
-          (propertyLocation.city &&
-            propertyLocation.city
-              .toLowerCase()
-              .replace(/\s+/g, "")
-              .trim()
-              .includes(location.toLowerCase().replace(/\s+/g, "").trim())) ||
-          (propertyLocation.state &&
-            propertyLocation.state
-              .toLowerCase()
-              .replace(/\s+/g, "")
-              .trim()
-              .includes(location.toLowerCase().replace(/\s+/g, "").trim())) ||
-          (propertyLocation.district &&
-            propertyLocation.district
-              .toLowerCase()
-              .replace(/\s+/g, "")
-              .trim()
-              .includes(location.toLowerCase().replace(/\s+/g, "").trim()))
-        );
-      });
-    }
-
-    console.log(
-      `Found ${filteredProperties.length} properties matching the criteria`
-    );
-
-    res.status(200).json({
-      success: true,
-      data: filteredProperties,
+    res.json({
+      data: availableProperties,
       pagination: {
-        totalCount: totalCount,
-        page: Number(page),
-        limit: Number(limit),
+        totalCount,
         totalPages: Math.ceil(totalCount / limit),
       },
-      filtersApplied: {
-        location: !!location,
-        dates: !!(from && to),
-        guests: !!guests,
-        propertyType: !!propertyType,
-      },
     });
+
+    // res.status(200).json({
+    //   success: true,
+    //   data: filteredProperties,
+    //   pagination: {
+    //     totalCount: totalCount,
+    //     page: Number(page),
+    //     limit: Number(limit),
+    //     totalPages: Math.ceil(totalCount / limit),
+    //   },
+    //   filtersApplied: {
+    //     location: !!location,
+    //     dates: !!(from && to),
+    //     guests: !!guests,
+    //     propertyType: !!propertyType,
+    //   },
+    // });
   } catch (error) {
     console.error("Search error:", error);
     res.status(400).json({
@@ -299,7 +319,9 @@ exports.getAdminFilter = async (req, res) => {
       );
     }
 
-    console.log("abc", property);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("abc", property);
+    }
     res.json({ success: true, data: property });
   } catch (error) {
     console.error("Search error:", error);
@@ -312,7 +334,10 @@ exports.getAdminFilter = async (req, res) => {
 exports.timing = async (req, res) => {
   try {
     const { checkinTime, checkoutTime, propertyId } = req.body;
-    console.log("db", propertyId, checkinTime, checkoutTime);
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("db", propertyId, checkinTime, checkoutTime);
+    }
     const property = await ListingProperty.findByIdAndUpdate(propertyId, {
       checkinTime: checkinTime,
       checkoutTime: checkoutTime,
@@ -330,10 +355,14 @@ exports.timing = async (req, res) => {
 
 exports.getTiming = async (req, res) => {
   try {
-    console.log("enetered the gettim");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("enetered the gettim");
+    }
     const { propertyId } = req.params;
 
-    console.log("propertyId:", propertyId);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("propertyId:", propertyId);
+    }
     if (!propertyId || propertyId === "undefined") {
       return res
         .status(400)
@@ -350,7 +379,9 @@ exports.getTiming = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Property not found" });
     }
-    console.log("dsajhjkhdsjkhdajhsdjhaj");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("dsajhjkhdsjkhdajhsdjhaj");
+    }
     res.status(200).json({ success: true, data: property });
   } catch (error) {
     res.status(500).json({
@@ -525,7 +556,9 @@ exports.getAllStaticProperties = async (req, res) => {
 
 // controllers/propertyController.js
 exports.getAllProperties = async (req, res) => {
-  console.log("getAllProperties");
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("getAllProperties");
+  }
   try {
     // Get pagination parameters from query with radix specified
     const page = parseInt(req.query.page, 10) || 1;
@@ -660,7 +693,9 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
 
     // Get the status filter from the query
     const statusFilter = req.query.status || "all"; // Default to 'all' if no status is provided
-    console.log("Status", statusFilter);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Status", statusFilter);
+    }
 
     // Prepare the query based on the status filter
     let query = {};
@@ -680,7 +715,9 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
 
     const totalPages = Math.ceil(totalProperties / limit);
     const hasMore = page * limit < totalProperties;
-    console.log(properties);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log(properties);
+    }
     return res.status(200).json({
       // Stats
       totalListings,
@@ -706,7 +743,9 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
 
 exports.approveListing = async (req, res) => {
   try {
-    console.log("entered in new op");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("entered in new op");
+    }
     const { id } = req.params; // listing ID
 
     // const property = await ListingProperty.findById(id);
@@ -749,7 +788,9 @@ exports.approveListing = async (req, res) => {
       await sendEmail(params.hostEmail, 25, params);
       await sendEmail(adminEmail, 26, params);
     }
-    console.log("Approve Listing");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Approve Listing");
+    }
     return res.status(200).json({
       message: "Listing approved successfully",
       data: updatedListing,
@@ -764,7 +805,9 @@ exports.approveListing = async (req, res) => {
 };
 exports.reactivate = async (req, res) => {
   try {
-    console.log("entered in new op");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("entered in new op");
+    }
     const { id } = req.params; // listing ID
 
     // const property = await ListingProperty.findById(id);
@@ -816,7 +859,9 @@ exports.reactivate = async (req, res) => {
 };
 exports.deListing = async (req, res) => {
   try {
-    console.log("entered in new op");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("entered in new op");
+    }
     const { id } = req.params; // listing ID
     const { hostSide } = req.query;
 
@@ -890,14 +935,18 @@ exports.deListing = async (req, res) => {
 
 exports.getPropertyById = async (req, res) => {
   try {
-    console.log(req.params.id);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log(req.params.id);
+    }
     const property = await ListingProperty.findById(req.params.id).populate({
       path: "host",
       model: "User",
       select:
         "firstName lastName languages profilePicture address dob about averageRating reviewCount avgPropertyRating propertyReviewCount",
     });
-    console.log("si", property);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("si", property);
+    }
     if (!property) {
       return res.status(404).json({ message: "Property not found" });
     }
@@ -949,7 +998,9 @@ exports.getFilterActivePropertyById = async (req, res) => {
   try {
     const hostId = req.params.id;
     const { search, placeType, propertyType } = req.query;
-    console.log("nand", search);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("nand", search);
+    }
     const filter = {
       host: hostId,
       status: "active",
@@ -967,7 +1018,9 @@ exports.getFilterActivePropertyById = async (req, res) => {
     if (!property) {
       return res.status(404).json({ message: "Property not found" });
     }
-    console.log("abc", property);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("abc", property);
+    }
     if (search) {
       const s = search.toLowerCase();
       property = property.filter(
@@ -1019,7 +1072,9 @@ exports.updateProperty = async (req, res) => {
 //       req.params.id
 //     ).populate("host");
 //     if (!property) {
-//       console.log("deleteProperty", "No property found");
+//       process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("deleteProperty", "No property found");
+// }
 
 //       return res.status(404).json({ message: "Property not found" });
 //     }
@@ -1056,7 +1111,9 @@ exports.updateProperty = async (req, res) => {
 
 //     const property = await ListingProperty.findByIdAndDelete(req.params.id);
 //     if (!property) {
-//       console.log("deleteProperty", "No property found");
+//       process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("deleteProperty", "No property found");
+// }
 
 //       return res.status(404).json({ message: "Property not found" });
 //     }
@@ -1079,7 +1136,9 @@ exports.createListingProperty = async (req, res) => {
   try {
     const { ...propertyData } = req.body;
     const user = await User.findOne({ email: req.body.hostEmail });
-    console.log("xmennn", propertyData);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("xmennn", propertyData);
+    }
 
     if (!user) {
       return res.status(404).json({ message: "Host not found" });
@@ -1093,7 +1152,9 @@ exports.createListingProperty = async (req, res) => {
     });
 
     await property.save();
-    console.log(property);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log(property);
+    }
     res.status(201).json(property);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -1107,7 +1168,9 @@ exports.updateListingProperty = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "Host not found" });
     }
-    console.log("jjj", req.body._id);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("jjj", req.body._id);
+    }
 
     const property = await ListingProperty.findOneAndUpdate(
       { _id: id, host: user._id },
@@ -1130,7 +1193,9 @@ exports.updateListingProperty = async (req, res) => {
 exports.updateKycProperty = async (req, res) => {
   try {
     const { id } = req.params;
-    console.log("enre", id);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("enre", id);
+    }
     const property = await ListingProperty.updateMany(
       { host: id },
       { $set: { kycStatus: "completed" } }
@@ -1149,7 +1214,9 @@ exports.updateKycProperty = async (req, res) => {
 };
 exports.getUserPropertyListings = async (req, res) => {
   const { userEmail } = req.params;
-  console.log("userEmail", userEmail);
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("userEmail", userEmail);
+  }
   const { page = 1, limit = 10 } = req.query;
 
   try {
@@ -1187,7 +1254,9 @@ exports.getUserPropertyListings = async (req, res) => {
 };
 
 exports.getPropertyListings = async (req, res) => {
-  console.log("getPropertyListings");
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("getPropertyListings");
+  }
   const { page = 1, limit = 10 } = req.query;
 
   try {

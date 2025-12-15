@@ -3,7 +3,9 @@ const User = require("../models/User");
 
 exports.uploadImages = async (req, res) => {
   try {
-    console.log("Upload request received");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Upload request received");
+    }
     const files = req.files; // Array of files
     if (!files || files.length === 0) {
       return res.status(400).json({ error: "No files uploaded" });
@@ -24,7 +26,9 @@ exports.uploadImages = async (req, res) => {
     const results = await Promise.all(uploadPromises);
     const urls = results.map((result) => result.Location);
 
-    console.log("Upload successful:", urls);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Upload successful:", urls);
+    }
     res.json({ urls }); // Return array of URLs
   } catch (error) {
     console.error("Upload error:", error);
@@ -39,6 +43,11 @@ exports.profileImage = async (req, res) => {
 
     if (!file) {
       return res.status(400).json({ error: "No files uploaded" });
+    }
+    if (file.length > 20) {
+      return res.status(400).json({
+        error: "Maximum 20 images allowed",
+      });
     }
     const key = `${Date.now()}-${file.originalname}`;
 

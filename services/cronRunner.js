@@ -8,7 +8,9 @@
 
 // function startCalendarCron() {
 //   cron.schedule("*/5 * * * *", async () => {
-//     console.log("Running calendar sync...");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+  console.log("Running calendar sync...");
+}
 //     await syncCalendars();
 //   });
 // }

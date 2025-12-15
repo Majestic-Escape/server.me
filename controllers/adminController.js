@@ -377,7 +377,9 @@ const serviceFees = async (req, res) => {
     if (existingData.length != 0) {
       existingData.gst = gst;
       existingData.service = service;
-      console.log(existingData);
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log(existingData);
+      }
       await existingData.save();
 
       res

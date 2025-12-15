@@ -12,8 +12,9 @@ apiKey.apiKey = process.env.BREVO_SECRET;
  * @param {string} email - The user's email address.
  */
 async function sendPendingKYCEmail(firstName, email) {
-
-  console.log(`Sending email to ${firstName} (${email})`);
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log(`Sending email to ${firstName} (${email})`);
+  }
   const templateId = 4;
   const requestPayload = {
     sender: { name: "MaajesticEscape", email: "notify@majesticescape.in" },
@@ -30,9 +31,15 @@ async function sendPendingKYCEmail(firstName, email) {
         headers: { "api-key": apiKey.apiKey },
       }
     );
-    console.log("Email sent successfully:", response.data);
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Email sent successfully:", response.data);
+    }
   } catch (error) {
-    console.error("Error sending email:", error.response?.data || error.message);
+    console.error(
+      "Error sending email:",
+      error.response?.data || error.message
+    );
   }
 }
 
@@ -42,9 +49,7 @@ async function sendPendingKYCEmail(firstName, email) {
  */
 async function sendEmailsToPeople() {
   // Array of people with pending listing (example data)
-  const people = [
-    
-  ];
+  const people = [];
 
   // Add two additional random email entries
   people.push({ firstname: "Yash", email: "divyayashsaxena2000@gmail.com" });

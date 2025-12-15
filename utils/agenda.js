@@ -9,15 +9,21 @@ const agenda = new Agenda({
 
 // Define the job once globally
 agenda.define("sendReviewEmail", async (job, done) => {
-  console.log("Agenda Function");
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("Agenda Function");
+  }
   const { userEmail, hostEmail, params, bookingStatus } = job.attrs.data;
 
   try {
     if (bookingStatus === "confirmed") {
-      console.log("Agenda Function Inside");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("Agenda Function Inside");
+      }
       await sendEmail(userEmail, 12, params);
       await sendEmail(hostEmail, 43, params);
-      console.log("Agenda Function complete");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("Agenda Function complete");
+      }
     }
   } catch (err) {
     console.error("Error in job:", err);
@@ -28,7 +34,9 @@ agenda.define("sendReviewEmail", async (job, done) => {
 
 (async () => {
   await agenda.start();
-  console.log("✅ Agenda started globally");
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("✅ Agenda started globally");
+  }
 })();
 
 module.exports = agenda;

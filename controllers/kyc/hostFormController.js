@@ -9,7 +9,9 @@ require("dotenv").config();
 
 exports.createhostKycForm = async (req, res) => {
   try {
-    console.log("enterd create host");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("enterd create host");
+    }
     const kyc = new kycHostForm(req.body);
     await kyc.save();
     res.status(200).json({ success: true, data: kyc });
@@ -22,7 +24,9 @@ exports.updatehostKycForm = async (req, res) => {
   try {
     const { id } = req.params;
     const isCompleted = req.body.status === "completed";
-    console.log("time1");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("time1");
+    }
     const property = await kycHostForm
       .findOneAndUpdate(
         { _id: id },
@@ -30,7 +34,9 @@ exports.updatehostKycForm = async (req, res) => {
         { new: true, runValidators: true }
       )
       .populate("hostId");
-    console.log("time2");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("time2");
+    }
     if (!property) {
       return res
         .status(404)
@@ -45,7 +51,10 @@ exports.updatehostKycForm = async (req, res) => {
         },
         { new: true }
       );
-      console.log("time3", id, property.hostId._id);
+
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("time3", id, property.hostId._id);
+      }
       if (!data) {
         return res
           .status(404)
@@ -77,7 +86,9 @@ exports.updatehostKycForm = async (req, res) => {
 exports.updatehostKycFormStatus = async (req, res) => {
   try {
     const { userId, isVerified, documentType } = req.body;
-    console.log("robin");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("robin");
+    }
     const response = await kycHostForm.findOneAndUpdate(
       { hostId: new mongoose.Types.ObjectId(userId) },
       {
@@ -87,7 +98,9 @@ exports.updatehostKycFormStatus = async (req, res) => {
         },
       }
     );
-    console.log("nightwin", response);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("nightwin", response);
+    }
     res.status(200).json(response);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -107,7 +120,9 @@ exports.updatehostKycFormGstStatus = async (req, res) => {
         },
       }
     );
-    console.log("nightwin", response);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("nightwin", response);
+    }
     res.status(200).json(response);
   } catch (error) {
     res.status(400).json({ message: error.message });

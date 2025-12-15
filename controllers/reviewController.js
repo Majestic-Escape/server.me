@@ -17,7 +17,9 @@ const { changeToUpperCase } = require("../utils/convertToUpperCase");
 
 //     const booking = await Booking.findById(bookingId);
 
-//     console.log("ssss", booking.hostId.toString());
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("ssss", booking.hostId.toString());
+// }
 
 //     const review = new Review({
 //       bookingId: bookingId,
@@ -40,7 +42,9 @@ const { changeToUpperCase } = require("../utils/convertToUpperCase");
 //         },
 //       },
 //     ]);
-//     console.log("nice go 2", result);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("nice go 2", result);
+// }
 //     if (result.length === 0) {
 //       return res.status(404).json({
 //         success: false,
@@ -51,7 +55,7 @@ const { changeToUpperCase } = require("../utils/convertToUpperCase");
 //       averageRating: 0,
 //       reviewCount: 0,
 //     };
-//     console.log(
+//     process.env.ENV === 'dev' && console.log(
 //       "nice go",
 //       avgData.averageRating.toFixed(2),
 //       avgData.reviewCount
@@ -317,7 +321,9 @@ exports.checkReview = async (req, res) => {
     const { id } = req.params;
 
     const data = await Review.find({ bookingId: id });
-    console.log("supernm", data);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("supernm", data);
+    }
     if (!data || data.length === 0) {
       return res
         .status(404)
@@ -334,7 +340,9 @@ exports.checkReview = async (req, res) => {
     const { id } = req.params;
 
     const data = await Review.find({ bookingId: id });
-    console.log("supernm", data);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("supernm", data);
+    }
     if (!data || data.length === 0) {
       return res
         .status(404)
@@ -469,7 +477,9 @@ exports.checkHostReview = async (req, res) => {
     const { id } = req.params;
 
     const data = await HostReview.find({ bookingId: id });
-    console.log("supernm", data);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("supernm", data);
+    }
     if (!data || data.length === 0) {
       return res
         .status(404)
@@ -484,7 +494,9 @@ exports.checkHostReview = async (req, res) => {
 exports.verifyToken = async (req, res) => {
   try {
     const { emailToken } = req.body;
-    console.log("abc");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("abc");
+    }
     const verify = jwt.verify(emailToken, secret);
     res.status(201).json({ success: true });
   } catch (error) {
@@ -497,7 +509,9 @@ exports.verifyToken = async (req, res) => {
 //     const ObjectId = require("mongoose").Types.ObjectId;
 //     const id = new ObjectId(`${req.params.propertyId}`);
 //     const review = await Review.find({ property: id }).populate("user");
-//     console.log("ratingssss", review);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("ratingssss", review);
+// }
 //     res.status(200).json({ success: true, data: review });
 //   } catch (error) {
 //     res.status(400).json({ success: false, error: error.message });

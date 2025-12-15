@@ -109,7 +109,9 @@ const sendOTPSMS = async (phoneNumber, otp) => {
 };
 
 const sendOTP = async (recipient, otp, firstName, type = "email") => {
-  console.log("Sending OTP:", { type, recipient, firstName, otp });
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("Sending OTP:", { type, recipient, firstName, otp });
+  }
   try {
     // Validate OTP format
     if (!otp || otp.length !== 6) {
@@ -140,7 +142,9 @@ const sendAdminLoginOtp = async (
   firstName = "Admin",
   type = "email"
 ) => {
-  console.log("Sending OTP:", { type, recipient, firstName, otp });
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("Sending OTP:", { type, recipient, firstName, otp });
+  }
   try {
     // Validate OTP format
     if (!otp || otp.length !== 6) {

@@ -72,6 +72,7 @@ async function sendWelcomeMail(recipientEmail, firstName) {
         },
       });
     }
+
     console.log("Email sent successfully:", {
       messageId: response.data.messageId,
       recipient: recipientEmail,

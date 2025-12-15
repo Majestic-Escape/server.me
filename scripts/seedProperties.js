@@ -446,19 +446,28 @@ async function seedDatabase() {
         useUnifiedTopology: true,
       }
     );
-    console.log("Connected to MongoDB");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Connected to MongoDB");
+    }
 
     // Clear existing properties
     await MajesticStay.deleteMany({});
-    console.log("Cleared existing properties");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Cleared existing properties");
+    }
 
     // Insert new properties
     const result = await MajesticStay.insertMany(transformedProperties);
-    console.log(`Successfully seeded ${result.length} properties`);
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log(`Successfully seeded ${result.length} properties`);
+    }
 
     // Disconnect from MongoDB
     await mongoose.disconnect();
-    console.log("Disconnected from MongoDB");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Disconnected from MongoDB");
+    }
   } catch (error) {
     console.error("Error seeding database:", error);
     process.exit(1);

@@ -14,7 +14,10 @@ const CLIENT_ID = process.env.DIGITAP_CLIENT_ID;
 const CLIENT_SECRET = process.env.DIGITAP_CLIENT_SECRET;
 const getAuthHeader = () => {
   const credentials = `${CLIENT_ID}:${CLIENT_SECRET}`;
-  console.log("Header", Buffer.from(credentials).toString("base64"));
+
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("Header", Buffer.from(credentials).toString("base64"));
+  }
 
   return `Basic ${Buffer.from(credentials).toString("base64")}`;
 };
@@ -25,23 +28,31 @@ const getAuthHeader = () => {
 //   //Basic MzEzNzA5Nzg6T2xTWXg2REV0ekNtSDBNeXFRM2NGS0ZaZ05wbXV0QWM=
 //   try {
 //     const a = getAuthHeader();
-//     console.log("Header data", a);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Header data", a);
+// }
 //     const response = await axios.post(`${OCR_API}/pan`, form, {
 //       headers: {
 //         ...form.getHeaders(),
 //         Authorization: getAuthHeader(),
 //       },
 //     });
-//     console.log("pan resp", response);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("pan resp", response);
+// }
 //     return response.data;
 //   } catch (error) {
-//     console.log("API FAILED");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("API FAILED");
+// }
 
 //     const errorMessage = error.response?.data
 //       ? JSON.stringify(error.response.data.error, null, 2)
 //       : error.message;
 
-//     console.log(error);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log(error);
+// }
 //     throw new Error(` ${errorMessage}`);
 //   }
 // };
@@ -102,7 +113,10 @@ exports.performOCR = async (imageInput, clientRefId, doc) => {
         maxContentLength: Infinity,
         // timeout: 30000 // optional
       });
-      console.log("passport ocr", response?.data?.result[0]?.details);
+
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("passport ocr", response?.data?.result[0]?.details);
+      }
 
       return response.data;
     } else if (doc == "voterId") {
@@ -112,7 +126,10 @@ exports.performOCR = async (imageInput, clientRefId, doc) => {
         maxContentLength: Infinity,
         // timeout: 30000 // optional
       });
-      console.log("voter ocr", response?.data?.result[0]?.details);
+
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("voter ocr", response?.data?.result[0]?.details);
+      }
 
       return response.data;
     } else {
@@ -126,7 +143,10 @@ exports.performOCR = async (imageInput, clientRefId, doc) => {
           // timeout: 30000 // optional
         }
       );
-      console.log("pans ocr", response?.data?.result[0]?.details);
+
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("pans ocr", response?.data?.result[0]?.details);
+      }
 
       return response.data;
     }
@@ -135,14 +155,20 @@ exports.performOCR = async (imageInput, clientRefId, doc) => {
       ? JSON.stringify(error.response.data.error, null, 2)
       : error.message;
 
-    console.log(errorMessage);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log(errorMessage);
+    }
   }
 };
 exports.performStatusCheck = async (requestData, doc) => {
-  console.log("entered the status check", doc);
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("entered the status check", doc);
+  }
   try {
     if (doc == "pan") {
-      console.log("entered the status check2");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("entered the status check2");
+      }
       try {
         const response = await axios.post(
           `${STATUS_API}/pan_basic`,
@@ -154,14 +180,20 @@ exports.performStatusCheck = async (requestData, doc) => {
             },
           }
         );
-        console.log("Pan response", response);
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log("Pan response", response);
+        }
 
         return response.data;
       } catch (error) {
-        console.log("Pan error check", error);
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log("Pan error check", error);
+        }
       }
     } else if (doc == "voterId") {
-      console.log("entered the status check voter", requestData);
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("entered the status check voter", requestData);
+      }
       const response = await axios.post(`${STATUS_API}/voter`, requestData, {
         headers: {
           "Content-Type": "application/json",
@@ -179,7 +211,9 @@ exports.performStatusCheck = async (requestData, doc) => {
       return response.data;
     }
   } catch (error) {
-    console.log("status check valida", error);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("status check valida", error);
+    }
     // const errorMessage = error.response?.data
     //   ? JSON.stringify(error.response.data.error, null, 2)
     //   : error.message;
@@ -190,7 +224,9 @@ exports.performStatusCheck = async (requestData, doc) => {
       "Status check failed";
 
     throw new Error(message);
-    // console.log(errorMessage);
+    // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    //   console.log(errorMessage);
+    // }
   }
 };
 

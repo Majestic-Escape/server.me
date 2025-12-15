@@ -44,7 +44,9 @@ exports.updateProfile = async (req, res) => {
   try {
     // Extract email from query parameters
     const { email } = req.query;
-    console.log("Email", email);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Email", email);
+    }
     if (!email) {
       return res.status(400).json({ message: "Email is required" });
     }
@@ -68,14 +70,18 @@ exports.updateProfile = async (req, res) => {
         message: "firstName, lastName, dob, and phoneNumber are required",
       });
     }
-    console.log("s1");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("s1");
+    }
 
     // Find the existing user by email
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ message: "Profile not found" });
     }
-    console.log("s2");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("s2");
+    }
 
     // Update required fields
     user.firstName = firstName;
@@ -96,7 +102,9 @@ exports.updateProfile = async (req, res) => {
     if (governmentIdType !== undefined) {
       user.governmentIdType = governmentIdType;
     }
-    console.log("s3");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("s3");
+    }
     // Save the updated user
     await user.save();
 

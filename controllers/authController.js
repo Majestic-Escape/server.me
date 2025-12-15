@@ -29,7 +29,9 @@ const authController = {
       const token = req.body.token;
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log("Enter banning 0");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("Enter banning 0");
+      }
       const user = await User.findById(decoded.userId);
       if (!user) {
         return res.status(404).json({
@@ -70,17 +72,18 @@ const authController = {
     } catch (error) {
       console.error(error);
 
-      // if (error.name === "TokenExpiredError") {
-      //   return res.status(401).json({
-      //     success: false,
-      //     message: "Token expired",
-      //   });
-      // }
+      if (error.name === "TokenExpiredError") {
+        return res.status(401).json({
+          success: false,
+          code: "TOKEN_EXPIRED",
+          message: "Session expired",
+        });
+      }
 
-      // return res.status(400).json({
-      //   success: false,
-      //   message: "Invalid token",
-      // });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid token",
+      });
     }
   },
 };

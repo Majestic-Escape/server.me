@@ -25,7 +25,9 @@ function makeClientRefId(prefix) {
 //     // Fetch user
 
 //     const user = await User.findById(userId);
-//     console.log("User", user, email, user.firstName);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("User", user, email, user.firstName);
+// }
 //     if (!user) return res.status(404).json({ error: "User not found" });
 
 //     // OCR Request
@@ -189,7 +191,9 @@ function makeClientRefId(prefix) {
 exports.verifyKYC = async (req, res) => {
   try {
     const { userId, imageUrl, doc } = req.body;
-    console.log("document t", doc);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("document t", doc);
+    }
     if (!userId) return res.status(400).json({ error: "userId required" });
 
     const user = await User.findById(userId);
@@ -198,7 +202,9 @@ exports.verifyKYC = async (req, res) => {
     const form = await kycHostForm.findOne({
       hostId: new mongoose.Types.ObjectId(userId),
     });
-    console.log("this new", form);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("this new", form);
+    }
     const clientRefId = makeClientRefId("OCR"); // <=45 chars
     const ocrLog = await KycLogs.create({
       userId,
@@ -214,7 +220,10 @@ exports.verifyKYC = async (req, res) => {
       // handle response, persist
       // ... validate ocrResponse structure before using it
       ocrLog.status = "success";
-      console.log("mcu", ocrResult.result[0].details);
+
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("mcu", ocrResult.result[0].details);
+      }
       ocrLog.responseData = ocrResult;
       await ocrLog.save();
 
@@ -238,7 +247,10 @@ exports.verifyKYC = async (req, res) => {
       });
 
       const statusResult = await performStatusCheck(statusLog.requestData, doc);
-      console.log("Pan status result", statusResult);
+
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("Pan status result", statusResult);
+      }
       if (!statusResult) {
         return res.status(400).json({
           success: false,
@@ -256,7 +268,10 @@ exports.verifyKYC = async (req, res) => {
       // handle response, persist
       // ... validate ocrResponse structure before using it
       ocrLog.status = "success";
-      console.log("mcu2", ocrResult.result[0].details);
+
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("mcu2", ocrResult.result[0].details);
+      }
       ocrLog.responseData = ocrResult;
       await ocrLog.save();
 
@@ -292,7 +307,10 @@ exports.verifyKYC = async (req, res) => {
       // handle response, persist
       // ... validate ocrResponse structure before using it
       ocrLog.status = "success";
-      console.log("mcu2", ocrResult.result[0].details);
+
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("mcu2", ocrResult.result[0].details);
+      }
       ocrLog.responseData = ocrResult;
       await ocrLog.save();
 

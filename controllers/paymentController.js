@@ -34,7 +34,9 @@ exports.fetch = async (req, res) => {
     const { paymentType, search, searchList, from, to } = req.query;
     const date = parseMDYToUTC(from, to);
 
-    console.log(date.from, date.to);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log(date.from, date.to);
+    }
 
     const filter = {};
     if (paymentType && paymentType != "all") {
@@ -120,7 +122,9 @@ exports.createOrder = async (req, res) => {
     const user = await User.findById(userId);
     const ObjectId = require("mongoose").Types.ObjectId;
 
-    console.log("not nic", bookingId);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("not nic", bookingId);
+    }
 
     // Create order with Razorpay
     const order = await razorpay.orders.create({
@@ -167,7 +171,9 @@ exports.verifyPayment = async (req, res) => {
       paymentMethod,
     } = req.body;
 
-    console.log("t0");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("t0");
+    }
     // Verify signature
     const body = razorpay_order_id + "|" + razorpay_payment_id;
     const expectedSignature = crypto
@@ -175,7 +181,9 @@ exports.verifyPayment = async (req, res) => {
       .update(body.toString())
       .digest("hex");
 
-    console.log("t1");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("t1");
+    }
     const isAuthentic = expectedSignature === razorpay_signature;
     const payment = await razorpay.payments.fetch(razorpay_payment_id);
     if (!payment) {
@@ -184,7 +192,9 @@ exports.verifyPayment = async (req, res) => {
         .json({ success: false, error: "Payment method not found" });
     }
 
-    console.log("t2");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("t2");
+    }
     if (isAuthentic) {
       // Update payment details in database
       const data = await Payment.findOneAndUpdate(
@@ -207,7 +217,9 @@ exports.verifyPayment = async (req, res) => {
     } else {
       // Update payment status to failed
 
-      console.log("t3");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("t3");
+      }
       await Payment.findOneAndUpdate(
         { orderId: razorpay_order_id },
         { status: "failed" }
@@ -282,7 +294,9 @@ exports.getPaymentByBooking = async (req, res) => {
 //   try {
 //     const { hostId, bookingId, userId, amount, property, propertyId } =
 //       req.body;
-//     console.log("enter");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("enter");
+// }
 //     const bank = await BankDetail.find({ hostId: hostId });
 //     if (!bank) {
 //       return res.status(404).json({
@@ -290,14 +304,18 @@ exports.getPaymentByBooking = async (req, res) => {
 //         error: "Bank details not found",
 //       });
 //     }
-//     console.log("enter2");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("enter2");
+// }
 //     if (!amount || amount < 100) {
 //       return res.status(400).json({
 //         success: false,
 //         error: "Amount too small. Minimum payout is ₹1",
 //       });
 //     }
-//     console.log("enter3");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("enter3");
+// }
 //     const payout = await axios.post(
 //       "https://sandbox.razorpay.com/v1/payouts",
 //       {
@@ -326,7 +344,9 @@ exports.getPaymentByBooking = async (req, res) => {
 //         },
 //       }
 //     );
-//     console.log("enter4");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("enter4");
+// }
 //     if (!payout) {
 //       return res.status(404).json({
 //         success: false,
@@ -356,7 +376,9 @@ exports.getPaymentByBooking = async (req, res) => {
 //     if (!amount || amount < 100) {
 //       return { success: false, error: "Amount too small" };
 //     }
-//     console.log("post1");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("post1");
+// }
 //     const bank = await BankDetail.findOne({ hostId: hostId });
 //     if (!bank) {
 //       return res
@@ -370,7 +392,9 @@ exports.getPaymentByBooking = async (req, res) => {
 //         error: "Host payout document details not found",
 //       });
 //     }
-//     console.log("post2");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("post2");
+// }
 //     const payout = await axios.post(
 //       `${API_URL}/payouts`,
 //       {
@@ -398,7 +422,9 @@ exports.getPaymentByBooking = async (req, res) => {
 //         },
 //       }
 //     );
-//     console.log("Entered payout4");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Entered payout4");
+// }
 //     if (!payout) {
 //       return res.status(404).json({ success: false, error: "Payout failed" });
 //     }
@@ -415,12 +441,16 @@ exports.getPaymentByBooking = async (req, res) => {
 
 async function initiatePayout(booking) {
   try {
-    console.log("Entered payout", booking);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Entered payout", booking);
+    }
     if (!booking.price || booking.price < 100) {
       return { success: false, error: "Amount too small" };
     }
     const generateString = generateUniqueString();
-    console.log("Entered payout2");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Entered payout2");
+    }
     const bank = await BankDetail.findOne({ hostId: booking.hostId });
     if (!bank) {
       return { success: false, error: "Bank details not found" };
@@ -433,7 +463,9 @@ async function initiatePayout(booking) {
       };
     }
 
-    console.log("Entered payout3");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Entered payout3");
+    }
     const payout = await axios.post(
       `${API_URL}/payouts`,
       {
@@ -461,7 +493,9 @@ async function initiatePayout(booking) {
         },
       }
     );
-    console.log("Entered payout4");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Entered payout4");
+    }
     if (!payout) {
       return { success: false, error: "Payout failed" };
     }
@@ -529,7 +563,10 @@ async function initiatePayout(booking) {
 exports.createPayout = async (req, res) => {
   try {
     const { bookingId, propertyId, amount, hostId } = req.body;
-    console.log("o", amount, bookingId, propertyId);
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("o", amount, bookingId, propertyId);
+    }
     if (!bookingId || !propertyId || !amount) {
       return res
         .status(400)
@@ -552,7 +589,10 @@ exports.createPayout = async (req, res) => {
     const today = new Date();
     const diffTime = Math.abs(kycDate.getTime() - today.getTime());
     const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-    console.log("testing the stran", kycDate, diffDays);
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("testing the stran", kycDate, diffDays);
+    }
     if (hostData.hostOffer == true && hostData.kyc && diffDays <= 90) {
       const newAmount = Number(amount);
       const data = new HostPayout({
@@ -590,7 +630,9 @@ exports.createPayout = async (req, res) => {
 // cron.schedule("59 23 * * *", async () => {
 exports.schedulecron = async (req, res) => {
   try {
-    console.log("enter payout cron");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("enter payout cron");
+    }
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todayEnd = new Date();
@@ -598,7 +640,10 @@ exports.schedulecron = async (req, res) => {
 
     const twoDayAgo = new Date(todayStart);
     twoDayAgo.setDate(todayStart.getDate() - 2);
-    console.log("payout timing for", twoDayAgo, todayEnd);
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("payout timing for", twoDayAgo, todayEnd);
+    }
     const confirmedBookings = await Booking.find({
       status: "confirmed",
       checkIn: { $gte: twoDayAgo, $lte: todayEnd },
@@ -631,6 +676,7 @@ exports.schedulecron = async (req, res) => {
       }
 
       // CASE C: Payout already successful → skip
+
       console.log(
         `⏭️ Skipping booking ${booking._id} (payout status: ${payoutRecord.status})`
       );
@@ -643,7 +689,9 @@ exports.schedulecron = async (req, res) => {
 
       // Log each result
       if (result.success) {
-        console.log(`✅ Payout successful for booking: ${booking._id}`);
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log(`✅ Payout successful for booking: ${booking._id}`);
+        }
       } else {
         console.log(
           `❌ Payout failed for booking: ${booking._id} - ${result.error}`
@@ -665,10 +713,15 @@ exports.schedulecron = async (req, res) => {
 exports.update = async (req, res) => {
   // ✅ Return response IMMEDIATELY
   // res.status(200).json({ received: true, timestamp: new Date().toISOString() });
-  console.log("Payment payout started");
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("Payment payout started");
+  }
   try {
     const secret = process.env.RAZORPAY_WEBHOOK_KEY;
-    console.log("🟢 Webhook received at:", new Date().toISOString());
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("🟢 Webhook received at:", new Date().toISOString());
+    }
 
     const signature = req.headers["x-razorpay-signature"];
 
@@ -681,7 +734,9 @@ exports.update = async (req, res) => {
 
     req.on("end", async () => {
       try {
-        console.log("🔍 Raw body length:", rawBody.length);
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log("🔍 Raw body length:", rawBody.length);
+        }
 
         // Verify signature
         const expectedSignature = crypto
@@ -700,11 +755,16 @@ exports.update = async (req, res) => {
           return;
         }
 
-        console.log("✅ Webhook verified!");
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log("✅ Webhook verified!");
+        }
 
         // Parse payload
         const payload = JSON.parse(rawBody);
-        console.log("📦 Webhook Event:", payload.event);
+
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log("📦 Webhook Event:", payload.event);
+        }
 
         // Process asynchronously
         processWebhookEvent(payload).catch(console.error);
@@ -720,11 +780,15 @@ exports.update = async (req, res) => {
 // Process webhook asynchronously
 async function processWebhookEvent(payload) {
   try {
-    console.log("🔄 Processing webhook event:", payload);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("🔄 Processing webhook event:", payload);
+    }
 
     switch (payload.event) {
       case "payment.captured":
-        console.log("payment captured");
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log("payment captured");
+        }
         break;
       case "payout.processed":
         await handlePayoutProcessed(payload.payload.payout.entity);
@@ -745,10 +809,14 @@ async function processWebhookEvent(payload) {
         await handlePayoutRejected(payload.payload.payout.entity);
         break;
       default:
-        console.log("⚪ Unhandled webhook event:", payload.event);
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log("⚪ Unhandled webhook event:", payload.event);
+        }
     }
 
-    console.log("✅ Event processing completed:", payload.event);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("✅ Event processing completed:", payload.event);
+    }
   } catch (error) {
     console.error(`❌ Error processing ${payload.event}:`, error);
   }
@@ -758,10 +826,18 @@ async function processWebhookEvent(payload) {
 // ========== PAYMENT HANDLERS ==========
 async function handlePayoutProcessed(payment) {
   try {
-    console.log("💰 Payment Captured:", payment);
-    // console.log("Amount:", payment.amount / 100); // Convert paise to rupees
-    // console.log("Order ID:", payment.order_id);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("💰 Payment Captured:", payment);
+    }
+    // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    //   console.log("Amount:", payment.amount / 100);
+    // } // Convert paise to rupees
+    // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    //   console.log("Order ID:", payment.order_id);
+    // }
+    // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
     // console.log("Customer:", payment.email);
+    // }
 
     // Update your booking status in database
     // await HostPayout.findOneAndUpdate(
@@ -773,35 +849,49 @@ async function handlePayoutProcessed(payment) {
     //   }
     // );
 
-    console.log("✅ Booking payment status updated");
+    //     if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    //   console.log("✅ Booking payment status updated");
+    // }
   } catch (error) {
     console.error("❌ Error handling payment.captured:", error);
   }
 }
 
 async function handlePaymentInitiated(payment) {
-  console.log("💰 Payment Captured:", payment);
-  // console.log("❌ Payment Failed:", payment.id, payment.error_description);
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("💰 Payment Captured:", payment);
+  }
+  // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+  //   console.log("❌ Payment Failed:", payment.id, payment.error_description);
+  // }
   // Update booking status to failed
 }
 
 async function handlePayoutUpdated(payment) {
-  console.log("🔐 Payment Authorized:", payment);
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("🔐 Payment Authorized:", payment);
+  }
   // Payment is authorized but not captured yet
 }
 
 async function handlePayoutPending(payout) {
-  console.log("✅ Payout Processed:", payout);
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("✅ Payout Processed:", payout);
+  }
   // Your existing payout logic
 }
 
 async function handlePayoutRejected(payout) {
-  console.log("❌ Payout Failed:", payout);
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("❌ Payout Failed:", payout);
+  }
   // Your existing payout failure logic
 }
 
 async function handlePayoutReversed(payout) {
-  console.log("🔄 Payout Reversed:", payout);
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("🔄 Payout Reversed:", payout);
+  }
 }
 
 // // controllers/paymentController.js
@@ -839,7 +929,9 @@ async function handlePayoutReversed(payout) {
 //     const { paymentType, search, searchList, from, to } = req.query;
 //     const date = parseMDYToUTC(from, to);
 
-//     console.log(date.from, date.to);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log(date.from, date.to);
+// }
 
 //     const filter = {};
 //     if (paymentType && paymentType != "all") {
@@ -925,7 +1017,9 @@ async function handlePayoutReversed(payout) {
 //     const user = await User.findById(userId);
 //     const ObjectId = require("mongoose").Types.ObjectId;
 
-//     console.log("not nic", bookingId);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("not nic", bookingId);
+// }
 
 //     // Create order with Razorpay
 //     const order = await razorpay.orders.create({
@@ -972,7 +1066,9 @@ async function handlePayoutReversed(payout) {
 //       paymentMethod,
 //     } = req.body;
 
-//     console.log("t0");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("t0");
+// }
 //     // Verify signature
 //     const body = razorpay_order_id + "|" + razorpay_payment_id;
 //     const expectedSignature = crypto
@@ -980,7 +1076,9 @@ async function handlePayoutReversed(payout) {
 //       .update(body.toString())
 //       .digest("hex");
 
-//     console.log("t1");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("t1");
+// }
 //     const isAuthentic = expectedSignature === razorpay_signature;
 //     const payment = await razorpay.payments.fetch(razorpay_payment_id);
 //     if (!payment) {
@@ -989,7 +1087,9 @@ async function handlePayoutReversed(payout) {
 //         .json({ success: false, error: "Payment method not found" });
 //     }
 
-//     console.log("t2");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("t2");
+// }
 //     if (isAuthentic) {
 //       // Update payment details in database
 //       const data = await Payment.findOneAndUpdate(
@@ -1012,7 +1112,9 @@ async function handlePayoutReversed(payout) {
 //     } else {
 //       // Update payment status to failed
 
-//       console.log("t3");
+//       process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("t3");
+// }
 //       await Payment.findOneAndUpdate(
 //         { orderId: razorpay_order_id },
 //         { status: "failed" }
@@ -1087,7 +1189,9 @@ async function handlePayoutReversed(payout) {
 // //   try {
 // //     const { hostId, bookingId, userId, amount, property, propertyId } =
 // //       req.body;
-// //     console.log("enter");
+// //     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("enter");
+// }
 // //     const bank = await BankDetail.find({ hostId: hostId });
 // //     if (!bank) {
 // //       return res.status(404).json({
@@ -1095,14 +1199,18 @@ async function handlePayoutReversed(payout) {
 // //         error: "Bank details not found",
 // //       });
 // //     }
-// //     console.log("enter2");
+// //     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("enter2");
+// }
 // //     if (!amount || amount < 100) {
 // //       return res.status(400).json({
 // //         success: false,
 // //         error: "Amount too small. Minimum payout is ₹1",
 // //       });
 // //     }
-// //     console.log("enter3");
+// //     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("enter3");
+// }
 // //     const payout = await axios.post(
 // //       "https://sandbox.razorpay.com/v1/payouts",
 // //       {
@@ -1131,7 +1239,9 @@ async function handlePayoutReversed(payout) {
 // //         },
 // //       }
 // //     );
-// //     console.log("enter4");
+// //     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("enter4");
+// }
 // //     if (!payout) {
 // //       return res.status(404).json({
 // //         success: false,
@@ -1156,12 +1266,16 @@ async function handlePayoutReversed(payout) {
 
 // async function initiatePayout(booking) {
 //   try {
-//     console.log("Entered payout", booking);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Entered payout", booking);
+// }
 //     const generatestring = generateUniqueString();
 //     if (!booking.price || booking.price < 100) {
 //       return { success: false, error: "Amount too small" };
 //     }
-//     console.log("Entered payout2");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Entered payout2");
+// }
 //     const bank = await BankDetail.findOne({ hostId: booking.hostId });
 //     if (!bank) {
 //       return { success: false, error: "Bank details not found" };
@@ -1174,7 +1288,9 @@ async function handlePayoutReversed(payout) {
 //       };
 //     }
 
-//     console.log("Entered payout3");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Entered payout3");
+// }
 //     const payout = await axios.post(
 //       `${API_URL}/payouts`,
 //       {
@@ -1202,7 +1318,9 @@ async function handlePayoutReversed(payout) {
 //         },
 //       }
 //     );
-//     console.log("Entered payout4",payout.data);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Entered payout4",payout.data);
+// }
 //     if (!payout) {
 //       return { success: false, error: "Payout failed" };
 //     }
@@ -1226,7 +1344,9 @@ async function handlePayoutReversed(payout) {
 // }
 
 // async function setcronjob(){
+//   process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
 //   console.log("entered cron");
+// }
 //   try {
 //     const todayStart = new Date();
 //     todayStart.setHours(0, 0, 0, 0);
@@ -1238,7 +1358,7 @@ async function handlePayoutReversed(payout) {
 //       checkIn: { $gte: todayStart, $lte: todayEnd },
 //     });
 
-//     console.log(
+//     process.env.ENV === 'dev' && console.log(
 //       `📅 Found ${confirmedBookings.length} bookings for payout today`
 //     );
 
@@ -1249,9 +1369,11 @@ async function handlePayoutReversed(payout) {
 
 //       // Log each result
 //       if (result.success) {
-//         console.log(`✅ Payout successful for booking: ${booking._id}`);
+//         process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log(`✅ Payout successful for booking: ${booking._id}`);
+// }
 //       } else {
-//         console.log(
+//         process.env.ENV === 'dev' && console.log(
 //           `❌ Payout failed for booking: ${booking._id} - ${result.error}`
 //         );
 //       }
@@ -1259,7 +1381,7 @@ async function handlePayoutReversed(payout) {
 //     const successful = results.filter((r) => r.success).length;
 //     const failed = results.filter((r) => !r.success).length;
 
-//     console.log(
+//     process.env.ENV === 'dev' && console.log(
 //       `📊 Cron job completed: ${successful} successful, ${failed} failed`
 //     );
 //   } catch (err) {
@@ -1270,7 +1392,9 @@ async function handlePayoutReversed(payout) {
 // exports.createPayout = async (req, res) => {
 //   try {
 //     const { bookingId, propertyId, amount } = req.body;
-//     console.log("o", amount, bookingId, propertyId);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("o", amount, bookingId, propertyId);
+// }
 //     if (!bookingId || !propertyId || !amount) {
 //       return res
 //         .status(400)
@@ -1311,10 +1435,14 @@ async function handlePayoutReversed(payout) {
 // exports.update = async (req, res) => {
 //   // ✅ Return response IMMEDIATELY
 //   // res.status(200).json({ received: true, timestamp: new Date().toISOString() });
+//   process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
 //   console.log('Payment payout started');
+// }
 //   try {
 //     const secret = "secret10142025";
-//     console.log("🟢 Webhook received at:", new Date().toISOString());
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("🟢 Webhook received at:", new Date().toISOString());
+// }
 
 //     const signature = req.headers["x-razorpay-signature"];
 
@@ -1327,7 +1455,9 @@ async function handlePayoutReversed(payout) {
 
 //     req.on('end', async () => {
 //       try {
-//         console.log("🔍 Raw body length:", rawBody.length);
+//         process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("🔍 Raw body length:", rawBody.length);
+// }
 
 //         // Verify signature
 //         const expectedSignature = crypto
@@ -1335,7 +1465,7 @@ async function handlePayoutReversed(payout) {
 //           .update(rawBody)
 //           .digest('hex');
 
-//         console.log("🔍 Signature check:", {
+//         process.env.ENV === 'dev' && console.log("🔍 Signature check:", {
 //           expected: expectedSignature.substring(0, 20) + '...',
 //           received: signature?.substring(0, 20) + '...',
 //           match: expectedSignature === signature
@@ -1346,11 +1476,15 @@ async function handlePayoutReversed(payout) {
 //           return;
 //         }
 
-//         console.log("✅ Webhook verified!");
+//         process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("✅ Webhook verified!");
+// }
 
 //         // Parse payload
 //         const payload = JSON.parse(rawBody);
-//         console.log("📦 Webhook Event:", payload.event);
+//         process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("📦 Webhook Event:", payload.event);
+// }
 
 //         // Process asynchronously
 //         processWebhookEvent(payload).catch(console.error);
@@ -1368,11 +1502,15 @@ async function handlePayoutReversed(payout) {
 // // Process webhook asynchronously
 // async function processWebhookEvent(payload) {
 //   try {
-//     console.log("🔄 Processing webhook event:", payload);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("🔄 Processing webhook event:", payload);
+// }
 
 //     switch (payload.event) {
 //       case "payment.captured":
-//         console.log("payment captured");
+//         process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("payment captured");
+// }
 //         break;
 //       case "payout.processed":
 //         await handlePayoutProcessed(payload.payload.payout.entity);
@@ -1393,10 +1531,14 @@ async function handlePayoutReversed(payout) {
 //         await handlePayoutRejected(payload.payload.payout.entity);
 //         break;
 //       default:
-//         console.log("⚪ Unhandled webhook event:", payload.event);
-//     }
+//         process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("⚪ Unhandled webhook event:", payload.event);
+// }
+// //     }
 
-//     console.log("✅ Event processing completed:", payload.event);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("✅ Event processing completed:", payload.event);
+// }
 //   } catch (error) {
 //     console.error(`❌ Error processing ${payload.event}:`, error);
 //   }
@@ -1406,10 +1548,18 @@ async function handlePayoutReversed(payout) {
 // // ========== PAYMENT HANDLERS ==========
 // async function handlePayoutProcessed(payment) {
 //   try {
-//     console.log("💰 Payment Captured:", payment);
-//     // console.log("Amount:", payment.amount / 100); // Convert paise to rupees
-//     // console.log("Order ID:", payment.order_id);
-//     // console.log("Customer:", payment.email);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("💰 Payment Captured:", payment);
+// }
+//     // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Amount:", payment.amount / 100);
+// } // Convert paise to rupees
+//     // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Order ID:", payment.order_id);
+// }
+//     // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Customer:", payment.email);
+// }
 
 //     // Update your booking status in database
 //     // await HostPayout.findOneAndUpdate(
@@ -1421,33 +1571,47 @@ async function handlePayoutReversed(payout) {
 //     //   }
 //     // );
 
-//     console.log("✅ Booking payment status updated");
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("✅ Booking payment status updated");
+// }
 //   } catch (error) {
 //     console.error("❌ Error handling payment.captured:", error);
 //   }
 // }
 
 // async function handlePaymentInitiated(payment) {
-//     console.log("💰 Payment Captured:", payment);
-//   // console.log("❌ Payment Failed:", payment.id, payment.error_description);
+//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("💰 Payment Captured:", payment);
+// }
+//   // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("❌ Payment Failed:", payment.id, payment.error_description);
+// }
 //   // Update booking status to failed
 // }
 
 // async function handlePayoutUpdated(payment) {
+//   process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
 //   console.log("🔐 Payment Authorized:", payment);
+// }
 //   // Payment is authorized but not captured yet
 // }
 
 // async function handlePayoutPending(payout) {
+//   process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
 //   console.log("✅ Payout Processed:", payout);
+// }
 //   // Your existing payout logic
 // }
 
 // async function handlePayoutRejected(payout) {
+//   process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
 //   console.log("❌ Payout Failed:", payout);
+// }
 //   // Your existing payout failure logic
 // }
 
 // async function handlePayoutReversed(payout) {
+//   process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
 //   console.log("🔄 Payout Reversed:", payout);
+// }
 // }

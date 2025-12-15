@@ -198,7 +198,10 @@ const verifyOTP = async (req, res) => {
     user.otp = { value: null, expiry: null }; // Clear OTP
     user.otpRetries = 0;
     await user.save();
-    console.log("We are setting the token", admin, typeof admin);
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("We are setting the token", admin, typeof admin);
+    }
     // Generate authentication token
     const token = jwt.sign(
       {

@@ -25,7 +25,9 @@ let isCalendarCronRunning = false;
 
 //       if (resp.status === 304) {
 //         // nothing changed
-//         console.log("Calendar not modified:", cal.url);
+//         process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Calendar not modified:", cal.url);
+// }
 //         continue;
 //       }
 
@@ -38,9 +40,13 @@ let isCalendarCronRunning = false;
 
 //       // parse ICS
 //       const data = resp.data;
-//       console.log("the old", data);
+//       process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("the old", data);
+// }
 //       const parsed = ical.sync.parseICS(data);
-//       console.log("the new", parsed);
+//       process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("the new", parsed);
+// }
 
 //       // collect UIDs seen
 //       const seenUIDs = [];
@@ -57,7 +63,9 @@ let isCalendarCronRunning = false;
 //         // Node-ical gives start/end as Date if it can parse them
 //         let start = vevent.start;
 //         let end = vevent.end;
-//         console.log("the start", start, end);
+//         process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("the start", start, end);
+// }
 //         // Normalize: if either is string or date, ensure Date objects
 //         start = new Date(start);
 //         end = new Date(end);
@@ -118,7 +126,9 @@ let isCalendarCronRunning = false;
 // }
 // Helper functions - define these OUTSIDE the syncCalendars function
 function correctICalDates(vevent) {
-  console.log(`\n=== Correcting dates for: ${vevent.summary} ===`);
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log(`\n=== Correcting dates for: ${vevent.summary} ===`);
+  }
 
   let start, end;
 
@@ -129,15 +139,22 @@ function correctICalDates(vevent) {
     typeof vevent.start.value === "string" &&
     vevent.start.value.length === 8; // YYYYMMDD format
 
-  console.log("Is all-day event:", isAllDayEvent);
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("Is all-day event:", isAllDayEvent);
+  }
 
   if (isAllDayEvent) {
     // Parse dates manually to avoid timezone issues
     start = parseAllDayDate(vevent.start.value);
     end = parseAllDayDate(vevent.end.value);
 
-    console.log("Manual parsing - Start:", start.toISOString());
-    console.log("Manual parsing - End:", end.toISOString());
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Manual parsing - Start:", start.toISOString());
+    }
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Manual parsing - End:", end.toISOString());
+    }
 
     // For all-day events in iCal, the end date is EXCLUSIVE
     // So "20251022 to 20251026" means: Oct 22, 23, 24, 25 (check out Oct 26)
@@ -148,8 +165,13 @@ function correctICalDates(vevent) {
     start = forceUTC(new Date(vevent.start));
     end = forceUTC(new Date(vevent.end));
 
-    console.log("Date-time event - Start:", start.toISOString());
-    console.log("Date-time event - End:", end.toISOString());
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Date-time event - Start:", start.toISOString());
+    }
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Date-time event - End:", end.toISOString());
+    }
   }
 
   return { start, end, isAllDayEvent };
@@ -206,7 +228,9 @@ async function syncCalendars(hostId) {
       });
 
       if (resp.status === 304) {
-        console.log("Calendar not modified:", cal.url);
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log("Calendar not modified:", cal.url);
+        }
         continue;
       }
 
@@ -219,17 +243,23 @@ async function syncCalendars(hostId) {
 
       // parse ICS
       const data = resp.data;
-      console.log("=== RAW ICS DATA ===");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("=== RAW ICS DATA ===");
+      }
       // Extract just the date parts to see the original values
       const dateMatches = data.match(
         /DTSTART[^:]*:(\d{8})|DTEND[^:]*:(\d{8})/g
       );
       if (dateMatches) {
-        console.log("Original dates from ICS:", dateMatches);
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log("Original dates from ICS:", dateMatches);
+        }
       }
 
       const parsed = ical.sync.parseICS(data);
-      console.log("=== PARSED DATA ===");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("=== PARSED DATA ===");
+      }
 
       // collect UIDs seen
       const seenUIDs = [];
@@ -255,15 +285,24 @@ async function syncCalendars(hostId) {
             );
             continue;
           }
-          console.log("FINAL DATES FOR BOOKING:");
+          if (process.env.NEXT_PUBLIC_ENV === "dev") {
+            console.log("FINAL DATES FOR BOOKING:");
+          }
+
           console.log(
             "Start:",
             start.toISOString(),
             "->",
             start.toDateString()
           );
-          console.log("End:", end.toISOString(), "->", end.toDateString());
-          console.log("Nights:", (end - start) / (1000 * 60 * 60 * 24));
+
+          if (process.env.NEXT_PUBLIC_ENV === "dev") {
+            console.log("End:", end.toISOString(), "->", end.toDateString());
+          }
+
+          if (process.env.NEXT_PUBLIC_ENV === "dev") {
+            console.log("Nights:", (end - start) / (1000 * 60 * 60 * 24));
+          }
 
           // Validate the dates make sense
           if (start >= end) {
@@ -285,7 +324,10 @@ async function syncCalendars(hostId) {
             existing.price = existing.price ?? 0;
             existing.status = "confirmed";
             await existing.save();
-            console.log("✅ Updated booking:", existing._id);
+
+            if (process.env.NEXT_PUBLIC_ENV === "dev") {
+              console.log("✅ Updated booking:", existing._id);
+            }
           } else {
             // Create new imported booking -> block the dates
             const newB = new Booking({
@@ -307,7 +349,10 @@ async function syncCalendars(hostId) {
               }`,
             });
             await newB.save();
-            console.log("✅ Created new booking:", newB._id);
+
+            if (process.env.NEXT_PUBLIC_ENV === "dev") {
+              console.log("✅ Created new booking:", newB._id);
+            }
           }
           return resp.status;
         } catch (dateError) {
@@ -330,7 +375,10 @@ async function syncCalendars(hostId) {
         if (!seenUIDs.includes(b.sourceId)) {
           b.status = "cancelled";
           await b.save();
-          console.log("❌ Cancelled missing booking:", b._id);
+
+          if (process.env.NEXT_PUBLIC_ENV === "dev") {
+            console.log("❌ Cancelled missing booking:", b._id);
+          }
         }
       }
 
@@ -381,11 +429,15 @@ async function syncCalendars(hostId) {
 //       await syncCalendars(userData.host);
 //       if (!isCalendarCronRunning) {
 //         cron.schedule("*/5 * * * *", async () => {
-//           console.log("Running calendar sync...");
+//           process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("Running calendar sync...");
+// }
 //           await syncCalendars(userData.host);
 //         });
 //         isCalendarCronRunning = true;
-//         console.log("✅ Calendar sync cron job started");
+//         process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//   console.log("✅ Calendar sync cron job started");
+// }
 //       }
 //       res.json({ success: true, message: "Calendar imported", calendar: cal });
 //     } else {
@@ -413,7 +465,9 @@ exports.saveCalendarUrl = async (req, res) => {
         propertyId,
         kind: "export",
       });
-      console.log("new fil", existing);
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("new fil", existing);
+      }
       if (existing) {
         // ✅ Don't create a new one, just return the existing URL
         const host = process.env.PUBLIC_HOSTNAME;
@@ -446,11 +500,15 @@ exports.saveCalendarUrl = async (req, res) => {
 
     //   if (!isCalendarCronRunning) {
     //     cron.schedule("*/5 * * * *", async () => {
-    //       console.log("Running calendar sync...");
+    //       process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    //   console.log("Running calendar sync...");
+    // }
     //       await syncCalendars(userData.host);
     //     });
     //     isCalendarCronRunning = true;
-    //     console.log("✅ Calendar sync cron job started");
+    //     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    //   console.log("✅ Calendar sync cron job started");
+    // }
     //   }
     //   return res.json({
     //     success: true,
@@ -487,12 +545,17 @@ exports.saveCalendarUrl = async (req, res) => {
       // START CRON ONLY ON FIRST SUBMISSION
       if (!isCalendarCronRunning) {
         cron.schedule("*/5 * * * *", async () => {
-          console.log("⏳ Running periodic calendar sync...");
+          if (process.env.NEXT_PUBLIC_ENV === "dev") {
+            console.log("⏳ Running periodic calendar sync...");
+          }
           await syncCalendars(userData.host);
         });
 
         isCalendarCronRunning = true;
-        console.log("🚀 Calendar sync cron job started");
+
+        if (process.env.NEXT_PUBLIC_ENV === "dev") {
+          console.log("🚀 Calendar sync cron job started");
+        }
       }
 
       return res.json({

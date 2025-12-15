@@ -5,11 +5,15 @@ exports.createBooking = async (req, res) => {
   try {
     const { userId, propertyId, dateFrom, dateTo, guests, specialOffers } =
       req.body;
-    console.log("this is id", userId);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("this is id", userId);
+    }
     const userData = await User.findById(userId);
 
     const email = await userData.email;
-    console.log("this is email", email);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("this is email", email);
+    }
     const newBooking = new Booking({
       userId,
       email,

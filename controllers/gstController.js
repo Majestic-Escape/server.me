@@ -9,7 +9,10 @@ const CLIENT_ID = process.env.DIGITAP_CLIENT_ID;
 const CLIENT_SECRET = process.env.DIGITAP_CLIENT_SECRET;
 const getAuthHeader = () => {
   const credentials = `${CLIENT_ID}:${CLIENT_SECRET}`;
-  console.log("Header", Buffer.from(credentials).toString("base64"));
+
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("Header", Buffer.from(credentials).toString("base64"));
+  }
 
   return `Basic ${Buffer.from(credentials).toString("base64")}`;
 };
@@ -18,7 +21,9 @@ function makeClientRefId(prefix) {
   return id.slice(0, 45);
 }
 async function performGstCheck(requestData) {
-  console.log("gst access");
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("gst access");
+  }
   try {
     const response = await axios.post(`${STATUS_GST}/gst`, requestData, {
       headers: {
@@ -26,13 +31,17 @@ async function performGstCheck(requestData) {
         Authorization: getAuthHeader(),
       },
     });
-    console.log("gst ", response.data);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("gst ", response.data);
+    }
     return response.data;
   } catch (error) {
     const errorMessage = error.response?.data
       ? JSON.stringify(error.response.data.error, null, 2)
       : error.message;
-    console.log("Gst not validated", errorMessage);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Gst not validated", errorMessage);
+    }
   }
 }
 
@@ -54,7 +63,9 @@ async function performPanCheck(requestData) {
     const errorMessage = error.response?.data
       ? JSON.stringify(error.response.data.error, null, 2)
       : error.message;
-    console.log("PAN not validated", errorMessage);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("PAN not validated", errorMessage);
+    }
 
     throw new Error(errorMessage);
   }
@@ -65,7 +76,9 @@ exports.verifyGst = async (req, res) => {
     const { userId, panNumber, gstNumber } = req.body;
 
     if (!userId) return res.status(400).json({ error: "userId required" });
-    console.log("midway0");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("midway0");
+    }
     const user = await User.findById(userId);
     if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -94,7 +107,9 @@ exports.verifyGst = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Business PAN not found " });
     }
-    console.log("midway1", statusResult);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("midway1", statusResult);
+    }
     statusLog.status = "success";
     statusLog.responseData = statusResult;
     await statusLog.save();
@@ -119,14 +134,18 @@ exports.verifyGst = async (req, res) => {
     // const data = statusResult?.result?.gstinResList.filter(
     //   (item) => item.gstin == gstNumber
     // );
-    // console.log("midway2", data);
+    // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    //   console.log("midway2", data);
+    // }
     // if (!data) {
     //   return res.status(404).json({
     //     success: false,
     //     message: "Gst associated with Business PAN not found ",
     //   });
     // }
-    // console.log("midway3", data[0]);
+    // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    //   console.log("midway3", data[0]);
+    // }
     if (matched.authStatus != "Active") {
       return res.status(404).json({
         success: false,

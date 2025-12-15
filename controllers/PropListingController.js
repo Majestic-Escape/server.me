@@ -1,41 +1,41 @@
 const ListingProperty = require("../models/ListingProperty");
 
-
 exports.getListingStatus = async (req, res) => {
   try {
     const email = req.params.email;
     const listings = await ListingProperty.find({ email: email });
 
-    console.log("Listings", email)
-    console.log("Length", listings.length)
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Listings", email);
+    }
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Length", listings.length);
+    }
 
     if (!listings.length) {
-      return res.json({ status: 'noListings' });
+      return res.json({ status: "noListings" });
     }
 
-    const statuses = listings.map(listing => listing.status);
-    
-    if (statuses.every(status => status === 'incomplete')) {
-      return res.json({ status: 'incompleteListings' });
+    const statuses = listings.map((listing) => listing.status);
+
+    if (statuses.every((status) => status === "incomplete")) {
+      return res.json({ status: "incompleteListings" });
     }
 
-    if (statuses.every(status => status === 'processing')) {
-      return res.json({ status: 'pendingListings' });
+    if (statuses.every((status) => status === "processing")) {
+      return res.json({ status: "pendingListings" });
     }
 
-    if (statuses.every(status => status === 'active')) {
-      return res.json({ status: 'activeListings' });
+    if (statuses.every((status) => status === "active")) {
+      return res.json({ status: "activeListings" });
     }
 
-    return res.json({ status: 'mixedListings' });
-
+    return res.json({ status: "mixedListings" });
   } catch (error) {
-    console.error('Error fetching listing status:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error fetching listing status:", error);
+    res.status(500).json({ message: "Server error" });
   }
 };
-
-
 
 exports.getAllPListings = async (req, res) => {
   const { page, status, sortBy, searchTerm, hostEmail } = req.query;

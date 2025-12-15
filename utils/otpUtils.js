@@ -90,7 +90,9 @@ const sendOTPSMS = async (phoneNumber, otp) => {
  * @returns {Promise} Promise resolving to send result
  */
 const sendOTP = async (recipient, otp, name, type = "email") => {
-  console.log("Sending OTP:", { type, recipient, name, otp });
+  if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    console.log("Sending OTP:", { type, recipient, name, otp });
+  }
   try {
     // Validate OTP format
     if (!otp || otp.length !== 6) {

@@ -3,7 +3,9 @@ const User = require("../models/User");
 
 const authMiddleware = async (req, res, next) => {
   try {
-    console.log("Enter authmiddleware");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Enter authmiddleware");
+    }
     const authHeader = req.headers["authorization"];
 
     const token = authHeader && authHeader.split(" ")[1];
@@ -24,9 +26,13 @@ const authMiddleware = async (req, res, next) => {
         else resolve(decoded);
       });
     });
-    console.log("Enter banning 0");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("Enter banning 0");
+    }
     if (decoded.admin == 0) {
-      console.log("Enter banning", decoded.admin);
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("Enter banning", decoded.admin);
+      }
       const user = await User.findById(decoded.userId);
       if (!user) {
         return res.status(404).json({
@@ -37,7 +43,9 @@ const authMiddleware = async (req, res, next) => {
           requestType: req.method,
         });
       }
-      console.log("Enter banning2");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("Enter banning2");
+      }
       // 🚫 BLOCK BANNED USERS IMMEDIATELY
       if (user.status?.banned === true) {
         return res.status(403).json({
@@ -48,7 +56,9 @@ const authMiddleware = async (req, res, next) => {
           requestType: req.method,
         });
       }
-      console.log("Enter banning3");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("Enter banning3");
+      }
       // 🚫 FORCE LOGOUT IF tokenVersion DOESN’T MATCH
       if (decoded.tokenVersion !== user.tokenVersion) {
         return res.status(401).json({
@@ -59,7 +69,9 @@ const authMiddleware = async (req, res, next) => {
           requestType: req.method,
         });
       }
-      console.log("Enter banning4");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("Enter banning4");
+      }
       req.user = user;
       next();
     } else {

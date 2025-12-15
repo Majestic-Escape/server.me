@@ -6,14 +6,18 @@ exports.getGuests = async (req, res) => {
   try {
     const { search } = req.query;
     const total = await User.countDocuments();
-    console.log("entered get guests 1");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("entered get guests 1");
+    }
     if (!total) {
       return res
         .status(404)
         .json({ success: false, message: "Document count failed" });
     }
     if (!search && search == "") {
-      console.log("entered get guests 2");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("entered get guests 2");
+      }
       const limit = parseInt(req.query.limit) || 2;
       const skip = parseInt(req.query.skip) || 0;
       const users = await User.find().limit(limit).skip(skip);
@@ -22,7 +26,9 @@ exports.getGuests = async (req, res) => {
           .status(404)
           .json({ success: false, message: "User data could not be found" });
       }
-      console.log("entered get guests 3");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("entered get guests 3");
+      }
       res.json({ data: users, total: total });
     } // Fetch all users
     else {

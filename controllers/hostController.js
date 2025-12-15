@@ -74,7 +74,9 @@ exports.submitBankDetails = async (req, res) => {
           message: "No Data",
         });
       }
-      console.log("enter");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("enter");
+      }
       // Update existing record
       const createContact = await axios.post(
         `${API_URL}/contacts`,
@@ -95,7 +97,9 @@ exports.submitBankDetails = async (req, res) => {
       if (createContact.status != 200 && createContact.status !== 201) {
         return res.json({ success: false, message: createContact.status });
       }
-      console.log("reach");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("reach");
+      }
 
       const fundAccount = await axios.post(
         `${API_URL}/fund_accounts`,
@@ -115,11 +119,15 @@ exports.submitBankDetails = async (req, res) => {
           },
         }
       );
-      console.log("reach2");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("reach2");
+      }
       if (fundAccount.status !== 200 && fundAccount.status !== 201) {
         return res.json({ success: false, message: fundAccount.status });
       }
-      console.log("reach3");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("reach3");
+      }
       const accountNumberEncrypt = encrypt(accountNumber);
       const data = new BankDetail({
         hostId: id,
@@ -139,7 +147,9 @@ exports.submitBankDetails = async (req, res) => {
           .status(400)
           .json({ success: false, message: "No property found " });
       }
-      console.log("reach4");
+      if (process.env.NEXT_PUBLIC_ENV === "dev") {
+        console.log("reach4");
+      }
       return res.status(200).json({
         success: true,
         message: "Bank details added successfully",
@@ -178,12 +188,16 @@ exports.getBankDetails = async (req, res) => {
 // Get a single host and their properties
 exports.getHostById = async (req, res) => {
   try {
-    console.log(req.params.hostId);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log(req.params.hostId);
+    }
     const host = await User.findById(req.params.hostId);
     if (!host) {
       return res.status(404).json({ message: "Host not found" });
     }
-    console.log(host);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log(host);
+    }
     res.status(200).json({ success: true, data: host });
   } catch (error) {
     res.status(500).json({ message: "Error fetching host", error });
@@ -273,7 +287,9 @@ exports.getHostReviewsById = async (req, res) => {
 exports.getAllReviews = async (req, res) => {
   try {
     const { flagged, search, stars, checkin, checkout, property } = req.query;
-    console.log("reached");
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("reached");
+    }
     const filter = {};
 
     // ⭐ Fix date filter
@@ -306,7 +322,9 @@ exports.getAllReviews = async (req, res) => {
       })
       .lean();
 
-    console.log("a", reviews);
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("a", reviews);
+    }
     // Step 3: Extra filters in JS
 
     if (flagged && flagged == "true") {

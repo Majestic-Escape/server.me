@@ -7,10 +7,12 @@ const {
   unbanUser,
   getGuests,
   getGuestsById,
+  getKycDetails,
 } = require("../controllers/guestController");
 const authMiddleware = require("../middleware/authMiddleware");
 
 router.get("/", authMiddleware, getGuests);
+router.get("/kyc", authMiddleware, getKycDetails);
 // Get user information
 router.get("/info/:userId", getUserInfo);
 

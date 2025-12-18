@@ -142,10 +142,17 @@ exports.submitBankDetails = async (req, res) => {
       const filter = { host: id };
       const update = { $set: { bankDetails: true } };
       const property = await ListingProperty.updateMany(filter, update);
+
       if (!property) {
         return res
           .status(400)
           .json({ success: false, message: "No property found " });
+      }
+      const userBank = await User.findByIdAndUpdate(id, { bank: true });
+      if (!userBank) {
+        return res
+          .status(400)
+          .json({ success: false, message: "No user found " });
       }
       if (process.env.NEXT_PUBLIC_ENV === "dev") {
         console.log("reach4");

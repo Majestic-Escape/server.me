@@ -24,8 +24,8 @@ router.get("/booking", paymentController.getPaymentByBooking);
 //   paymentController.update
 // );
 
-router.post("/create-payout", paymentController.createPayout);
+// router.post("/create-payout", paymentController.createPayout);
 
 // router.post("/payout", paymentController.payout);
-router.post("/schedule-cron", paymentController.schedulecron);
+// router.post("/schedule-cron", paymentController.schedulecron);
 module.exports = router;

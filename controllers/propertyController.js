@@ -10,7 +10,8 @@ const {
 const User = require("../models/User");
 const { default: mongoose } = require("mongoose");
 const { changeToUpperCase } = require("../utils/convertToUpperCase");
-
+const BankDetail = require("../models/BankDetail");
+const adminEmail = process.env.ADMIN_EMAIL.split(",");
 // exports.getCustomSearch = async (req, res) => {
 //   try {
 //     const { location, from, to, guests, propertyType } = req.query;
@@ -706,7 +707,8 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
     // Fetch the listing data in parallel
     const [properties, totalProperties] = await Promise.all([
       ListingProperty.find(query)
-        .sort({ createdAt: -1 })
+        .populate("host")
+        .sort({ updatedAt: -1 })
         .skip(skip)
         .limit(limit)
         .lean(),
@@ -780,13 +782,18 @@ exports.approveListing = async (req, res) => {
       state: updatedListing.address.state,
       city: updatedListing.address.city,
     };
-    const adminEmail = "admin@majesticescape.in";
+
     if (updatedListing.delist == "admin") {
-      await sendEmail(adminEmail, 48, params);
+      await Promise.all(
+        adminEmail.map((email) => sendEmail(email.trim(), 48, params))
+      );
       await sendEmail(params.hostEmail, 49, params);
     } else {
       await sendEmail(params.hostEmail, 25, params);
-      await sendEmail(adminEmail, 26, params);
+
+      await Promise.all(
+        adminEmail.map((email) => sendEmail(email.trim(), 26, params))
+      );
     }
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("Approve Listing");
@@ -841,7 +848,7 @@ exports.reactivate = async (req, res) => {
       state: updatedListing.address.state,
       city: updatedListing.address.city,
     };
-    const adminEmail = "admin@majesticescape.in";
+
     // await sendEmail(updatedListing.hostEmail, 25, params);
     // await sendEmail(adminEmail, 26, params);
 
@@ -865,7 +872,6 @@ exports.deListing = async (req, res) => {
     const { id } = req.params; // listing ID
     const { hostSide } = req.query;
 
-    const adminEmail = "admin@majesticescape.in";
     if (hostSide && hostSide == "true") {
       const updatedListing = await ListingProperty.findByIdAndUpdate(
         id,
@@ -889,7 +895,10 @@ exports.deListing = async (req, res) => {
       };
 
       await sendEmail(params.hostEmail, 29, params);
-      await sendEmail(adminEmail, 49, params);
+
+      await Promise.all(
+        adminEmail.map((email) => sendEmail(email.trim(), 49, params))
+      );
       return res.status(200).json({
         sucess: true,
         message: "Listing delisted successfully",
@@ -1164,24 +1173,55 @@ exports.createListingProperty = async (req, res) => {
 exports.updateListingProperty = async (req, res) => {
   try {
     const { id } = req.params;
-    const user = await User.findOne({ email: req.body.hostEmail });
-    if (!user) {
-      return res.status(404).json({ message: "Host not found" });
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("jjj", req.body._id);
-    }
+    const { submit, status } = req.query;
+    // const user = await User.findOne({ email: req.body.hostEmail });
+    // if (!user) {
+    //   return res.status(404).json({ message: "Host not found" });
+    // }
+    // if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    //   console.log("jjj", req.body._id);
+    // }
 
     const property = await ListingProperty.findOneAndUpdate(
-      { _id: id, host: user._id },
+      { _id: id },
       { $set: req.body },
       { new: true, runValidators: true }
-    );
+    ).populate("host");
 
     if (!property) {
       return res
         .status(404)
         .json({ message: "Property not found or unauthorized to update" });
+    }
+    if (property.host.kyc === true) {
+      property.kycStatus = "completed";
+      await property.save();
+    }
+    if (property.host.bank === true) {
+      property.bankDetails = true;
+      await property.save();
+    }
+    const host = property.host.firstName + " " + property.host.lastName;
+    const params = {
+      hostName: host,
+      propertyTitle: property.title,
+      city: property.address.city,
+      state: property.address.state,
+      propertyId: property._id,
+      createdAt: new Date(property.createdAt).toLocaleDateString(),
+      updatedAt: new Date(property.updatedAt).toLocaleDateString(),
+    };
+
+    if (submit) {
+      if (status == "active") {
+        await Promise.all(
+          adminEmail.map((email) => sendEmail(email.trim(), 51, params))
+        );
+      } else {
+        await Promise.all(
+          adminEmail.map((email) => sendEmail(email.trim(), 50, params))
+        );
+      }
     }
 
     res.status(200).json(property);
@@ -1199,7 +1239,7 @@ exports.updateKycProperty = async (req, res) => {
     const property = await ListingProperty.updateMany(
       { host: id },
       { $set: { kycStatus: "completed" } }
-    );
+    ).populate("host");
 
     if (!property) {
       return res

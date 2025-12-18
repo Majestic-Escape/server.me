@@ -26,6 +26,7 @@ const moderate = process.env.MODERATE_POLICY_DAYS * 24 * 60 * 60;
 const flexible = process.env.FLEXIBLE_POLICY_DAYS * 60 * 60;
 const key = process.env.RAZORPAY_KEY_ID;
 const secret = process.env.RAZORPAY_KEY_SECRET;
+const adminEmail = process.env.ADMIN_EMAIL.split(",");
 // Create a new booking
 // exports.createBooking = async (req, res) => {
 //   try {
@@ -278,12 +279,24 @@ exports.getAnalyticsFilterBookings = async (req, res) => {
 exports.getAllFilterBookings = async (req, res) => {
   try {
     const { search, status, from, to, title, hostEmail } = req.query;
-
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = parseInt(req.query.skip) || 0;
+    let date;
+    if (to == from) {
+      return res.json({ success: false, error: "toDate" });
+    } else {
+      date = parseMDYToUTC(from, to);
+    }
+    const total = await Booking.countDocuments({
+      source: "local",
+      action: "user",
+      paymentStatus: "paid",
+    });
     const filter = {
       source: "local",
       action: "user",
     };
-    const date = parseMDYToUTC(from, to);
+    // const date = parseMDYToUTC(from, to);
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("rub", title, date.from, date.to);
     }
@@ -291,48 +304,52 @@ exports.getAllFilterBookings = async (req, res) => {
       filter.status = { $regex: new RegExp(status, "i") };
     }
 
-    if (from || to) {
-      filter.checkIn = {};
-      if (from) filter.checkIn.$gte = date.from;
-      if (to) filter.checkIn.$lte = date.to;
-    }
+    filter.checkIn = {};
+    if (from) filter.checkIn.$gte = date.from;
+    if (to) filter.checkIn.$lte = date.to;
 
     // Fetch bookings first
-    let bookings = await Booking.find(filter)
-      .populate("userId propertyId hostId")
-      .sort({ createdAt: -1 })
-      .lean();
+    if (!title && !hostEmail && !search) {
+      const bookings = await Booking.find(filter)
+        .populate("userId propertyId hostId")
+        .limit(limit)
+        .skip(skip)
+        .sort({ checkIn: 1 })
+        .lean();
+      res.json({ success: true, data: bookings, total: total });
+    } else {
+      let bookings = await Booking.find(filter)
+        .populate("userId propertyId hostId")
+        .sort({ checkIn: -1 })
+        .lean();
+      if (title && title.toLowerCase() !== "all") {
+        bookings = bookings.filter((item) =>
+          item.propertyId?.title?.toLowerCase().includes(title.toLowerCase())
+        );
+      }
 
-    // Apply property title & user search in JS
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("rub2", bookings);
-    }
-    if (title && title.toLowerCase() !== "all") {
-      bookings = bookings.filter((item) =>
-        item.propertyId?.title?.toLowerCase().includes(title.toLowerCase())
-      );
-    }
+      if (hostEmail && hostEmail.toLowerCase() !== "all") {
+        bookings = bookings.filter((item) =>
+          item.hostId?.email?.toLowerCase().includes(hostEmail.toLowerCase())
+        );
+      }
 
-    if (hostEmail && hostEmail.toLowerCase() !== "all") {
-      bookings = bookings.filter((item) =>
-        item.hostId?.email?.toLowerCase().includes(hostEmail.toLowerCase())
-      );
-    }
+      if (search) {
+        const s = search.toLowerCase();
+        bookings = bookings.filter(
+          (b) =>
+            b.propertyId?.title?.toLowerCase().includes(s) ||
+            b.userId?.firstName.toLowerCase().includes(s) ||
+            b.userId?.lastName.toLowerCase().includes(s) ||
+            (b.userId?.firstName + " " + b.userId?.lastName)
+              .toLowerCase()
+              .includes(s)
+        );
+      }
 
-    if (search) {
-      const s = search.toLowerCase();
-      bookings = bookings.filter(
-        (b) =>
-          b.propertyId?.title?.toLowerCase().includes(s) ||
-          b.userId?.firstName.toLowerCase().includes(s) ||
-          b.userId?.lastName.toLowerCase().includes(s) ||
-          (b.userId?.firstName + " " + b.userId?.lastName)
-            .toLowerCase()
-            .includes(s)
-      );
+      bookings = bookings.slice(skip, skip + limit);
+      res.json({ success: true, data: bookings, total: total });
     }
-
-    res.json({ success: true, data: bookings });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -1008,6 +1025,7 @@ exports.getBookingsByHostGroupByUsers = async (req, res) => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("mys", hostId);
     }
+
     const mongoose = require("mongoose");
 
     // 1. Build filter
@@ -1016,16 +1034,25 @@ exports.getBookingsByHostGroupByUsers = async (req, res) => {
       action: "user",
       status: "confirmed",
     };
+    let date;
+    if (to == from) {
+      return res.json({ success: false, error: "toDate" });
+    } else {
+      date = parseMDYToUTC(from, to);
+    }
+    filter.checkIn = {};
+    if (from) filter.checkIn.$gte = date.from;
+    if (to) filter.checkIn.$lte = date.to;
 
     if (hostId && hostId.toLowerCase() != "all") {
       filter.userId = new mongoose.Types.ObjectId(hostId);
     }
-    const date = parseMDYToUTC(from, to);
-    if (from || to) {
-      filter.checkIn = {};
-      if (from) filter.checkIn.$gte = new Date(date.from);
-      if (to) filter.checkIn.$lte = new Date(date.to);
-    }
+    // const date = parseMDYToUTC(from, to);
+    // if (from || to) {
+    //   filter.checkIn = {};
+    //   if (from) filter.checkIn.$gte = new Date(date.from);
+    //   if (to) filter.checkIn.$lte = new Date(date.to);
+    // }
 
     // 2. Aggregation pipeline
     let bookings = await Booking.aggregate([
@@ -1186,9 +1213,11 @@ exports.cancelBooking = async (req, res) => {
     );
     await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
 
-    const adminEmail = "majesticescape.in@gmail.com";
     await sendEmail(userEmail, 11, params);
-    await sendEmail(adminEmail, 16, params);
+
+    await Promise.all(
+      adminEmail.map((email) => sendEmail(email.trim(), 16, params))
+    );
     await sendEmail(hostEmail, 17, params);
     res.status(200).json({ success: true, data: booking });
   } catch (error) {
@@ -1271,9 +1300,12 @@ exports.cancelAdminBooking = async (req, res) => {
     await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
     const params = paramsToObject(userName, hostName, booking);
 
-    const adminEmail = "admin@majesticescape.in";
     await sendEmail(booking.userId.email, 32, params);
-    await sendEmail(adminEmail, 31, params);
+
+    await Promise.all(
+      adminEmail.map((email) => sendEmail(email.trim(), 31, params))
+    );
+
     await sendEmail(booking.hostId.email, 33, params);
     res.status(200).json({
       success: true,
@@ -1535,11 +1567,13 @@ exports.terminateBooking = async (req, res) => {
       { paymentType: "refunded" }
     );
     await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
-    const adminEmail = "admin@majesticescape.in";
 
     await sendEmail(userEmail, 13, params);
     await sendEmail(hostEmail, 14, params);
-    await sendEmail(adminEmail, 15, params);
+
+    await Promise.all(
+      adminEmail.map((email) => sendEmail(email.trim(), 15, params))
+    );
 
     res.status(200).json({ success: true, data: booking });
   } catch (err) {
@@ -1734,12 +1768,14 @@ exports.terminateUserBooking = async (req, res) => {
     }
     const params = paramsToObject(userName, hostName, booking);
 
-    const adminEmail = "admin@majesticescape.in";
     // Email Notifications
 
     await sendEmail(userEmail, 22, params);
     await sendEmail(hostEmail, 20, params);
-    await sendEmail(adminEmail, 21, params);
+
+    await Promise.all(
+      adminEmail.map((email) => sendEmail(email.trim(), 21, params))
+    );
 
     res.status(200).json({
       success: true,
@@ -2163,8 +2199,6 @@ exports.markBookingAsPaid = async (req, res) => {
       console.log("inside the mark");
     }
 
-    const adminEmail = "admin@majesticescape.in";
-
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("inside the mark2");
     }
@@ -2203,17 +2237,23 @@ exports.markBookingAsPaid = async (req, res) => {
       console.log("inside the mark3");
     }
     if (manual) {
-      await sendEmail(booking.userId.email, 8, params, invoiceAttachment);
       await sendEmail(hostEmail, 42, params);
-      await sendEmail("majesticescape.in@gmail.com", 9);
+
+      await Promise.all(
+        adminEmail.map((email) => sendEmail(email.trim(), 9, params))
+      );
+      console.log("invoice", invoiceAttachment);
+      await sendEmail(booking.userId.email, 8, params, invoiceAttachment);
       return res.status(200).json({ success: true, data: booking });
+    } else {
+      await sendEmail(hostEmail, 34, params);
+
+      await Promise.all(
+        adminEmail.map((email) => sendEmail(email.trim(), 36, params))
+      );
+      console.log("invoice", invoiceAttachment);
+      await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
     }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("inside the mark4");
-    }
-    await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
-    await sendEmail(hostEmail, 34, params);
-    await sendEmail(adminEmail, 36, params);
     res.status(200).json({ success: true, data: booking });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });

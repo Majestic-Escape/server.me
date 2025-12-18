@@ -1,6 +1,6 @@
 const ListingProperty = require("../models/ListingProperty");
 const User = require("../models/User");
-
+const KycHostData = require("../models/KycHostForm");
 // Get user information by ID
 exports.getGuests = async (req, res) => {
   try {
@@ -18,7 +18,7 @@ exports.getGuests = async (req, res) => {
       if (process.env.NEXT_PUBLIC_ENV === "dev") {
         console.log("entered get guests 2");
       }
-      const limit = parseInt(req.query.limit) || 2;
+      const limit = parseInt(req.query.limit) || 10;
       const skip = parseInt(req.query.skip) || 0;
       const users = await User.find().limit(limit).skip(skip);
       if (!users) {
@@ -54,6 +54,14 @@ exports.getGuests = async (req, res) => {
   }
 };
 
+exports.getKycDetails = async (req, res) => {
+  const { id } = req.query;
+  const data = await KycHostData.find({ hostId: id });
+  if (!data) {
+    return res.status(404).json({ message: "Kyc data not found" });
+  }
+  return res.status(200).json({ data: data });
+};
 exports.getGuestsById = async (req, res) => {
   try {
     const { userId } = req.query;

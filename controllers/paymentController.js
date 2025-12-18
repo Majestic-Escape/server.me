@@ -560,9 +560,9 @@ async function initiatePayout(booking) {
   }
 }
 
-exports.createPayout = async (req, res) => {
+async function createPayout(bookingId, propertyId, amount, hostId) {
   try {
-    const { bookingId, propertyId, amount, hostId } = req.body;
+    // const { bookingId, propertyId, amount, hostId } = req.body;
 
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("o", amount, bookingId, propertyId);
@@ -625,10 +625,10 @@ exports.createPayout = async (req, res) => {
       error: error.message || "Failed to create payout",
     });
   }
-};
+}
 
-// cron.schedule("59 23 * * *", async () => {
-exports.schedulecron = async (req, res) => {
+cron.schedule("59 23 * * *", async () => {
+  // exports.schedulecron = async (req, res) => {
   try {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("enter payout cron");
@@ -661,6 +661,12 @@ exports.schedulecron = async (req, res) => {
       if (!payoutRecord) {
         console.log(
           `🆕 No payout record found → processing booking ${booking._id}`
+        );
+        await createPayout(
+          booking._id,
+          booking?.propertyId,
+          booking?.subTotal,
+          booking.hostId
         );
         bookingsToProcess.push(booking);
         continue;
@@ -707,8 +713,7 @@ exports.schedulecron = async (req, res) => {
   } catch (err) {
     console.error("❌ Cron job error:", err.message);
   }
-};
-//);
+});
 
 exports.update = async (req, res) => {
   // ✅ Return response IMMEDIATELY

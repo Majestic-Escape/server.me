@@ -289,12 +289,12 @@ async function syncCalendars(hostId) {
             console.log("FINAL DATES FOR BOOKING:");
           }
 
-          console.log(
-            "Start:",
-            start.toISOString(),
-            "->",
-            start.toDateString()
-          );
+          // console.log(
+          //   "Start:",
+          //   start.toISOString(),
+          //   "->",
+          //   start.toDateString()
+          // );
 
           if (process.env.NEXT_PUBLIC_ENV === "dev") {
             console.log("End:", end.toISOString(), "->", end.toDateString());
@@ -354,7 +354,7 @@ async function syncCalendars(hostId) {
               console.log("✅ Created new booking:", newB._id);
             }
           }
-          return resp.status;
+          // return resp.status;
         } catch (dateError) {
           console.error(
             "Error processing dates for UID:",

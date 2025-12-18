@@ -40,6 +40,7 @@ const userSchema = new mongoose.Schema(
       banned: { type: Boolean, default: false },
       bannedReason: { type: String },
     },
+    bank: { type: Boolean, default: false },
     kyc: {
       type: Boolean,
       default: false,

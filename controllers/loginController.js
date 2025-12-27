@@ -12,7 +12,13 @@ const TOKEN_EXPIRATION = "7d";
 const requestOTP = async (req, res) => {
   try {
     const { email, admin = false } = req.body;
-
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(email)) {
+      return res.status(404).json({
+        success: false,
+        message: "Invalid Email",
+      });
+    }
     // Check if user already exists in the system
     const existingUser = await User.findOne({ email });
 
@@ -172,9 +178,10 @@ const verifyOTP = async (req, res) => {
           code: "ACCOUNT_LOCKED",
           message: "Account locked due to too many failed attempts",
           statusCode: 423,
-          unlockAt: {
+          unlocksAt: {
             unlocksAt: user.lockUntil.toISOString(),
-            lockDuration: "5 minutes",
+            remainingMinutes: Math.ceil((user.lockUntil - Date.now()) / 60000),
+            // lockDuration: "5 minutes",
           },
         });
       }

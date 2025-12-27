@@ -10,7 +10,10 @@ exports.verifyKYC = async (req, res) => {
 
     // Fetch user
     const user = await User.find({ email: email });
-    console.log("User", user, email, user.firstName);
+
+    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+      console.log("User", user, email, user.firstName);
+    }
     if (!user) return res.status(404).json({ error: "User not found" });
 
     // OCR Request

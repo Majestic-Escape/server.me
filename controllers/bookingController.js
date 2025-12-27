@@ -6,6 +6,8 @@ const jwt = require("jsonwebtoken");
 const ListingProperty = require("../models/ListingProperty");
 const Users = require("../models/User");
 const fs = require("fs");
+const path = require("path");
+const mongoose = require("mongoose");
 const Agenda = require("agenda");
 const { sendEmail } = require("../utils/sendEmail");
 const User = require("../models/User");
@@ -355,13 +357,16 @@ exports.getAllFilterBookings = async (req, res) => {
   }
 };
 
-exports.getHostFilterBookings = async (req, res) => {
+exports.getHostFilterBookingStats = async (req, res) => {
   try {
     const { search, status, from, to, title, hostEmail, hostId } = req.query;
 
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("All the data that we need", from, to);
     }
+
+    const limit = req.query.limit || 10;
+    const skip = req.query.skip || 0;
     const filter = {
       source: "local",
       action: "user",
@@ -426,6 +431,154 @@ exports.getHostFilterBookings = async (req, res) => {
     res.json({ success: true, data: bookings });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+exports.getHostFilterBookings = async (req, res) => {
+  try {
+    const { search, status, from, to, title, hostEmail, hostId } = req.query;
+
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = parseInt(req.query.skip) || 0;
+
+    if (from && to && from === to) {
+      return res.json({ success: false, error: "toDate" });
+    }
+
+    const date = from && to ? parseMDYToUTC(from, to) : null;
+
+    /** ---------------- MATCH STAGE (BASE FILTER) ---------------- */
+    const matchStage = {
+      source: "local",
+      action: "user",
+      paymentStatus: "paid",
+    };
+
+    if (status && status.toLowerCase() !== "all") {
+      matchStage.status = new RegExp(`^${status}$`, "i");
+    }
+
+    if (hostId) {
+      matchStage.hostId = new mongoose.Types.ObjectId(hostId);
+    }
+
+    if (date) {
+      matchStage.checkIn = {
+        ...(from && { $gte: date.from }),
+        ...(to && { $lte: date.to }),
+      };
+    }
+
+    /** ---------------- AGGREGATION PIPELINE ---------------- */
+    const pipeline = [
+      { $match: matchStage },
+
+      // user
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "userId",
+        },
+      },
+      { $unwind: "$userId" },
+
+      // property
+      {
+        $lookup: {
+          from: "listingproperties",
+          localField: "propertyId",
+          foreignField: "_id",
+          as: "propertyId",
+        },
+      },
+      { $unwind: "$propertyId" },
+
+      // host
+      {
+        $lookup: {
+          from: "users",
+          localField: "hostId",
+          foreignField: "_id",
+          as: "hostId",
+        },
+      },
+      { $unwind: "$hostId" },
+    ];
+
+    /** ---------------- TEXT FILTERS ---------------- */
+    const textFilters = [];
+
+    if (title && title.toLowerCase() !== "all") {
+      textFilters.push({
+        "propertyId.title": { $regex: title, $options: "i" },
+      });
+    }
+
+    if (hostEmail && hostEmail.toLowerCase() !== "all") {
+      textFilters.push({
+        "hostId.email": { $regex: hostEmail, $options: "i" },
+      });
+    }
+
+    if (search && search.trim()) {
+      const s = search.trim();
+      textFilters.push({
+        $or: [
+          { "propertyId.title": { $regex: s, $options: "i" } },
+          { "userId.firstName": { $regex: s, $options: "i" } },
+          { "userId.lastName": { $regex: s, $options: "i" } },
+          {
+            $expr: {
+              $regexMatch: {
+                input: {
+                  $concat: ["$userId.firstName", " ", "$userId.lastName"],
+                },
+                regex: s,
+                options: "i",
+              },
+            },
+          },
+        ],
+      });
+    }
+
+    if (textFilters.length) {
+      pipeline.push({ $match: { $and: textFilters } });
+    }
+
+    /** ---------------- SORT + PAGINATION ---------------- */
+    pipeline.push(
+      { $sort: { checkIn: 1 } },
+      {
+        $facet: {
+          data: [{ $skip: skip }, { $limit: limit }],
+          totalCount: [{ $count: "count" }],
+        },
+      }
+    );
+
+    /** ---------------- EXECUTE ---------------- */
+    const result = await Booking.aggregate(pipeline);
+
+    const bookings = result[0].data;
+    const total = result[0].totalCount[0]?.count || 0;
+
+    res.json({
+      success: true,
+      data: bookings,
+      total,
+      limit,
+      skip,
+      hasMore: skip + limit < total,
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 };
 
@@ -940,7 +1093,7 @@ exports.generatePdf = async (req, res) => {
         Level 9, Spaze i-Tech Park, A1 Tower, Sector 49, Sohna Road, Gurugram, India - 122018
       </p>
       <p style="margin-top: 8px;">
-        <a href="https://www.majesticescape.com">www.majesticescape.com</a>
+        <a href="https://www.majesticescape.in">www.majesticescape.in</a>
       </p>
     </div>
   </div>
@@ -1025,8 +1178,6 @@ exports.getBookingsByHostGroupByUsers = async (req, res) => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("mys", hostId);
     }
-
-    const mongoose = require("mongoose");
 
     // 1. Build filter
     const filter = {
@@ -2175,7 +2326,7 @@ exports.confirmInstantBooking = async (req, res) => {
 
 exports.markBookingAsPaid = async (req, res) => {
   try {
-    const { bookingId, hostEmail, userId, manual, payment } = req.body;
+    const { bookingId, userId, manual, payment } = req.body;
 
     const booking = await Booking.findByIdAndUpdate(
       bookingId,
@@ -2202,6 +2353,7 @@ exports.markBookingAsPaid = async (req, res) => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("inside the mark2");
     }
+    // console.log("=======Before payment");
 
     const bank = await Payment.findOne({ bookingId: booking._id });
     if (!bank) {
@@ -2209,19 +2361,46 @@ exports.markBookingAsPaid = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Payment not found" });
     }
+    // console.log("=======Bank payment", bank);
+    const calTax = (subtotal, serviceFee) => {
+      if (subtotal <= 7500) {
+        return Math.round(subtotal * 0.12) + Math.round(serviceFee * 0.18); // 12% GST in India
+      } else if (subtotal > 7500) {
+        return Math.round(subtotal * 0.18) + Math.round(serviceFee * 0.18); // 18% GST in India
+      }
+    };
+    const tax = calTax(
+      booking.subTotal,
+      booking.subTotal * 0.12
+    ).toLocaleString();
 
-    const html = generateInvoiceHTML(booking, bank);
-
+    const html = generateInvoiceHTML(booking, bank, tax);
+    // console.log("=======pdf html", html);
     // Generate PDF buffer
     const pdfBuffer = await generateInvoicePDF(html);
+    // console.log("=======pdf buffer");
+    const invoicesDir = path.join(__dirname, "/..");
+    if (!fs.existsSync(invoicesDir)) {
+      fs.mkdirSync(invoicesDir, { recursive: true });
+    }
 
+    // File path
+    const filePath = path.join(invoicesDir, `invoice-${booking._id}.pdf`);
+
+    // Save PDF
+    fs.writeFileSync(filePath, pdfBuffer);
+    const localPdf = await fs.readFileSync(filePath);
     // Convert buffer → base64
-    const attachmentBase64 = pdfBuffer.toString("base64");
-
+    // const pdfPath = path.join(process.cwd(), "test.pdf");
+    // const pdfBuffer = fs.readFileSync(pdfPath);
+    // console.log("pdf path", pdfPath);
+    const attachmentBase64 = localPdf.toString("base64");
+    // console.log("=======Attachment");
     const invoiceAttachment = [
       {
         name: `invoice-${booking._id}.pdf`,
         content: attachmentBase64,
+        type: "application/pdf",
       },
     ];
 
@@ -2237,24 +2416,48 @@ exports.markBookingAsPaid = async (req, res) => {
       console.log("inside the mark3");
     }
     if (manual) {
-      await sendEmail(hostEmail, 42, params);
+      await sendEmail(booking.hostId.email, 42, params, invoiceAttachment);
 
       await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 9, params))
+        adminEmail.map((email) =>
+          sendEmail(email.trim(), 9, params, invoiceAttachment)
+        )
       );
-      console.log("invoice", invoiceAttachment);
+
       await sendEmail(booking.userId.email, 8, params, invoiceAttachment);
+      //invoiceAttachment;
+      try {
+        await fs.promises.unlink(filePath);
+      } catch (unlinkError) {
+        console.error("Failed to delete PDF file:", unlinkError);
+      }
+
       return res.status(200).json({ success: true, data: booking });
     } else {
-      await sendEmail(hostEmail, 34, params);
-
-      await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 36, params))
+      // console.log("=======Before email");
+      await sendEmail(
+        "coderelixtesting@outlook.com",
+        34,
+        params,
+        invoiceAttachment
       );
-      console.log("invoice", invoiceAttachment);
+      // console.log("=======after host");
+      await Promise.all(
+        adminEmail.map((email) =>
+          sendEmail(email.trim(), 36, params, invoiceAttachment)
+        )
+      );
+      // console.log("invoice", invoiceAttachment);
+
       await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
+      // invoiceAttachment
+      try {
+        await fs.promises.unlink(filePath);
+      } catch (unlinkError) {
+        console.error("Failed to delete PDF file:", unlinkError);
+      }
     }
-    res.status(200).json({ success: true, data: booking });
+    return res.status(200).json({ success: true, data: booking });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
   }

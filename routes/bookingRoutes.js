@@ -29,6 +29,11 @@ router.get(
   authMiddleware,
   bookingController.getHostFilterBookings
 );
+router.get(
+  "/analytics-stats-filter",
+  authMiddleware,
+  bookingController.getHostFilterBookingStats
+);
 
 router.get(
   "/revenue-filter",

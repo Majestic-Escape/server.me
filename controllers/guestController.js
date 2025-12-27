@@ -2,55 +2,214 @@ const ListingProperty = require("../models/ListingProperty");
 const User = require("../models/User");
 const KycHostData = require("../models/KycHostForm");
 // Get user information by ID
+// exports.getGuests = async (req, res) => {
+//   try {
+//     pipeline;
+//     const { search ,status} = req.query;
+//     const limit = parseInt(req.query.limit) || 10;
+//     const skip = parseInt(req.query.skip) || 0;
+
+//     const matchStage = {};
+//     if (status && status !== "all") {
+//       matchStage.status = status;
+//     }
+
+//     if (search && search.toLowerCase().trim() != "") {
+//       matchStage.$or = [
+//         { title: { $regex: search, $options: "i" } },
+//         // { placeType: { $regex: search, $options: "i" } },
+//         {
+//           $expr: {
+//             $regexMatch: {
+//               input: { $ifNull: ["$hostId.firstName", ""] },
+//               regex: search,
+//               options: "i",
+//             },
+//             $regexMatch: {
+//               input: { $ifNull: ["$hostId.lastName", ""] },
+//               regex: search,
+//               options: "i",
+//             },
+//             $regexMatch: {
+//               input: { $ifNull: ["$hostId.phoneNumber", ""] },
+//               regex: search,
+//               options: "i",
+//             },
+//           },
+//         },
+//       ];
+//     }
+//    const pipeline=[{ $sort: { updatedAt: -1 } },
+//       {
+//         $facet: {
+//           data: [{ $skip: skip }, { $limit: limit }],
+//           totalCount: [{ $count: "count" }],
+//         },
+//       },]
+//       const users = await User.aggregate();
+//       if (!users) {
+//         return res
+//           .status(404)
+//           .json({ success: false, message: "User data could not be found" });
+//       }
+//       if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//         console.log("entered get guests 3");
+//       }
+//       res.json({ data: users, total: total });
+//     } // Fetch all users
+//     else {
+//       let users = await User.find();
+//       if (!users) {
+//         return res
+//           .status(404)
+//           .json({ success: false, message: "Could not find user data" });
+//       }
+//       users = users.filter(
+//         (item) =>
+//           item.firstName.toLowerCase().includes(search.toLowerCase()) ||
+//           item.lastName.toLowerCase().includes(search.toLowerCase()) ||
+//           (item.firstName + " " + item.lastName)
+//             .toLowerCase()
+//             .includes(search.toLowerCase())
+//       );
+
+//       res.json({ data: users, total: total });
+//     }
+//   } catch (err) {
+//     res.status(500).json({ error: "Failed to fetch users" });
+//   }
+// };
+
 exports.getGuests = async (req, res) => {
   try {
-    const { search } = req.query;
-    const total = await User.countDocuments();
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("entered get guests 1");
-    }
-    if (!total) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Document count failed" });
-    }
-    if (!search && search == "") {
-      if (process.env.NEXT_PUBLIC_ENV === "dev") {
-        console.log("entered get guests 2");
-      }
-      const limit = parseInt(req.query.limit) || 10;
-      const skip = parseInt(req.query.skip) || 0;
-      const users = await User.find().limit(limit).skip(skip);
-      if (!users) {
-        return res
-          .status(404)
-          .json({ success: false, message: "User data could not be found" });
-      }
-      if (process.env.NEXT_PUBLIC_ENV === "dev") {
-        console.log("entered get guests 3");
-      }
-      res.json({ data: users, total: total });
-    } // Fetch all users
-    else {
-      let users = await User.find();
-      if (!users) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Could not find user data" });
-      }
-      users = users.filter(
-        (item) =>
-          item.firstName.toLowerCase().includes(search.toLowerCase()) ||
-          item.lastName.toLowerCase().includes(search.toLowerCase()) ||
-          (item.firstName + " " + item.lastName)
-            .toLowerCase()
-            .includes(search.toLowerCase())
-      );
+    const { search, status } = req.query;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = parseInt(req.query.skip) || 0;
 
-      res.json({ data: users, total: total });
+    const matchStage = {};
+
+    // Status filter
+    if (status && status !== "all") {
+      matchStage.status = status;
     }
+
+    // Search filter
+    if (search && search.trim() !== "") {
+      matchStage.$or = [
+        { firstName: { $regex: search, $options: "i" } },
+        { lastName: { $regex: search, $options: "i" } },
+
+        // 🔹 phoneNumber (number → string)
+        {
+          $expr: {
+            $regexMatch: {
+              input: { $toString: "$phoneNumber" },
+              regex: search,
+            },
+          },
+        },
+
+        // 🔹 full name search
+        {
+          $expr: {
+            $regexMatch: {
+              input: { $concat: ["$firstName", " ", "$lastName"] },
+              regex: search,
+              options: "i",
+            },
+          },
+        },
+      ];
+    }
+
+    const pipeline = [
+      // 1️⃣ Match users first (search + status)
+      { $match: matchStage },
+
+      // 2️⃣ Lookup properties
+      {
+        $lookup: {
+          from: "listingproperties",
+          localField: "_id",
+          foreignField: "host",
+          as: "properties",
+        },
+      },
+
+      // 3️⃣ Keep only users who are hosts
+      {
+        $match: {
+          "properties.0": { $exists: true },
+        },
+      },
+
+      // 4️⃣ Count properties
+      {
+        $addFields: {
+          totalProperties: { $size: "$properties" },
+        },
+      },
+
+      // 5️⃣ Lookup reviews
+      {
+        $lookup: {
+          from: "reviews",
+          localField: "_id",
+          foreignField: "hostId",
+          as: "reviews",
+        },
+      },
+
+      // 6️⃣ Review stats
+      {
+        $addFields: {
+          totalReviews: { $size: "$reviews" },
+          averageRating: {
+            $cond: [
+              { $gt: [{ $size: "$reviews" }, 0] },
+              { $avg: "$reviews.rating" },
+              0,
+            ],
+          },
+        },
+      },
+
+      // 7️⃣ Clean up payload
+      {
+        $project: {
+          password: 0,
+          properties: 0,
+          reviews: 0,
+        },
+      },
+
+      // 8️⃣ Sort
+      { $sort: { updatedAt: -1 } },
+
+      // 9️⃣ Pagination
+      {
+        $facet: {
+          data: [{ $skip: skip }, { $limit: limit }],
+          totalCount: [{ $count: "count" }],
+        },
+      },
+    ];
+
+    const result = await User.aggregate(pipeline);
+
+    const hosts = result[0].data;
+    const total = result[0].totalCount[0]?.count || 0;
+
+    res.status(200).json({
+      data: hosts,
+      total,
+      limit,
+      skip,
+      hasMore: skip + limit < total,
+    });
   } catch (err) {
-    res.status(500).json({ error: "Failed to fetch users" });
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch hosts" });
   }
 };
 

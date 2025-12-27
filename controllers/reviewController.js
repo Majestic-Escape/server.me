@@ -81,127 +81,223 @@ const { changeToUpperCase } = require("../utils/convertToUpperCase");
 //   }
 // };
 
+// exports.submitReview = async (req, res) => {
+//   try {
+//     const { bookingId, rating, content } = req.body;
+
+//     // 1. Find booking
+//     const booking = await Booking.findById(bookingId);
+//     if (!booking) {
+//       return res
+//         .status(404)
+//         .json({ success: false, message: "Booking not found" });
+//     }
+
+//     // 2. Create and save review
+//     const review = new Review({
+//       bookingId: booking._id,
+//       hostId: booking.hostId, // keep as ObjectId
+//       property: booking.propertyId, // keep as ObjectId
+//       user: booking.userId, // keep as ObjectId
+//       rating,
+//       content,
+//     });
+
+//     await review.save();
+//     const listproperty = await ListingProperty.findById(booking.propertyId);
+//     // 3. Calculate new average rating for this property
+//     if (!listproperty) {
+//       return res.status(404).json({
+//         success: false,
+//         message: "No property found.",
+//       });
+//     }
+//     if (listproperty.averageRating == 0) {
+//       const result = await Review.aggregate([
+//         {
+//           $match: { property: new mongoose.Types.ObjectId(booking.propertyId) },
+//         },
+//         {
+//           $group: {
+//             _id: "$property",
+//             averageRating: { $avg: "$rating" },
+//             reviewCount: { $sum: 1 },
+//           },
+//         },
+//       ]);
+
+//       if (result.length === 0) {
+//         return res.status(404).json({
+//           success: false,
+//           message: "No reviews found for this property.",
+//         });
+//       }
+
+//       const avgData = {
+//         averageRating: Number(result[0].averageRating.toFixed(2)),
+//         reviewCount: result[0].reviewCount,
+//       };
+
+//       // 4. Update property ratings
+//       const updatedProperty = await ListingProperty.findByIdAndUpdate(
+//         booking.propertyId,
+//         {
+//           averageRating: avgData.averageRating,
+//           reviewCount: avgData.reviewCount,
+//         },
+//         { new: true }
+//       );
+//       if (!updatedProperty) {
+//         return res
+//           .status(404)
+//           .json({ success: false, message: "Property not found" });
+//       }
+//       const updateStatus = await Booking.findByIdAndUpdate(bookingId, {
+//         reviewed: true,
+//       });
+//       if (!updateStatus) {
+//         return res
+//           .status(404)
+//           .json({ success: false, message: "Review not found" });
+//       }
+//       res.status(201).json({
+//         success: true,
+//         data: updatedProperty,
+//       });
+//     } else {
+//       const averageRating =
+//         (Number(listproperty?.averageRating) *
+//           Number(listproperty?.reviewCount) +
+//           Number(rating)) /
+//         (Number(listproperty?.reviewCount) + 1);
+//       const reviewCount = Number(listproperty?.reviewCount) + 1;
+//       const updatedProperty = await ListingProperty.findByIdAndUpdate(
+//         booking.propertyId,
+//         {
+//           averageRating: averageRating,
+//           reviewCount: reviewCount,
+//         },
+//         { new: true }
+//       );
+//       if (!updatedProperty) {
+//         return res
+//           .status(404)
+//           .json({ success: false, message: "Property not found" });
+//       }
+//       const updateStatus = await Booking.findByIdAndUpdate(bookingId, {
+//         reviewed: true,
+//       });
+//       if (!updateStatus) {
+//         return res
+//           .status(404)
+//           .json({ success: false, message: "Review not found" });
+//       }
+//       res.status(201).json({
+//         success: true,
+//         data: updatedProperty,
+//       });
+//     }
+
+//     // 5. Respond success
+//   } catch (error) {
+//     console.error("Error in submitReview:", error);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// };
+
 exports.submitReview = async (req, res) => {
   try {
     const { bookingId, rating, content } = req.body;
 
-    // 1. Find booking
-    const booking = await Booking.findById(bookingId);
+    // 1️⃣ Get booking (minimal fields only)
+    const booking = await Booking.findOne(
+      { _id: bookingId, reviewed: { $ne: true } },
+      { hostId: 1, propertyId: 1, userId: 1 }
+    );
+
     if (!booking) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
+      return res.status(404).json({
+        success: false,
+        message: "Booking not found or already reviewed",
+      });
     }
 
-    // 2. Create and save review
-    const review = new Review({
+    // 2️⃣ Create review
+    await Review.create({
       bookingId: booking._id,
-      hostId: booking.hostId, // keep as ObjectId
-      property: booking.propertyId, // keep as ObjectId
-      user: booking.userId, // keep as ObjectId
+      hostId: booking.hostId,
+      property: booking.propertyId,
+      user: booking.userId,
       rating,
       content,
     });
 
-    await review.save();
-    const listproperty = await ListingProperty.findById(booking.propertyId);
-    // 3. Calculate new average rating for this property
-    if (!listproperty) {
+    // 3️⃣ Aggregate ratings for property (SINGLE SOURCE OF TRUTH)
+    const [stats] = await Review.aggregate([
+      {
+        $match: {
+          property: new mongoose.Types.ObjectId(booking.propertyId),
+        },
+      },
+      {
+        $group: {
+          _id: "$property",
+          averageRating: { $avg: "$rating" },
+          reviewCount: { $sum: 1 },
+        },
+      },
+    ]);
+
+    if (!stats) {
       return res.status(404).json({
         success: false,
-        message: "No property found.",
-      });
-    }
-    if (listproperty.averageRating == 0) {
-      const result = await Review.aggregate([
-        {
-          $match: { property: new mongoose.Types.ObjectId(booking.propertyId) },
-        },
-        {
-          $group: {
-            _id: "$property",
-            averageRating: { $avg: "$rating" },
-            reviewCount: { $sum: 1 },
-          },
-        },
-      ]);
-
-      if (result.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: "No reviews found for this property.",
-        });
-      }
-
-      const avgData = {
-        averageRating: Number(result[0].averageRating.toFixed(2)),
-        reviewCount: result[0].reviewCount,
-      };
-
-      // 4. Update property ratings
-      const updatedProperty = await ListingProperty.findByIdAndUpdate(
-        booking.propertyId,
-        {
-          averageRating: avgData.averageRating,
-          reviewCount: avgData.reviewCount,
-        },
-        { new: true }
-      );
-      if (!updatedProperty) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Property not found" });
-      }
-      const updateStatus = await Booking.findByIdAndUpdate(bookingId, {
-        reviewed: true,
-      });
-      if (!updateStatus) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Review not found" });
-      }
-      res.status(201).json({
-        success: true,
-        data: updatedProperty,
-      });
-    } else {
-      const averageRating =
-        (Number(listproperty?.averageRating) *
-          Number(listproperty?.reviewCount) +
-          Number(rating)) /
-        (Number(listproperty?.reviewCount) + 1);
-      const reviewCount = Number(listproperty?.reviewCount) + 1;
-      const updatedProperty = await ListingProperty.findByIdAndUpdate(
-        booking.propertyId,
-        {
-          averageRating: averageRating,
-          reviewCount: reviewCount,
-        },
-        { new: true }
-      );
-      if (!updatedProperty) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Property not found" });
-      }
-      const updateStatus = await Booking.findByIdAndUpdate(bookingId, {
-        reviewed: true,
-      });
-      if (!updateStatus) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Review not found" });
-      }
-      res.status(201).json({
-        success: true,
-        data: updatedProperty,
+        message: "Failed to calculate review stats",
       });
     }
 
-    // 5. Respond success
+    // 4️⃣ Update property (atomic)
+    const updatedProperty = await ListingProperty.findByIdAndUpdate(
+      booking.propertyId,
+      {
+        averageRating: Number(stats.averageRating.toFixed(2)),
+        reviewCount: stats.reviewCount,
+      },
+      { new: true }
+    );
+
+    const host = await User.findById(booking.hostId, {
+      avgPropertyRating: 1,
+      propertyReviewCount: 1,
+    });
+
+    const previousTotalRating =
+      host.avgPropertyRating * host.propertyReviewCount;
+
+    const newReviewCount = host.propertyReviewCount + 1;
+
+    const newAvgRating = (previousTotalRating + rating) / newReviewCount;
+
+    await User.updateOne(
+      { _id: booking.hostId },
+      {
+        avgPropertyRating: Number(newAvgRating.toFixed(2)),
+        propertyReviewCount: newReviewCount,
+      }
+    );
+
+    // 5️⃣ Mark booking as reviewed
+    await Booking.updateOne({ _id: bookingId }, { $set: { reviewed: true } });
+
+    return res.status(201).json({
+      success: true,
+      data: updatedProperty,
+    });
   } catch (error) {
     console.error("Error in submitReview:", error);
-    res.status(500).json({ success: false, error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
   }
 };
 

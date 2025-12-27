@@ -12,5 +12,11 @@
       "dest": "/",
       "methods": ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/v1/payment/schedule-cron",
+      "schedule": "28 6 * * *"
+    }
   ]
 }

@@ -283,55 +283,245 @@ exports.getCustomSearch = async (req, res) => {
   }
 };
 
+// exports.getAdminFilter = async (req, res) => {
+//   try {
+//     const { search, hostId } = req.query;
+
+//     const filter = { status: "active" };
+//     const limit = req.query.limit || 10;
+//     const skip = req.query.skip || 0;
+//     if (hostId && hostId.toLowerCase() != "all") {
+//       filter.host = new mongoose.Types.ObjectId(hostId);
+//     }
+//     let user = await User.findById(hostId).limit(limit).skip(skip);
+//     if (!user) {
+//       return res
+//         .status(404)
+//         .json({ success: false, message: "Could not find the user" });
+//     }
+//     if (search) {
+//       const s = search.toLowerCase();
+//       user = user.filter(
+//         (b) =>
+//           b.phoneNumber?.toLowerCase().includes(s) ||
+//           `${b.firstName} ${b.lastName}`.toLowerCase().includes(s)
+//       );
+//     }
+
+//     res.json({ success: true, data: user });
+//   } catch (error) {
+//     console.error("Search error:", error);
+//     res.status(400).json({
+//       success: false,
+//       error: error.message,
+//     });
+//   }
+// };
+
 exports.getAdminFilter = async (req, res) => {
   try {
     const { search, hostId } = req.query;
 
-    const filter = { status: "active" };
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const skip = parseInt(req.query.skip, 10) || 0;
 
-    if (hostId && hostId.toLowerCase() != "all") {
-      filter.host = new mongoose.Types.ObjectId(hostId);
-    }
-    let property = await ListingProperty.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: "$host",
-          totalProperty: { $sum: 1 },
-          totalReviews: {
-            $sum: "$reviewCount",
+    const matchStage = {};
+
+    // Filter by specific host
+
+    // Search filter
+
+    if (search && search.trim() !== "") {
+      matchStage.$or = [
+        { firstName: { $regex: search, $options: "i" } },
+        { lastName: { $regex: search, $options: "i" } },
+
+        {
+          $expr: {
+            $regexMatch: {
+              input: {
+                $toString: { $ifNull: ["$phoneNumber", ""] },
+              },
+              regex: search,
+            },
           },
-          averageRating: { $avg: "$averageRating" },
-          host: { $first: "$host" },
-          hostEmail: { $first: "$hostEmail" },
+        },
+        {
+          $expr: {
+            $regexMatch: {
+              input: { $concat: ["$firstName", " ", "$lastName"] },
+              regex: search,
+              options: "i",
+            },
+          },
+        },
+      ];
+    }
+
+    // const pipeline = [
+    //   // 1️⃣ Filter users
+    //   { $match: matchStage },
+
+    //   // 2️⃣ Join ListingProperty
+    //   {
+    //     $lookup: {
+    //       from: "listingproperties",
+    //       let: { userId: "$_id" },
+    //       pipeline: [
+    //         {
+    //           $match: {
+    //             $expr: {
+    //               $and: [
+    //                 { $eq: ["$host", "$$userId"] },
+    //                 { $eq: ["$status", "active"] },
+    //               ],
+    //             },
+    //           },
+    //         },
+    //       ],
+    //       as: "activeProperties",
+    //     },
+    //   },
+
+    //   // 3️⃣ Count active properties
+    //   {
+    //     $addFields: {
+    //       activePropertyCount: { $size: "$activeProperties" },
+    //     },
+    //   },
+    //   {
+    //     $match: {
+    //       activePropertyCount: { $gte: 1 },
+    //     },
+    //   },
+
+    //   // 4️⃣ Clean response
+    //   {
+    //     $project: {
+    //       password: 0,
+    //       activeProperties: 0,
+    //     },
+    //   },
+
+    //   // 5️⃣ Pagination + total count
+    //   {
+    //     $facet: {
+    //       data: [{ $skip: skip }, { $limit: limit }],
+    //       totalCount: [{ $count: "count" }],
+    //     },
+    //   },
+    // ];
+    const pipeline = [
+      // 1️⃣ Lookup ACTIVE properties for every user
+      {
+        $lookup: {
+          from: "listingproperties",
+          let: { userId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$host", "$$userId"] },
+                    { $eq: ["$status", "active"] },
+                  ],
+                },
+              },
+            },
+          ],
+          as: "activeProperties",
         },
       },
-    ]);
 
-    property = await ListingProperty.populate(property, [
-      { path: "host", select: "firstName lastName phoneNumber kyc" },
-    ]);
-    if (search) {
-      const s = search.toLowerCase();
-      property = property.filter(
-        (b) =>
-          b.host?.phoneNumber?.toLowerCase().includes(s) ||
-          `${b.host?.firstName} ${b.host?.lastName}`.toLowerCase().includes(s)
-      );
-    }
+      // 2️⃣ Count active properties
+      {
+        $addFields: {
+          activePropertyCount: { $size: "$activeProperties" },
+        },
+      },
 
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("abc", property);
-    }
-    res.json({ success: true, data: property });
+      // 3️⃣ ONLY users with ≥ 1 active property
+      {
+        $match: {
+          activePropertyCount: { $gte: 1 },
+        },
+      },
+
+      // 4️⃣ Split into two independent results
+      {
+        $facet: {
+          // 🔹 A) FILTERED + PAGINATED USERS (affected by search)
+          data: [
+            ...(search
+              ? [
+                  {
+                    $match: {
+                      $or: [
+                        { email: { $regex: search, $options: "i" } },
+                        {
+                          $expr: {
+                            $regexMatch: {
+                              input: {
+                                $concat: ["$firstName", " ", "$lastName"],
+                              },
+                              regex: search,
+                              options: "i",
+                            },
+                          },
+                        },
+                      ],
+                    },
+                  },
+                ]
+              : []),
+            { $skip: skip },
+            { $limit: limit },
+            {
+              $project: {
+                password: 0,
+                activeProperties: 0,
+              },
+            },
+          ],
+
+          // 🔹 B) GLOBAL EMAIL LIST (NOT affected by filters)
+          allActiveHostEmails: [
+            {
+              $project: {
+                _id: 0,
+                email: 1,
+              },
+            },
+          ],
+
+          // 🔹 C) Filtered total count
+          filteredCount: [{ $count: "count" }],
+        },
+      },
+    ];
+
+    const result = await User.aggregate(pipeline);
+    const users = result[0].data;
+    const allActiveHostEmails = result[0].allActiveHostEmails.map(
+      (u) => u.email
+    );
+    const totalFilteredUsers = result[0].filteredCount[0]?.count || 0;
+
+    res.json({
+      success: true,
+      data: result[0].data,
+      total: totalFilteredUsers,
+      allActiveHostEmails,
+    });
   } catch (error) {
     console.error("Search error:", error);
-    res.status(400).json({
+    res.status(500).json({
       success: false,
       error: error.message,
     });
   }
 };
+
 exports.timing = async (req, res) => {
   try {
     const { checkinTime, checkoutTime, propertyId } = req.body;
@@ -669,73 +859,190 @@ exports.getProcessingListingsForAdmin = async (req, res) => {
   }
 };
 
+// exports.getFilteredListingsForAdmin = async (req, res) => {
+//   try {
+//     // ---- STATS ----
+//     const totalListings = await ListingProperty.countDocuments({});
+//     const totalActiveListings = await ListingProperty.countDocuments({
+//       status: "active",
+//     });
+//     const totalPendingListings = await ListingProperty.countDocuments({
+//       status: "processing",
+//     });
+
+//     // Count how many listings were created "today"
+//     const startOfToday = new Date();
+//     startOfToday.setHours(0, 0, 0, 0); // midnight of current day
+//     const listingsToday = await ListingProperty.countDocuments({
+//       createdAt: { $gte: startOfToday },
+//     });
+
+//     // ---- PAGINATION FOR FILTERED LISTINGS ----
+//     const page = parseInt(req.query.page, 10) || 1;
+//     const limit = parseInt(req.query.limit, 10) || 30;
+//     const skip = (page - 1) * limit;
+
+//     // Get the status filter from the query
+//     const statusFilter = req.query.status || "all"; // Default to 'all' if no status is provided
+//     if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//       console.log("Status", statusFilter);
+//     }
+
+//     // Prepare the query based on the status filter
+//     let query = {};
+//     if (statusFilter !== "all") {
+//       query.status = statusFilter; // Only filter by status if it's not 'all'
+//     }
+
+//     // Fetch the listing data in parallel
+//     const [properties, totalProperties] = await Promise.all([
+//       ListingProperty.find(query)
+//         .populate("host")
+//         .sort({ updatedAt: -1 })
+//         .skip(skip)
+//         .limit(limit)
+//         .lean(),
+//       ListingProperty.countDocuments(query),
+//     ]);
+
+//     const totalPages = Math.ceil(totalProperties / limit);
+//     const hasMore = page * limit < totalProperties;
+//     if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//       console.log(properties);
+//     }
+//     return res.status(200).json({
+//       // Stats
+//       totalListings,
+//       totalActiveListings,
+//       totalPendingListings,
+//       listingsToday,
+//       // Listings
+//       properties,
+//       currentPage: page,
+//       totalPages,
+//       totalProperties,
+//       hasMore,
+//       resultsPerPage: limit,
+//     });
+//   } catch (error) {
+//     console.error("Error fetching filtered listings for admin:", error);
+//     res.status(500).json({
+//       message: "Failed to fetch filtered listings for admin",
+//       error: error.message,
+//     });
+//   }
+// };
+
 exports.getFilteredListingsForAdmin = async (req, res) => {
   try {
-    // ---- STATS ----
-    const totalListings = await ListingProperty.countDocuments({});
-    const totalActiveListings = await ListingProperty.countDocuments({
-      status: "active",
-    });
-    const totalPendingListings = await ListingProperty.countDocuments({
-      status: "processing",
-    });
+    const { search, status } = req.query;
 
-    // Count how many listings were created "today"
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0); // midnight of current day
-    const listingsToday = await ListingProperty.countDocuments({
-      createdAt: { $gte: startOfToday },
-    });
-
-    // ---- PAGINATION FOR FILTERED LISTINGS ----
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 30;
     const skip = (page - 1) * limit;
 
-    // Get the status filter from the query
-    const statusFilter = req.query.status || "all"; // Default to 'all' if no status is provided
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("Status", statusFilter);
+    const matchStage = {};
+
+    if (status) {
+      if (status !== "all") {
+        matchStage.status = status;
+      } else {
+        matchStage.status = { $nin: ["incomplete"] };
+      }
     }
 
-    // Prepare the query based on the status filter
-    let query = {};
-    if (statusFilter !== "all") {
-      query.status = statusFilter; // Only filter by status if it's not 'all'
+    if (search && search.toLowerCase().trim() != "") {
+      matchStage.$or = [
+        { title: { $regex: search, $options: "i" } },
+        // { placeType: { $regex: search, $options: "i" } },
+        {
+          $expr: {
+            $regexMatch: {
+              input: { $ifNull: ["$host.email", ""] },
+              regex: search,
+              options: "i",
+            },
+          },
+        },
+      ];
     }
 
-    // Fetch the listing data in parallel
-    const [properties, totalProperties] = await Promise.all([
-      ListingProperty.find(query)
-        .populate("host")
-        .sort({ updatedAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      ListingProperty.countDocuments(query),
-    ]);
+    const pipeline = [
+      {
+        $lookup: {
+          from: "users",
+          localField: "host",
+          foreignField: "_id",
+          as: "host",
+        },
+      },
+      { $unwind: { path: "$host", preserveNullAndEmptyArrays: true } },
+      {
+        $facet: {
+          /* ---------- FILTERED DATA ---------- */
+          data: [
+            { $match: matchStage },
+            { $sort: { updatedAt: -1 } },
+            { $skip: skip },
+            { $limit: limit },
+          ],
+
+          /* ---------- PAGINATION COUNT (FILTERED) ---------- */
+          totalFilteredCount: [{ $match: matchStage }, { $count: "count" }],
+
+          /* ---------- GLOBAL STATS (UNFILTERED) ---------- */
+          stats: [
+            {
+              $group: {
+                _id: null,
+                totalList: {
+                  $sum: {
+                    $cond: [{ $ne: ["$status", "incomplete"] }, 1, 0],
+                  },
+                },
+                totalActive: {
+                  $sum: {
+                    $cond: [{ $eq: ["$status", "active"] }, 1, 0],
+                  },
+                },
+                totalProcessing: {
+                  $sum: {
+                    $cond: [{ $eq: ["$status", "processing"] }, 1, 0],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      },
+    ];
+
+    const [result] = await ListingProperty.aggregate(pipeline);
+
+    const properties = result.data;
+
+    const totalProperties = result.totalFilteredCount[0]?.count || 0;
 
     const totalPages = Math.ceil(totalProperties / limit);
-    const hasMore = page * limit < totalProperties;
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log(properties);
-    }
+    const hasMore = page < totalPages;
+    const stats = result.stats[0] || {
+      totalActive: 0,
+      totalProcessing: 0,
+      totalList: 0,
+    };
     return res.status(200).json({
-      // Stats
-      totalListings,
-      totalActiveListings,
-      totalPendingListings,
-      listingsToday,
-      // Listings
       properties,
       currentPage: page,
       totalPages,
       totalProperties,
       hasMore,
       resultsPerPage: limit,
+      totalActiveListings: stats.totalActive,
+      totalProcessingListings: stats.totalProcessing,
+      totalList: stats.totalList,
     });
   } catch (error) {
-    console.error("Error fetching filtered listings for admin:", error);
+    console.error(error);
     res.status(500).json({
       message: "Failed to fetch filtered listings for admin",
       error: error.message,

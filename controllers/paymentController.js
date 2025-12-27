@@ -568,9 +568,10 @@ async function createPayout(bookingId, propertyId, amount, hostId) {
       console.log("o", amount, bookingId, propertyId);
     }
     if (!bookingId || !propertyId || !amount) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Missing parameter" });
+      // return res
+      //   .status(400)
+      //   .json({ success: false, error: "Missing parameter" });
+      return { success: false, error: "Missing parameter" };
     }
 
     // const config = await Configure.findById("68e64844519bdcd9e0db952d");
@@ -581,9 +582,10 @@ async function createPayout(bookingId, propertyId, amount, hostId) {
     // }
     const hostData = await User.findById(hostId);
     if (!hostData) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Host data could not be found" });
+      // return res
+      //   .status(404)
+      //   .json({ success: false, message: "Host data could not be found" });
+      return { success: false, error: "Host data could not be found" };
     }
     const kycDate = new Date(hostData.kyc.verifiedAt);
     const today = new Date();
@@ -615,20 +617,25 @@ async function createPayout(bookingId, propertyId, amount, hostId) {
       await data.save();
     }
 
-    res.status(200).json({
-      success: true,
-      data: data,
-    });
+    // res.status(200).json({
+    //   success: true,
+    //   data: data,
+    // });
+    return { success: true, data: data };
   } catch (error) {
-    res.status(500).json({
+    // res.status(500).json({
+    //   success: false,
+    //   error: error.message || "Failed to create payout",
+    // });
+    return {
       success: false,
       error: error.message || "Failed to create payout",
-    });
+    };
   }
 }
 
-cron.schedule("59 23 * * *", async () => {
-  // exports.schedulecron = async (req, res) => {
+// cron.schedule("42 11 * * *", async () => {
+exports.schedulecron = async (req, res) => {
   try {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("enter payout cron");
@@ -698,6 +705,7 @@ cron.schedule("59 23 * * *", async () => {
         if (process.env.NEXT_PUBLIC_ENV === "dev") {
           console.log(`✅ Payout successful for booking: ${booking._id}`);
         }
+        return { success: true, message: "Cron successful" };
       } else {
         console.log(
           `❌ Payout failed for booking: ${booking._id} - ${result.error}`
@@ -713,7 +721,8 @@ cron.schedule("59 23 * * *", async () => {
   } catch (err) {
     console.error("❌ Cron job error:", err.message);
   }
-});
+};
+// );
 
 exports.update = async (req, res) => {
   // ✅ Return response IMMEDIATELY

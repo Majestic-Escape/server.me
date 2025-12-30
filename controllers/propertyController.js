@@ -1545,7 +1545,7 @@ exports.updateListingProperty = async (req, res) => {
         name: "sendPropertyReminderEmail",
         "data.propertyId": property._id.toString(),
       })
-      .schedule("15 seconds")
+      .schedule("24 hours")
       .save();
     // await agenda.schedule(`24 hours`, "sendPropertyReminderEmail", {
     //   status,

@@ -38,7 +38,7 @@ agenda.define("sendPropertyReminderEmail", async (job, done) => {
   try {
     if (newStatus == "incomplete") {
       await sendEmail(hostEmail, 52, params);
-      await agenda.schedule(`15 seconds`, "sendPropertyReminderAgainEmail", {
+      await agenda.schedule(`48 hours`, "sendPropertyReminderAgainEmail", {
         newStatus,
         hostEmail,
         host,

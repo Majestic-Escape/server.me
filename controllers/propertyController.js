@@ -11,6 +11,7 @@ const User = require("../models/User");
 const { default: mongoose } = require("mongoose");
 const { changeToUpperCase } = require("../utils/convertToUpperCase");
 const BankDetail = require("../models/BankDetail");
+const agenda = require("../utils/agenda");
 const adminEmail = process.env.ADMIN_EMAIL.split(",");
 // exports.getCustomSearch = async (req, res) => {
 //   try {
@@ -1531,6 +1532,26 @@ exports.updateListingProperty = async (req, res) => {
       }
     }
 
+    const hostEmail = property.hostEmail;
+    const newStatus = property.status;
+    await agenda
+      .create("sendPropertyReminderEmail", {
+        newStatus,
+        hostEmail,
+        host,
+        propertyId: property._id.toString(),
+      })
+      .unique({
+        name: "sendPropertyReminderEmail",
+        "data.propertyId": property._id.toString(),
+      })
+      .schedule("15 seconds")
+      .save();
+    // await agenda.schedule(`24 hours`, "sendPropertyReminderEmail", {
+    //   status,
+    //   hostEmail,
+    //   host,
+    // });
     res.status(200).json(property);
   } catch (error) {
     res.status(400).json({ message: error.message });

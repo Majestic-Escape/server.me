@@ -30,12 +30,12 @@ const app = express();
 
 const allowedOrigins = [
   // "https://apidemo.digitap.work/validation/kyc/v1/pan-basic",
-  "https://user-navy-five.vercel.app",
-  "https://me-admin-swart.vercel.app",
-  "https://me-backend-one.vercel.app",
-  "http://localhost:3000",
-  "http://localhost:5005",
-  "http://localhost:3001",
+  // "https://user-navy-five.vercel.app",
+  // "https://me-admin-swart.vercel.app",
+  // "https://me-backend-one.vercel.app",
+  // "http://localhost:3000",
+  // "http://localhost:5005",
+  // "http://localhost:3001",
   "https://apidemo.digitap.work",
   "https://svcdemo.digitap.work",
   "https://svc.digitap.ai",
@@ -48,6 +48,7 @@ const allowedOrigins = [
   "https://ifsc.razorpay.com",
   "https://majesticescape.in",
   "https://admin.majesticescape.in",
+  "https://user.me.coderelix.in",
 ];
 
 app.use((req, res, next) => {

@@ -37,7 +37,11 @@ agenda.define("sendPropertyReminderEmail", async (job, done) => {
   const params = { hostName: host };
   try {
     if (newStatus == "incomplete") {
-      await sendEmail(hostEmail, 52, params);
+      if (process.env.HOST_COMMISSION_OFFER == "true") {
+        await sendEmail(hostEmail, 52, params);
+      } else {
+        await sendEmail(hostEmail, 53, params);
+      }
       await agenda.schedule(`48 hours`, "sendPropertyReminderAgainEmail", {
         newStatus,
         hostEmail,
@@ -53,7 +57,11 @@ agenda.define("sendPropertyReminderAgainEmail", async (job, done) => {
   const params = { hostName: host };
   try {
     if (newStatus == "incomplete") {
-      await sendEmail(hostEmail, 52, params);
+      if (process.env.HOST_COMMISSION_OFFER == "true") {
+        await sendEmail(hostEmail, 52, params);
+      } else {
+        await sendEmail(hostEmail, 53, params);
+      }
     }
   } catch (err) {
     console.error("Error in job:", err);

@@ -21,84 +21,144 @@ exports.createhostKycForm = async (req, res) => {
   }
 };
 
+// exports.updatehostKycForm = async (req, res) => {
+//   try {
+//     const { id } = req.params;
+
+//     const isCompleted = req.body.status === "completed";
+
+//     if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//       console.log("time1");
+//     }
+//     const kycForm = await kycHostForm
+//       .findOneAndUpdate(
+//         { _id: id },
+//         { $set: req.body },
+//         { new: true, runValidators: true }
+//       )
+//       .populate("hostId");
+//     if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//       console.log("time2");
+//     }
+//     if (!kycForm) {
+//       return res
+//         .status(404)
+//         .json({ message: "Property not found or unauthorized to update" });
+//     }
+//     const adminEmail = process.env.ADMIN_EMAIL.split(",");
+
+//     if (isCompleted) {
+//       const data = await User.findByIdAndUpdate(
+//         { _id: property.hostId._id },
+//         {
+//           kyc: true,
+//         },
+//         { new: true }
+//       );
+//       console.log("time5", req.body.status);
+//       if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//         console.log("time3", id, property.hostId._id);
+//       }
+
+//       if (!data) {
+//         return res.status(404).json({
+//           success: false,
+//           message: "Host not found or unauthorized to update kyc",
+//         });
+//       }
+//       const updateListing = await ListingProperty.updateMany(
+//         { host: property.hostId._id },
+//         {
+//           kycStatus: "completed",
+//         },
+//         { new: true }
+//       );
+//       if (!updateListing) {
+//         return res.status(404).json({
+//           sucess: false,
+//           message: "Property not found or unauthorized to update kyc",
+//         });
+//       }
+
+//       const params = {
+//         hostName: changeToUpperCase(
+//           data.firstName + " " + data.hostId.lastName
+//         ),
+//         hostEmail: data.email,
+//         hostContact: data.email,
+//         kycDate: new Date().toLocaleDateString(),
+//       };
+
+//       if (data.hostOffer && data.hostOffer == true) {
+//         await sendEmail(property.hostId.email, 47, params);
+//       }
+//       // await Promise.all(
+//       //   adminEmail.map((email) => sendEmail(email.trim(), 4, params))
+//       // );
+
+//       await sendEmail(property.hostId.email, 45, params);
+//       // res.status(200).json(property);
+//     }
+//     res.status(200).json(property);
+//   } catch (error) {
+//     res.status(400).json({ message: error.message });
+//   }
+// };
 exports.updatehostKycForm = async (req, res) => {
   try {
     const { id } = req.params;
     const isCompleted = req.body.status === "completed";
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("time1");
-    }
-    const property = await kycHostForm
+
+    const kycForm = await kycHostForm
       .findOneAndUpdate(
         { _id: id },
         { $set: req.body },
         { new: true, runValidators: true }
       )
       .populate("hostId");
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("time2");
+
+    if (!kycForm) {
+      return res.status(404).json({ message: "KYC form not found" });
     }
-    if (!property) {
-      return res
-        .status(404)
-        .json({ message: "Property not found or unauthorized to update" });
-    }
-    const adminEmail = process.env.ADMIN_EMAIL.split(",");
+
     if (isCompleted) {
-      const data = await User.findByIdAndUpdate(
-        { _id: property.hostId._id },
-        {
-          kyc: true,
-        },
+      const host = await User.findByIdAndUpdate(
+        kycForm.hostId._id,
+        { kyc: true },
         { new: true }
       );
 
-      if (process.env.NEXT_PUBLIC_ENV === "dev") {
-        console.log("time3", id, property.hostId._id);
-      }
-      if (!data) {
-        return res
-          .status(404)
-          .json({ message: "Host not found or unauthorized to update kyc" });
-      }
-      const property = await ListingProperty.updateMany(
-        { _id: property.hostId._id },
-        {
-          kycStatus: "completed",
-        },
-        { new: true }
+      await ListingProperty.updateMany(
+        { host: host._id },
+        { $set: { kycStatus: "completed" } }
       );
-      if (!property) {
-        return res
-          .status(404)
-          .json({
-            message: "Property not found or unauthorized to update kyc",
-          });
-      }
+
+      const adminEmail = process.env.ADMIN_EMAIL.split(",");
+
       const params = {
-        hostName: changeToUpperCase(
-          property.hostId.firstName + " " + property.hostId.lastName
-        ),
-        hostEmail: property.hostId.email,
-        hostContact: property.hostId.email,
+        hostName: changeToUpperCase(`${host.firstName} ${host.lastName}`),
+        hostEmail: host.email,
+        hostContact: host.phone || host.email,
         kycDate: new Date().toLocaleDateString(),
       };
 
-      if (data.hostOffer && data.hostOffer == true) {
-        await sendEmail(property.hostId.email, 47, params);
+      if (host.hostOffer === true) {
+        await sendEmail(host.email, 47, params);
+      } else {
+        await sendEmail(host.email, 45, params);
       }
+
       await Promise.all(
         adminEmail.map((email) => sendEmail(email.trim(), 4, params))
       );
-
-      await sendEmail(property.hostId.email, 45, params);
-      // res.status(200).json(property);
     }
-    res.status(200).json(property);
+
+    return res.status(200).json(kycForm);
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    return res.status(400).json({ message: error.message });
   }
 };
+
 exports.updatehostKycFormStatus = async (req, res) => {
   try {
     const { userId, isVerified, documentType } = req.body;

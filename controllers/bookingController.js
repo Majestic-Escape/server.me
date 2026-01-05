@@ -1309,7 +1309,7 @@ exports.cancelBooking = async (req, res) => {
     const { bookingId, userEmail, hostEmail, userName, hostName } = req.body;
     const booking = await Booking.findByIdAndUpdate(bookingId, {
       status: "rejected",
-    });
+    }).populate("hostId userId propertyId payment");
     const params = paramsToObject(userName, hostName, booking);
     if (!booking)
       return res
@@ -1448,7 +1448,9 @@ exports.cancelAdminBooking = async (req, res) => {
       { status: "refunded", paymentType: "refunded" }, // ✅ both fields updated
       { new: true }
     );
-    await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
+    await Booking.findByIdAndUpdate(bookingId, {
+      paymentStatus: "refunded",
+    }).populate("hostId userId propertyId payment");
     const params = paramsToObject(userName, hostName, booking);
 
     await sendEmail(booking.userId.email, 32, params);
@@ -2332,7 +2334,7 @@ exports.markBookingAsPaid = async (req, res) => {
       bookingId,
       { paymentStatus: "paid", payment: payment },
       { new: true }
-    ).populate("userId hostId propertyId");
+    ).populate("userId hostId propertyId payment");
 
     if (!booking)
       return res
@@ -2435,12 +2437,8 @@ exports.markBookingAsPaid = async (req, res) => {
       return res.status(200).json({ success: true, data: booking });
     } else {
       // console.log("=======Before email");
-      await sendEmail(
-        "coderelixtesting@outlook.com",
-        34,
-        params,
-        invoiceAttachment
-      );
+      await sendEmail(booking.hostId.email, 34, params, invoiceAttachment);
+      await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
       // console.log("=======after host");
       await Promise.all(
         adminEmail.map((email) =>
@@ -2449,7 +2447,6 @@ exports.markBookingAsPaid = async (req, res) => {
       );
       // console.log("invoice", invoiceAttachment);
 
-      await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
       // invoiceAttachment
       try {
         await fs.promises.unlink(filePath);

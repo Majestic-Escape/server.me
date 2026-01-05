@@ -32,6 +32,41 @@ agenda.define("sendReviewEmail", async (job, done) => {
   }
 });
 
+agenda.define("sendPropertyReminderEmail", async (job, done) => {
+  const { newStatus, hostEmail, host } = job.attrs.data;
+  const params = { hostName: host };
+  try {
+    if (newStatus == "incomplete") {
+      if (process.env.HOST_COMMISSION_OFFER == "true") {
+        await sendEmail(hostEmail, 52, params);
+      } else {
+        await sendEmail(hostEmail, 53, params);
+      }
+      await agenda.schedule(`48 hours`, "sendPropertyReminderAgainEmail", {
+        newStatus,
+        hostEmail,
+        host,
+      });
+    }
+  } catch (err) {
+    console.error("Error in job:", err);
+  }
+});
+agenda.define("sendPropertyReminderAgainEmail", async (job, done) => {
+  const { newStatus, hostEmail, host } = job.attrs.data;
+  const params = { hostName: host };
+  try {
+    if (newStatus == "incomplete") {
+      if (process.env.HOST_COMMISSION_OFFER == "true") {
+        await sendEmail(hostEmail, 52, params);
+      } else {
+        await sendEmail(hostEmail, 53, params);
+      }
+    }
+  } catch (err) {
+    console.error("Error in job:", err);
+  }
+});
 (async () => {
   await agenda.start();
   if (process.env.NEXT_PUBLIC_ENV === "dev") {

@@ -16,9 +16,8 @@
   "crons": [
     {
       "path": "/api/v1/payment/schedule-cron",
-      "schedule": "28 6 * * *"
-    }
-    ,
+      "schedule": "* * * * *"
+    },
     {
       "path": "/api/cron-run",
       "schedule": "* * * * *"

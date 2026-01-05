@@ -88,13 +88,17 @@ exports.verifyGst = async (req, res) => {
       email: user.email,
       type: "Gst Pan",
       requestData: {
-        pan: panNumber,
+        pan: panNumber.slice(-4),
         client_ref_num: statusClientRefNum,
       },
     });
+    const requestData = {
+      pan: panNumber,
+      client_ref_num: statusClientRefNum,
+    };
     let statusResult;
     try {
-      statusResult = await performPanCheck(statusLog.requestData);
+      statusResult = await performPanCheck(requestData);
     } catch (err) {
       return res.status(500).json({
         success: false,
@@ -160,13 +164,17 @@ exports.verifyGst = async (req, res) => {
       email: user.email,
       type: "Gst",
       requestData: {
-        gstin: gstNumber,
+        gstin: gstNumber.slice(-4),
         client_ref_num: statusGstClientRefNum,
       },
     });
+    const requestDataGst = {
+      gstin: gstNumber,
+      client_ref_num: statusGstClientRefNum,
+    };
     let statusGstResult;
     try {
-      statusGstResult = await performGstCheck(statusGstLog.requestData);
+      statusGstResult = await performGstCheck(requestDataGst);
     } catch (err) {
       return res.status(500).json({
         success: false,

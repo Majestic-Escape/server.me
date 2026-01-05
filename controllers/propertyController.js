@@ -1534,19 +1534,21 @@ exports.updateListingProperty = async (req, res) => {
 
     const hostEmail = property.hostEmail;
     const newStatus = property.status;
-    await agenda
-      .create("sendPropertyReminderEmail", {
-        newStatus,
-        hostEmail,
-        host,
-        propertyId: property._id.toString(),
-      })
-      .unique({
-        name: "sendPropertyReminderEmail",
-        "data.propertyId": property._id.toString(),
-      })
-      .schedule("24 hours")
-      .save();
+    if (status == "inactive") {
+      await agenda
+        .create("sendPropertyReminderEmail", {
+          newStatus,
+          hostEmail,
+          host,
+          propertyId: property._id.toString(),
+        })
+        .unique({
+          name: "sendPropertyReminderEmail",
+          "data.propertyId": property._id.toString(),
+        })
+        .schedule("24 hours")
+        .save();
+    }
     // await agenda.schedule(`24 hours`, "sendPropertyReminderEmail", {
     //   status,
     //   hostEmail,

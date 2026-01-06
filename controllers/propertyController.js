@@ -321,99 +321,15 @@ exports.getCustomSearch = async (req, res) => {
 
 exports.getAdminFilter = async (req, res) => {
   try {
-    const { search, hostId } = req.query;
+    const { search } = req.query;
 
+    // const limit = parseInt(req.query.limit, 10) || 10;
+    // const skip = parseInt(req.query.skip, 10) || 0;
+    const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 10;
-    const skip = parseInt(req.query.skip, 10) || 0;
-
-    const matchStage = {};
-
-    // Filter by specific host
-
-    // Search filter
-
-    if (search && search.trim() !== "") {
-      matchStage.$or = [
-        { firstName: { $regex: search, $options: "i" } },
-        { lastName: { $regex: search, $options: "i" } },
-
-        {
-          $expr: {
-            $regexMatch: {
-              input: {
-                $toString: { $ifNull: ["$phoneNumber", ""] },
-              },
-              regex: search,
-            },
-          },
-        },
-        {
-          $expr: {
-            $regexMatch: {
-              input: { $concat: ["$firstName", " ", "$lastName"] },
-              regex: search,
-              options: "i",
-            },
-          },
-        },
-      ];
-    }
-
-    // const pipeline = [
-    //   // 1️⃣ Filter users
-    //   { $match: matchStage },
-
-    //   // 2️⃣ Join ListingProperty
-    //   {
-    //     $lookup: {
-    //       from: "listingproperties",
-    //       let: { userId: "$_id" },
-    //       pipeline: [
-    //         {
-    //           $match: {
-    //             $expr: {
-    //               $and: [
-    //                 { $eq: ["$host", "$$userId"] },
-    //                 { $eq: ["$status", "active"] },
-    //               ],
-    //             },
-    //           },
-    //         },
-    //       ],
-    //       as: "activeProperties",
-    //     },
-    //   },
-
-    //   // 3️⃣ Count active properties
-    //   {
-    //     $addFields: {
-    //       activePropertyCount: { $size: "$activeProperties" },
-    //     },
-    //   },
-    //   {
-    //     $match: {
-    //       activePropertyCount: { $gte: 1 },
-    //     },
-    //   },
-
-    //   // 4️⃣ Clean response
-    //   {
-    //     $project: {
-    //       password: 0,
-    //       activeProperties: 0,
-    //     },
-    //   },
-
-    //   // 5️⃣ Pagination + total count
-    //   {
-    //     $facet: {
-    //       data: [{ $skip: skip }, { $limit: limit }],
-    //       totalCount: [{ $count: "count" }],
-    //     },
-    //   },
-    // ];
+    const skip = (page - 1) * limit;
     const pipeline = [
-      // 1️⃣ Lookup ACTIVE properties for every user
+      // 1️⃣ Lookup ACTIVE properties
       {
         $lookup: {
           from: "listingproperties",
@@ -434,24 +350,38 @@ exports.getAdminFilter = async (req, res) => {
         },
       },
 
-      // 2️⃣ Count active properties
+      // 2️⃣ Lookup KYC documents
+      {
+        $lookup: {
+          from: "kychostdatas",
+          localField: "_id",
+          foreignField: "hostId",
+          as: "kycDocs",
+        },
+      },
+
+      // 3️⃣ Count both
       {
         $addFields: {
           activePropertyCount: { $size: "$activeProperties" },
+          kycDocCount: { $size: "$kycDocs" },
         },
       },
 
-      // 3️⃣ ONLY users with ≥ 1 active property
+      // 4️⃣ OR CONDITION (IMPORTANT PART)
       {
         $match: {
-          activePropertyCount: { $gte: 1 },
+          $or: [
+            { activePropertyCount: { $gte: 1 } },
+            { kycDocCount: { $gte: 1 } },
+          ],
         },
       },
 
-      // 4️⃣ Split into two independent results
+      // 5️⃣ Split results
       {
         $facet: {
-          // 🔹 A) FILTERED + PAGINATED USERS (affected by search)
+          // 🔹 A) Filtered + paginated users
           data: [
             ...(search
               ? [
@@ -459,6 +389,8 @@ exports.getAdminFilter = async (req, res) => {
                     $match: {
                       $or: [
                         { email: { $regex: search, $options: "i" } },
+                        { firstName: { $regex: search, $options: "i" } },
+                        { lastName: { $regex: search, $options: "i" } },
                         {
                           $expr: {
                             $regexMatch: {
@@ -481,12 +413,13 @@ exports.getAdminFilter = async (req, res) => {
               $project: {
                 password: 0,
                 activeProperties: 0,
+                kycDocs: 0,
               },
             },
           ],
 
-          // 🔹 B) GLOBAL EMAIL LIST (NOT affected by filters)
-          allActiveHostEmails: [
+          // 🔹 B) GLOBAL email list (constant)
+          allEligibleHostEmails: [
             {
               $project: {
                 _id: 0,
@@ -495,24 +428,25 @@ exports.getAdminFilter = async (req, res) => {
             },
           ],
 
-          // 🔹 C) Filtered total count
+          // 🔹 C) Total count AFTER OR condition + search
           filteredCount: [{ $count: "count" }],
         },
       },
     ];
 
     const result = await User.aggregate(pipeline);
-    const users = result[0].data;
-    const allActiveHostEmails = result[0].allActiveHostEmails.map(
-      (u) => u.email
-    );
-    const totalFilteredUsers = result[0].filteredCount[0]?.count || 0;
+    const totalHost = result[0].filteredCount[0]?.count || 0;
 
+    const totalPages = Math.ceil(totalHost / limit);
     res.json({
       success: true,
       data: result[0].data,
-      total: totalFilteredUsers,
-      allActiveHostEmails,
+      totalPages,
+      resultsPerPage: limit,
+      total: result[0].filteredCount[0]?.count || 0,
+      allEligibleHostEmails: result[0].allEligibleHostEmails.map(
+        (u) => u.email
+      ),
     });
   } catch (error) {
     console.error("Search error:", error);
@@ -1311,49 +1245,175 @@ exports.getAllActiveProperty = async (req, res) => {
   }
 };
 
+// exports.getFilterActivePropertyById = async (req, res) => {
+//   try {
+//     const hostId = req.params.id;
+//     const { search, placeType, propertyType } = req.query;
+//     if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//       console.log("nand", search);
+//     }
+//     const filter = {
+//       host: hostId,
+//       status: "active",
+//     };
+
+//     if (placeType && placeType != "all") {
+//       filter.placeType = placeType;
+//     }
+//     if (propertyType && propertyType != "all") {
+//       filter.propertyType = propertyType;
+//     }
+
+//     let property = await ListingProperty.find(filter).populate("host");
+
+//     if (!property) {
+//       return res.status(404).json({ message: "Property not found" });
+//     }
+//     if (process.env.NEXT_PUBLIC_ENV === "dev") {
+//       console.log("abc", property);
+//     }
+//     if (search) {
+//       const s = search.toLowerCase();
+//       property = property.filter(
+//         (b) =>
+//           b.title?.toLowerCase().includes(s) ||
+//           b.address?.district?.toLowerCase().includes(s) ||
+//           b.address?.city?.toLowerCase().includes(s) ||
+//           b.address?.state?.toLowerCase().includes(s) ||
+//           b.address?.pincode?.toLowerCase().includes(s)
+//       );
+//     }
+//     res.status(200).json({ success: true, data: property });
+//   } catch (error) {
+//     res.status(500).json({ message: error.message });
+//   }
+// };
+
 exports.getFilterActivePropertyById = async (req, res) => {
   try {
-    const hostId = req.params.id;
+    const hostId = new mongoose.Types.ObjectId(req.params.id);
     const { search, placeType, propertyType } = req.query;
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("nand", search);
-    }
-    const filter = {
+
+    // -----------------------------
+    // PROPERTY MATCH FILTER
+    // -----------------------------
+    const propertyMatch = {
       host: hostId,
       status: "active",
     };
 
-    if (placeType && placeType != "all") {
-      filter.placeType = placeType;
-    }
-    if (propertyType && propertyType != "all") {
-      filter.propertyType = propertyType;
+    if (placeType && placeType !== "all") {
+      propertyMatch.placeType = placeType;
     }
 
-    let property = await ListingProperty.find(filter).populate("host");
+    if (propertyType && propertyType !== "all") {
+      propertyMatch.propertyType = propertyType;
+    }
 
-    if (!property) {
-      return res.status(404).json({ message: "Property not found" });
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("abc", property);
-    }
+    // -----------------------------
+    // SEARCH FILTER (OPTIONAL)
+    // -----------------------------
+    let searchStage = [];
     if (search) {
-      const s = search.toLowerCase();
-      property = property.filter(
-        (b) =>
-          b.title?.toLowerCase().includes(s) ||
-          b.address?.district?.toLowerCase().includes(s) ||
-          b.address?.city?.toLowerCase().includes(s) ||
-          b.address?.state?.toLowerCase().includes(s) ||
-          b.address?.pincode?.toLowerCase().includes(s)
-      );
+      const regex = new RegExp(search, "i"); // case-insensitive
+      searchStage.push({
+        $match: {
+          $or: [
+            { title: regex },
+            { "address.district": regex },
+            { "address.city": regex },
+            { "address.state": regex },
+            { "address.pincode": regex },
+          ],
+        },
+      });
     }
-    res.status(200).json({ success: true, data: property });
+
+    // -----------------------------
+    // AGGREGATION PIPELINE
+    // -----------------------------
+    const result = await ListingProperty.aggregate([
+      {
+        $facet: {
+          // =============================
+          // 1️⃣ HOST PROFILE (CONSTANT)
+          // =============================
+          hostProfile: [
+            {
+              $lookup: {
+                from: "users",
+                localField: "host",
+                foreignField: "_id",
+                as: "host",
+              },
+            },
+            { $unwind: "$host" },
+            {
+              $project: {
+                _id: 0,
+                host: 1,
+              },
+            },
+            { $limit: 1 }, // fetch only once
+          ],
+
+          // =============================
+          // 2️⃣ KYC DATA (CONSTANT)
+          // =============================
+          kycData: [
+            {
+              $lookup: {
+                from: "kychostdatas",
+                localField: "host",
+                foreignField: "hostId",
+                as: "kyc",
+              },
+            },
+            {
+              $project: {
+                _id: 0,
+                kyc: 1,
+              },
+            },
+            { $limit: 1 }, // fetch only once
+          ],
+
+          // =============================
+          // 3️⃣ FILTERED PROPERTIES
+          // =============================
+          properties: [
+            { $match: propertyMatch },
+            ...searchStage,
+            {
+              $lookup: {
+                from: "users",
+                localField: "host",
+                foreignField: "_id",
+                as: "host",
+              },
+            },
+            { $unwind: "$host" },
+          ],
+        },
+      },
+    ]);
+
+    // -----------------------------
+    // FORMAT RESPONSE
+    // -----------------------------
+    const data = result[0];
+
+    res.status(200).json({
+      success: true,
+      hostProfile: data.hostProfile[0]?.host || null,
+      kycData: data.kycData[0]?.kyc || null,
+      properties: data.properties,
+    });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
 exports.createProperty = async (req, res) => {
   try {
     const property = new Property(req.body);

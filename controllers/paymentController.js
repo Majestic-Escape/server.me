@@ -638,7 +638,7 @@ async function createPayout(bookingId, propertyId, amount, hostId) {
 exports.schedulecron = async (req, res) => {
   try {
     console.log("cron has started");
-    return;
+    return res.status(200).json({ message: "success" });
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("enter payout cron");
     }

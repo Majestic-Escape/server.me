@@ -16,7 +16,7 @@
   "crons": [
     {
       "path": "/api/v1/payment/schedule-cron",
-      "schedule": "* * * * *"
+      "schedule": "30 18 * * *"
     }
   ]
 }

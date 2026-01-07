@@ -718,8 +718,15 @@ exports.schedulecron = async (req, res) => {
     console.log(
       `📊 Cron job completed: ${successful} successful, ${failed} failed`
     );
+
+    return res.status(200).json({
+      success: true,
+      successful,
+      failed,
+    });
   } catch (err) {
     console.error("❌ Cron job error:", err.message);
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 // );

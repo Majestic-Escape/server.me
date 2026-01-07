@@ -13,6 +13,7 @@ const { changeToUpperCase } = require("../utils/convertToUpperCase");
 const BankDetail = require("../models/BankDetail");
 const agenda = require("../utils/agenda");
 const adminEmail = process.env.ADMIN_EMAIL.split(",");
+const kycHostForm = require("../models/KycHostForm");
 // exports.getCustomSearch = async (req, res) => {
 //   try {
 //     const { location, from, to, guests, propertyType } = req.query;
@@ -338,6 +339,22 @@ exports.getAdminFilter = async (req, res) => {
             {
               $match: {
                 $expr: {
+                  $and: [{ $eq: ["$host", "$$userId"] }],
+                },
+              },
+            },
+          ],
+          as: "allProperties",
+        },
+      },
+      {
+        $lookup: {
+          from: "listingproperties",
+          let: { userId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
                   $and: [
                     { $eq: ["$host", "$$userId"] },
                     { $eq: ["$status", "active"] },
@@ -347,6 +364,25 @@ exports.getAdminFilter = async (req, res) => {
             },
           ],
           as: "activeProperties",
+        },
+      },
+      {
+        $lookup: {
+          from: "listingproperties",
+          let: { userId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$host", "$$userId"] },
+                    { $eq: ["$status", "inactive"] },
+                  ],
+                },
+              },
+            },
+          ],
+          as: "inactiveProperties",
         },
       },
 
@@ -359,11 +395,21 @@ exports.getAdminFilter = async (req, res) => {
           as: "kycDocs",
         },
       },
+      {
+        $lookup: {
+          from: "kychostdatas",
+          localField: "_id",
+          foreignField: "hostId",
+          as: "kycDetails",
+        },
+      },
 
       // 3️⃣ Count both
       {
         $addFields: {
+          allPropertyCount: { $size: "$allProperties" },
           activePropertyCount: { $size: "$activeProperties" },
+          inactivePropertyCount: { $size: "$inactiveProperties" },
           kycDocCount: { $size: "$kycDocs" },
         },
       },
@@ -372,7 +418,7 @@ exports.getAdminFilter = async (req, res) => {
       {
         $match: {
           $or: [
-            { activePropertyCount: { $gte: 1 } },
+            { allPropertyCount: { $gte: 1 } },
             { kycDocCount: { $gte: 1 } },
           ],
         },
@@ -412,7 +458,9 @@ exports.getAdminFilter = async (req, res) => {
             {
               $project: {
                 password: 0,
+                allProperties: 0,
                 activeProperties: 0,
+                inactiveProperties: 0,
                 kycDocs: 0,
               },
             },
@@ -430,11 +478,21 @@ exports.getAdminFilter = async (req, res) => {
 
           // 🔹 C) Total count AFTER OR condition + search
           filteredCount: [{ $count: "count" }],
+          // propertyStats: [
+          //   {
+          //     $group: {
+          //       _id: null,
+          //       totalProperties: { $sum: "$totalPropertyCount" },
+          //       totalActiveProperties: { $sum: "$activePropertyCount" },
+          //     },
+          //   },
+          // ],
         },
       },
     ];
 
     const result = await User.aggregate(pipeline);
+
     const totalHost = result[0].filteredCount[0]?.count || 0;
 
     const totalPages = Math.ceil(totalHost / limit);
@@ -443,7 +501,9 @@ exports.getAdminFilter = async (req, res) => {
       data: result[0].data,
       totalPages,
       resultsPerPage: limit,
-      total: result[0].filteredCount[0]?.count || 0,
+
+      total: totalHost,
+
       allEligibleHostEmails: result[0].allEligibleHostEmails.map(
         (u) => u.email
       ),
@@ -1294,123 +1354,105 @@ exports.getFilterActivePropertyById = async (req, res) => {
     const hostId = new mongoose.Types.ObjectId(req.params.id);
     const { search, placeType, propertyType } = req.query;
 
-    // -----------------------------
-    // PROPERTY MATCH FILTER
-    // -----------------------------
-    const propertyMatch = {
-      host: hostId,
-      status: "active",
-    };
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 10;
+    const skip = (page - 1) * limit;
+    // Execute all database queries in parallel for better performance
+    const [hostDetails, kycDetails, total, properties] = await Promise.all([
+      // 1. Fetch host details from User table
+      User.findOne(
+        { _id: hostId },
+        { password: 0 } // Exclude sensitive fields
+      ),
 
-    if (placeType && placeType !== "all") {
-      propertyMatch.placeType = placeType;
-    }
+      // 2. Fetch all KYC data from KycHostData table
+      kycHostForm.find({ hostId: hostId }, { __v: 0 }),
+      ListingProperty.countDocuments({
+        host: hostId,
+        status: { $in: ["active", "inactive"] },
+      }),
+      // 3. Fetch properties with filters
+      (async () => {
+        // Build property filter
+        const propertyFilter = {
+          host: hostId,
+          status: { $in: ["active", "inactive"] },
+        };
 
-    if (propertyType && propertyType !== "all") {
-      propertyMatch.propertyType = propertyType;
-    }
+        // Apply optional filters
+        if (placeType && placeType !== "all") {
+          propertyFilter.placeType = placeType;
+        }
 
-    // -----------------------------
-    // SEARCH FILTER (OPTIONAL)
-    // -----------------------------
-    let searchStage = [];
-    if (search) {
-      const regex = new RegExp(search, "i"); // case-insensitive
-      searchStage.push({
-        $match: {
-          $or: [
-            { title: regex },
-            { "address.district": regex },
-            { "address.city": regex },
-            { "address.state": regex },
-            { "address.pincode": regex },
-          ],
-        },
+        if (propertyType && propertyType !== "all") {
+          propertyFilter.propertyType = propertyType;
+        }
+
+        // Build search filter if provided
+        let searchFilter = {};
+        if (search) {
+          const regex = new RegExp(search, "i");
+          searchFilter = {
+            $or: [
+              { title: regex },
+              { "address.district": regex },
+              { "address.city": regex },
+              { "address.state": regex },
+              { "address.pincode": regex },
+            ],
+          };
+        }
+
+        // Combine filters
+        const finalFilter = {
+          ...propertyFilter,
+          ...(Object.keys(searchFilter).length > 0 && searchFilter),
+        };
+
+        return await ListingProperty.find(finalFilter)
+          .limit(limit)
+          .skip(skip)
+          .populate({
+            path: "host",
+            select: "-password",
+          })
+          .lean();
+      })(),
+    ]);
+
+    // Validate host exists
+    if (!hostDetails) {
+      return res.status(404).json({
+        success: false,
+        message: "Host not found",
       });
     }
 
-    // -----------------------------
-    // AGGREGATION PIPELINE
-    // -----------------------------
-    const result = await ListingProperty.aggregate([
-      {
-        $facet: {
-          // =============================
-          // 1️⃣ HOST PROFILE (CONSTANT)
-          // =============================
-          hostProfile: [
-            {
-              $lookup: {
-                from: "users",
-                localField: "host",
-                foreignField: "_id",
-                as: "host",
-              },
-            },
-            { $unwind: "$host" },
-            {
-              $project: {
-                _id: 0,
-                host: 1,
-              },
-            },
-            { $limit: 1 }, // fetch only once
-          ],
-
-          // =============================
-          // 2️⃣ KYC DATA (CONSTANT)
-          // =============================
-          kycData: [
-            {
-              $lookup: {
-                from: "kychostdatas",
-                localField: "host",
-                foreignField: "hostId",
-                as: "kyc",
-              },
-            },
-            {
-              $project: {
-                _id: 0,
-                kyc: 1,
-              },
-            },
-            { $limit: 1 }, // fetch only once
-          ],
-
-          // =============================
-          // 3️⃣ FILTERED PROPERTIES
-          // =============================
-          properties: [
-            { $match: propertyMatch },
-            ...searchStage,
-            {
-              $lookup: {
-                from: "users",
-                localField: "host",
-                foreignField: "_id",
-                as: "host",
-              },
-            },
-            { $unwind: "$host" },
-          ],
-        },
-      },
-    ]);
-
-    // -----------------------------
-    // FORMAT RESPONSE
-    // -----------------------------
-    const data = result[0];
+    const totalPages = Math.ceil(total / limit);
 
     res.status(200).json({
       success: true,
-      hostProfile: data.hostProfile[0]?.host || null,
-      kycData: data.kycData[0]?.kyc || null,
-      properties: data.properties,
+      totalPages,
+      resultsPerPage: limit,
+      hostProfile: hostDetails,
+      kycData: kycDetails,
+      properties: properties,
+      stats: {
+        totalProperties: total,
+        activeProperties: properties.filter((p) => p.status === "active")
+          .length,
+        inactiveProperties: properties.filter((p) => p.status === "inactive")
+          .length,
+        kycCount: kycDetails.length,
+      },
     });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error("Error in getFilterActivePropertyById:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch host data",
+      error: error.message,
+    });
   }
 };
 

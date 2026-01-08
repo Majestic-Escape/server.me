@@ -2309,7 +2309,7 @@ exports.confirmInstantBooking = async (req, res) => {
     const delayMs = checkoutDate.getTime() + 5 * 60 * 60 * 1000 - now.getTime();
     const delaySeconds = Math.max(0, Math.round(delayMs / 1000));
 
-    await agenda.schedule(`40 seconds`, "sendReviewEmail", {
+    await agenda.schedule(`${delaySeconds} seconds`, "sendReviewEmail", {
       userEmail,
       hostEmail,
       params,

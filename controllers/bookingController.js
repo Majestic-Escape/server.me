@@ -2329,7 +2329,7 @@ exports.confirmInstantBooking = async (req, res) => {
 exports.markBookingAsPaid = async (req, res) => {
   try {
     const { bookingId, userId, manual, payment } = req.body;
-
+    console.log("Entered update status");
     const booking = await Booking.findByIdAndUpdate(
       bookingId,
       { paymentStatus: "paid", payment: payment },
@@ -2340,13 +2340,13 @@ exports.markBookingAsPaid = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Booking not found" });
-
+    console.log("Updated booking id");
     const data = await User.findById(userId);
     if (!data)
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
-
+    console.log("Found user details");
     const userEmail = await data.email;
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("inside the mark");
@@ -2363,6 +2363,7 @@ exports.markBookingAsPaid = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Payment not found" });
     }
+    console.log("Found payment details");
     // console.log("=======Bank payment", bank);
     const calTax = (subtotal, serviceFee) => {
       if (subtotal <= 7500) {
@@ -2375,28 +2376,34 @@ exports.markBookingAsPaid = async (req, res) => {
       booking.subTotal,
       booking.subTotal * 0.12
     ).toLocaleString();
-
+    console.log("Calculated Tax");
     const html = generateInvoiceHTML(booking, bank, tax);
     // console.log("=======pdf html", html);
     // Generate PDF buffer
+    console.log("Build Email HTML Body");
     const pdfBuffer = await generateInvoicePDF(html);
+    console.log(" Generate Email HTML Body");
     // console.log("=======pdf buffer");
     const invoicesDir = path.join(__dirname, "/..");
     if (!fs.existsSync(invoicesDir)) {
       fs.mkdirSync(invoicesDir, { recursive: true });
     }
-
+    console.log("Generate PDF");
     // File path
     const filePath = path.join(invoicesDir, `invoice-${booking._id}.pdf`);
 
     // Save PDF
     fs.writeFileSync(filePath, pdfBuffer);
+    console.log("Save PDF");
     const localPdf = await fs.readFileSync(filePath);
+
     // Convert buffer → base64
     // const pdfPath = path.join(process.cwd(), "test.pdf");
     // const pdfBuffer = fs.readFileSync(pdfPath);
     // console.log("pdf path", pdfPath);
+    console.log("Read PDF");
     const attachmentBase64 = localPdf.toString("base64");
+    console.log("Convert Base 64 PDF");
     // console.log("=======Attachment");
     const invoiceAttachment = [
       {
@@ -2418,6 +2425,7 @@ exports.markBookingAsPaid = async (req, res) => {
       console.log("inside the mark3");
     }
     if (manual) {
+      console.log("Send Email Manual");
       await sendEmail(booking.hostId.email, 42, params, invoiceAttachment);
 
       await Promise.all(
@@ -2428,14 +2436,16 @@ exports.markBookingAsPaid = async (req, res) => {
 
       await sendEmail(booking.userId.email, 8, params, invoiceAttachment);
       //invoiceAttachment;
+      console.log("Done Send Email Manual");
       try {
         await fs.promises.unlink(filePath);
       } catch (unlinkError) {
         console.error("Failed to delete PDF file:", unlinkError);
       }
-
+      console.log("Delete PDF");
       return res.status(200).json({ success: true, data: booking });
     } else {
+      console.log("Send Email Instant");
       // console.log("=======Before email");
       await sendEmail(booking.hostId.email, 34, params, invoiceAttachment);
       await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
@@ -2446,7 +2456,7 @@ exports.markBookingAsPaid = async (req, res) => {
         )
       );
       // console.log("invoice", invoiceAttachment);
-
+      console.log("Done Send Email Instant");
       // invoiceAttachment
       try {
         await fs.promises.unlink(filePath);
@@ -2454,6 +2464,7 @@ exports.markBookingAsPaid = async (req, res) => {
         console.error("Failed to delete PDF file:", unlinkError);
       }
     }
+    console.log("Delete PDF");
     return res.status(200).json({ success: true, data: booking });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });

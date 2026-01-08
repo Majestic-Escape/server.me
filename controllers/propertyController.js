@@ -453,6 +453,8 @@ exports.getAdminFilter = async (req, res) => {
                   },
                 ]
               : []),
+            { $sort: { createdAt: -1 } },
+
             { $skip: skip },
             { $limit: limit },
             {

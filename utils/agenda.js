@@ -50,6 +50,8 @@ agenda.define("sendPropertyReminderEmail", async (job, done) => {
     }
   } catch (err) {
     console.error("Error in job:", err);
+  } finally {
+    done();
   }
 });
 agenda.define("sendPropertyReminderAgainEmail", async (job, done) => {
@@ -65,6 +67,8 @@ agenda.define("sendPropertyReminderAgainEmail", async (job, done) => {
     }
   } catch (err) {
     console.error("Error in job:", err);
+  } finally {
+    done();
   }
 });
 (async () => {

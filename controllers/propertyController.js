@@ -1358,67 +1358,76 @@ exports.getFilterActivePropertyById = async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 10;
     const skip = (page - 1) * limit;
     // Execute all database queries in parallel for better performance
-    const [hostDetails, kycDetails, total, properties] = await Promise.all([
-      // 1. Fetch host details from User table
-      User.findOne(
-        { _id: hostId },
-        { password: 0 } // Exclude sensitive fields
-      ),
+    const [hostDetails, kycDetails, total, active, inactive, properties] =
+      await Promise.all([
+        // 1. Fetch host details from User table
+        User.findOne(
+          { _id: hostId },
+          { password: 0 } // Exclude sensitive fields
+        ),
 
-      // 2. Fetch all KYC data from KycHostData table
-      kycHostForm.find({ hostId: hostId }, { __v: 0 }),
-      ListingProperty.countDocuments({
-        host: hostId,
-        status: { $in: ["active", "inactive"] },
-      }),
-      // 3. Fetch properties with filters
-      (async () => {
-        // Build property filter
-        const propertyFilter = {
+        // 2. Fetch all KYC data from KycHostData table
+        kycHostForm.find({ hostId: hostId }, { __v: 0 }),
+        ListingProperty.countDocuments({
           host: hostId,
           status: { $in: ["active", "inactive"] },
-        };
-
-        // Apply optional filters
-        if (placeType && placeType !== "all") {
-          propertyFilter.placeType = placeType;
-        }
-
-        if (propertyType && propertyType !== "all") {
-          propertyFilter.propertyType = propertyType;
-        }
-
-        // Build search filter if provided
-        let searchFilter = {};
-        if (search) {
-          const regex = new RegExp(search, "i");
-          searchFilter = {
-            $or: [
-              { title: regex },
-              { "address.district": regex },
-              { "address.city": regex },
-              { "address.state": regex },
-              { "address.pincode": regex },
-            ],
+        }),
+        ListingProperty.countDocuments({
+          host: hostId,
+          status: { $in: ["active"] },
+        }),
+        ListingProperty.countDocuments({
+          host: hostId,
+          status: { $in: ["inactive"] },
+        }),
+        // 3. Fetch properties with filters
+        (async () => {
+          // Build property filter
+          const propertyFilter = {
+            host: hostId,
+            status: { $in: ["active", "inactive"] },
           };
-        }
 
-        // Combine filters
-        const finalFilter = {
-          ...propertyFilter,
-          ...(Object.keys(searchFilter).length > 0 && searchFilter),
-        };
+          // Apply optional filters
+          if (placeType && placeType !== "all") {
+            propertyFilter.placeType = placeType;
+          }
 
-        return await ListingProperty.find(finalFilter)
-          .limit(limit)
-          .skip(skip)
-          .populate({
-            path: "host",
-            select: "-password",
-          })
-          .lean();
-      })(),
-    ]);
+          if (propertyType && propertyType !== "all") {
+            propertyFilter.propertyType = propertyType;
+          }
+
+          // Build search filter if provided
+          let searchFilter = {};
+          if (search) {
+            const regex = new RegExp(search, "i");
+            searchFilter = {
+              $or: [
+                { title: regex },
+                { "address.district": regex },
+                { "address.city": regex },
+                { "address.state": regex },
+                { "address.pincode": regex },
+              ],
+            };
+          }
+
+          // Combine filters
+          const finalFilter = {
+            ...propertyFilter,
+            ...(Object.keys(searchFilter).length > 0 && searchFilter),
+          };
+
+          return await ListingProperty.find(finalFilter)
+            .limit(limit)
+            .skip(skip)
+            .populate({
+              path: "host",
+              select: "-password",
+            })
+            .lean();
+        })(),
+      ]);
 
     // Validate host exists
     if (!hostDetails) {
@@ -1439,10 +1448,8 @@ exports.getFilterActivePropertyById = async (req, res) => {
       properties: properties,
       stats: {
         totalProperties: total,
-        activeProperties: properties.filter((p) => p.status === "active")
-          .length,
-        inactiveProperties: properties.filter((p) => p.status === "inactive")
-          .length,
+        activeProperties: active,
+        inactiveProperties: inactive,
         kycCount: kycDetails.length,
       },
     });

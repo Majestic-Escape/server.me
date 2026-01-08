@@ -1,5 +1,5 @@
 const Booking = require("../models/Booking");
-const puppeteer = require("puppeteer");
+const puppeteer = require("puppeteer-core");
 const Payment = require("../models/Payment");
 const moment = require("moment-timezone");
 const jwt = require("jsonwebtoken");

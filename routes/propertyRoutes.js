@@ -18,6 +18,7 @@ router.get(
   authMiddleware,
   propertyController.getFilterActivePropertyById
 );
+router.get("/countstays", propertyController.getPropertyCount);
 router.get("/admin-filter", propertyController.getAdminFilter);
 router.get("/search-properties", propertyController.getCustomSearch);
 router.get("/:id", propertyController.getPropertyById);

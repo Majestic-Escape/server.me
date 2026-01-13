@@ -49,6 +49,9 @@ async function generateInvoicePDF(html) {
     format: "A4",
     printBackground: true,
   });
+  // if (!pdfBuffer || !Buffer.isBuffer(pdfBuffer)) {
+  //   throw new Error("Invalid PDF buffer received");
+  // }
   console.log("Generated page pdf content");
   await browser.close();
   console.log("close browser");

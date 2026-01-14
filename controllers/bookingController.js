@@ -2384,7 +2384,13 @@ exports.markBookingAsPaid = async (req, res) => {
     const pdfBuffer = await generateInvoicePDF(html);
     console.log(" Generate Email HTML Body");
     // console.log("=======pdf buffer");
-    const invoicesDir = path.join(__dirname, "/..");
+    let invoicesDir;
+    if (process.env.NEXT_PUBLIC_ENV == "dev") {
+      invoicesDir = path.join(__dirname, "/..");
+    } else {
+      invoicesDir = "/tmp";
+    }
+
     if (!fs.existsSync(invoicesDir)) {
       fs.mkdirSync(invoicesDir, { recursive: true });
     }

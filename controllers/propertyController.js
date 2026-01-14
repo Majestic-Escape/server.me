@@ -319,7 +319,63 @@ exports.getCustomSearch = async (req, res) => {
 //     });
 //   }
 // };
+exports.getPropertyCount = async (req, res) => {
+  try {
+    const { city } = req.query;
+    const cities = city.split(",");
+    if (!Array.isArray(cities) || cities.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "cities must be a non-empty array",
+      });
+    }
+    console.log("stage", cities);
+    const normalizedCities = cities.map((city) => city.trim().toLowerCase());
+    console.log("stage", normalizedCities);
+    const counts = await ListingProperty.aggregate([
+      {
+        $match: {
+          status: "active",
+        },
+      },
+      {
+        $addFields: {
+          cityLower: { $toLower: "$address.city" },
+        },
+      },
+      {
+        $match: {
+          cityLower: { $in: normalizedCities },
+        },
+      },
+      {
+        $group: {
+          _id: "$cityLower",
+          count: { $sum: 1 },
+        },
+      },
+    ]);
+    console.log("stage", counts);
+    const result = normalizedCities.map((city) => {
+      const found = counts.find((c) => c._id === city);
+      return {
+        city,
+        count: found ? found.count : 0,
+      };
+    });
 
+    return res.status(200).json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
 exports.getAdminFilter = async (req, res) => {
   try {
     const { search } = req.query;

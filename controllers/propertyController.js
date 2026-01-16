@@ -130,7 +130,7 @@ exports.getCustomSearch = async (req, res) => {
     }
 
     if (bathrooms) {
-      filter.bathrooms = pasreInt(bathrooms);
+      filter.bathrooms = parseInt(bathrooms);
     }
 
     if (bedrooms) {

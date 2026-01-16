@@ -444,7 +444,7 @@ async function initiatePayout(booking) {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("Entered payout", booking);
     }
-    if (!booking.price || booking.price < 100) {
+    if (!booking.price) {
       return { success: false, error: "Amount too small" };
     }
     const generateString = generateUniqueString();

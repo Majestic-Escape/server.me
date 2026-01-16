@@ -1482,7 +1482,7 @@ exports.checkDates = async (req, res) => {
     const bookings = await Booking.find({
       propertyId,
       paymentStatus: "paid",
-      checkIn: { $gte: today }, // only future or today’s checkIn
+      checkOut: { $gt: today }, // only future or today’s checkIn
       status: { $nin: ["rejected", "cancelled"] }, // exclude rejected & cancelled
     });
 
@@ -1510,17 +1510,17 @@ exports.blockedDates = async (req, res) => {
     const bookings = await Booking.find({
       propertyId,
       paymentStatus: "paid",
-      checkIn: { $gte: today }, // only future or today’s checkIn
+      checkOut: { $gt: today }, //checkin:gte:today
       status: { $nin: ["rejected", "cancelled"] }, // exclude rejected & cancelled
       action: "user",
     });
     const manualBlock = await Booking.find({
       propertyId,
-      checkIn: { $gte: today }, // only future or today’s checkIn
+      checkOut: { $gt: today }, // only future or today’s checkIn
       status: { $nin: ["rejected", "cancelled"] }, // exclude rejected & cancelled
       action: "host",
     });
-
+    // console.log("bloc", bookings);
     const todayBooking = [];
     const datesArray = [];
 

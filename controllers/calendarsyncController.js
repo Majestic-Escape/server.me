@@ -279,7 +279,7 @@ async function syncCalendars(hostId) {
           const today = new Date();
           today.setHours(0, 0, 0, 0);
 
-          if (start < today) {
+          if (end < today) {
             console.log(
               `⏭️ Skipping past booking UID ${uid} - start: ${start}`
             );

@@ -6,6 +6,39 @@ exports.blockedDates = async (bookings, datesArray, todayBooking, today) => {
     if (isNaN(checkIn.getTime()) || isNaN(checkOut.getTime())) {
       continue; // skip invalid
     }
+    if (checkOut <= today) continue;
+    const startDate = checkIn < today ? new Date(today) : new Date(checkIn);
+    const currentDate = new Date(startDate);
+
+    while (currentDate <= checkOut) {
+      const formattedDate = currentDate.toISOString().split("T")[0];
+      if (formattedDate !== checkOut.toISOString().split("T")[0]) {
+        if (!datesArray.includes(formattedDate)) {
+          datesArray.push(formattedDate);
+        }
+      }
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    // Special case: if booking starts today
+    if (checkIn <= today && checkOut > today) {
+      const formattedCheckout = checkOut.toISOString().split("T")[0];
+
+      if (!todayBooking.includes(formattedCheckout)) {
+        todayBooking.push(formattedCheckout);
+      }
+    }
+  }
+};
+{
+  /*exports.blockedDates = async (bookings, datesArray, todayBooking, today) => {
+  for (const booking of bookings) {
+    const checkIn = new Date(booking.checkIn);
+    const checkOut = new Date(booking.checkOut);
+
+    if (isNaN(checkIn.getTime()) || isNaN(checkOut.getTime())) {
+      continue; // skip invalid
+    }
 
     const currentDate = new Date(checkIn);
 
@@ -31,3 +64,5 @@ exports.blockedDates = async (bookings, datesArray, todayBooking, today) => {
     }
   }
 };
+*/
+}

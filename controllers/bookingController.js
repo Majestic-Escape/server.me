@@ -109,7 +109,12 @@ const adminEmail = process.env.ADMIN_EMAIL.split(",");
 exports.createBooking = async (req, res) => {
   try {
     const { propertyId, checkIn, checkOut } = req.body;
-
+    function normalizeDate(dateStr) {
+      const d = new Date(dateStr);
+      return new Date(
+        Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+      );
+    }
     if (!propertyId || !checkIn || !checkOut) {
       return res.status(400).json({
         success: false,
@@ -118,6 +123,8 @@ exports.createBooking = async (req, res) => {
     }
 
     // Normalize dates
+    //  const newCheckIn = normalizeDate(checkIn);
+    // const newCheckOut = normalizeDate(checkOut);
     const newCheckIn = new Date(checkIn);
 
     const newCheckOut = new Date(checkOut);
@@ -166,13 +173,13 @@ exports.createBooking = async (req, res) => {
         "gob2",
         newCheckIn.getDate(),
         newCheckIn.getMonth(),
-        overlapping.checkOut.getDate() - 1,
+        overlapping.checkOut.getDate(),
         overlapping.checkOut.getMonth(),
       );
       // ✅ Allow exact checkout == new checkin
       if (
         `${newCheckIn.getDate()}/${newCheckIn.getMonth()}` !==
-        `${overlapping.checkOut.getDate() - 1}/${existingCheckOut.getMonth()}`
+        `${overlapping.checkOut.getDate()}/${existingCheckOut.getMonth()}`
       ) {
         return res.status(409).json({
           success: false,

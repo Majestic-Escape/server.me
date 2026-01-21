@@ -109,7 +109,12 @@ const adminEmail = process.env.ADMIN_EMAIL.split(",");
 exports.createBooking = async (req, res) => {
   try {
     const { propertyId, checkIn, checkOut } = req.body;
-
+    function normalizeDate(dateStr) {
+      const d = new Date(dateStr);
+      return new Date(
+        Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+      );
+    }
     if (!propertyId || !checkIn || !checkOut) {
       return res.status(400).json({
         success: false,
@@ -118,10 +123,12 @@ exports.createBooking = async (req, res) => {
     }
 
     // Normalize dates
+    //  const newCheckIn = normalizeDate(checkIn);
+    // const newCheckOut = normalizeDate(checkOut);
     const newCheckIn = new Date(checkIn);
 
     const newCheckOut = new Date(checkOut);
-
+    console.log("Checkin and checkout Dates", newCheckIn, newCheckOut);
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("gobl", checkIn, checkOut);
     }
@@ -154,25 +161,25 @@ exports.createBooking = async (req, res) => {
       checkIn: { $lt: newCheckOut },
       checkOut: { $gt: newCheckIn },
     }).lean();
-
+    console.log("check overlap booking", overlapping);
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("have found any overlap", overlapping);
     }
 
     if (overlapping) {
       const existingCheckOut = new Date(overlapping.checkOut);
-
+      console.log("overlapping checkout date", existingCheckOut);
       console.log(
         "gob2",
         newCheckIn.getDate(),
         newCheckIn.getMonth(),
-        overlapping.checkOut.getDate() - 1,
-        overlapping.checkOut.getMonth()
+        overlapping.checkOut.getDate(),
+        overlapping.checkOut.getMonth(),
       );
       // ✅ Allow exact checkout == new checkin
       if (
         `${newCheckIn.getDate()}/${newCheckIn.getMonth()}` !==
-        `${overlapping.checkOut.getDate() - 1}/${existingCheckOut.getMonth()}`
+        `${overlapping.checkOut.getDate()}/${existingCheckOut.getMonth()}`
       ) {
         return res.status(409).json({
           success: false,
@@ -326,13 +333,13 @@ exports.getAllFilterBookings = async (req, res) => {
         .lean();
       if (title && title.toLowerCase() !== "all") {
         bookings = bookings.filter((item) =>
-          item.propertyId?.title?.toLowerCase().includes(title.toLowerCase())
+          item.propertyId?.title?.toLowerCase().includes(title.toLowerCase()),
         );
       }
 
       if (hostEmail && hostEmail.toLowerCase() !== "all") {
         bookings = bookings.filter((item) =>
-          item.hostId?.email?.toLowerCase().includes(hostEmail.toLowerCase())
+          item.hostId?.email?.toLowerCase().includes(hostEmail.toLowerCase()),
         );
       }
 
@@ -345,7 +352,7 @@ exports.getAllFilterBookings = async (req, res) => {
             b.userId?.lastName.toLowerCase().includes(s) ||
             (b.userId?.firstName + " " + b.userId?.lastName)
               .toLowerCase()
-              .includes(s)
+              .includes(s),
         );
       }
 
@@ -405,13 +412,13 @@ exports.getHostFilterBookingStats = async (req, res) => {
 
     if (title && title.toLowerCase() !== "all") {
       bookings = bookings.filter((item) =>
-        item.propertyId?.title?.toLowerCase().includes(title.toLowerCase())
+        item.propertyId?.title?.toLowerCase().includes(title.toLowerCase()),
       );
     }
 
     if (hostEmail && hostEmail.toLowerCase() !== "all") {
       bookings = bookings.filter((item) =>
-        item.hostId?.email?.toLowerCase().includes(hostEmail.toLowerCase())
+        item.hostId?.email?.toLowerCase().includes(hostEmail.toLowerCase()),
       );
     }
 
@@ -424,7 +431,7 @@ exports.getHostFilterBookingStats = async (req, res) => {
           b.userId?.lastName.toLowerCase().includes(s) ||
           (b.userId?.firstName + " " + b.userId?.lastName)
             .toLowerCase()
-            .includes(s)
+            .includes(s),
       );
     }
 
@@ -556,7 +563,7 @@ exports.getHostFilterBookings = async (req, res) => {
           data: [{ $skip: skip }, { $limit: limit }],
           totalCount: [{ $count: "count" }],
         },
-      }
+      },
     );
 
     /** ---------------- EXECUTE ---------------- */
@@ -636,13 +643,13 @@ exports.getRevenueFilter = async (req, res) => {
     }
     if (title && title.toLowerCase() !== "all") {
       bookings = bookings.filter((item) =>
-        item.propertyId?.title?.toLowerCase().includes(title.toLowerCase())
+        item.propertyId?.title?.toLowerCase().includes(title.toLowerCase()),
       );
     }
 
     if (hostEmail && hostEmail.toLowerCase() !== "all") {
       bookings = bookings.filter((item) =>
-        item.hostId?.email?.toLowerCase().includes(hostEmail.toLowerCase())
+        item.hostId?.email?.toLowerCase().includes(hostEmail.toLowerCase()),
       );
     }
 
@@ -655,7 +662,7 @@ exports.getRevenueFilter = async (req, res) => {
           b.bookingId?.userId?.lastName.toLowerCase().includes(s) ||
           (b.bookingId?.userId?.firstName + " " + b.bookingId?.userId?.lastName)
             .toLowerCase()
-            .includes(s)
+            .includes(s),
       );
     }
 
@@ -725,7 +732,7 @@ exports.updateFlag = async (req, res) => {
   try {
     const { id, email } = req.query;
     const data = await Booking.findByIdAndUpdate(id, { flag: true }).populate(
-      "hostId propertyId userId payment"
+      "hostId propertyId userId payment",
     );
     if (!data) {
       return res
@@ -1242,7 +1249,7 @@ exports.getBookingsByHostGroupByUsers = async (req, res) => {
     // 4. Apply JS filters after populate
     if (title && title.toLowerCase() !== "all") {
       bookings = bookings.filter((item) =>
-        item.propertyId?.title?.toLowerCase().includes(title.toLowerCase())
+        item.propertyId?.title?.toLowerCase().includes(title.toLowerCase()),
       );
     }
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
@@ -1255,7 +1262,7 @@ exports.getBookingsByHostGroupByUsers = async (req, res) => {
           b.propertyId?.title?.toLowerCase().includes(s) ||
           `${b.userId?.firstName} ${b.userId?.lastName}`
             .toLowerCase()
-            .includes(s)
+            .includes(s),
       );
     }
 
@@ -1270,7 +1277,7 @@ exports.getBookingsByHostGroupByUsers = async (req, res) => {
 exports.getBookingById = async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.bookingId).populate(
-      "userId propertyId hostId"
+      "userId propertyId hostId",
     );
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("try try", booking);
@@ -1291,7 +1298,7 @@ exports.updateBooking = async (req, res) => {
     const booking = await Booking.findByIdAndUpdate(
       req.params.bookingId,
       req.body,
-      { new: true }
+      { new: true },
     );
     if (!booking)
       return res
@@ -1322,7 +1329,7 @@ exports.cancelBooking = async (req, res) => {
     const paymentData = await Payment.findOneAndUpdate(
       { bookingId: bookingId },
       { status: "refund initiated" },
-      { new: true }
+      { new: true },
     );
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("batm1");
@@ -1360,14 +1367,14 @@ exports.cancelBooking = async (req, res) => {
     await Payment.findOneAndUpdate(
       { bookingId: bookingId },
       { status: "refunded" },
-      { paymentType: "refunded" }
+      { paymentType: "refunded" },
     );
     await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
 
     await sendEmail(userEmail, 11, params);
 
     await Promise.all(
-      adminEmail.map((email) => sendEmail(email.trim(), 16, params))
+      adminEmail.map((email) => sendEmail(email.trim(), 16, params)),
     );
     await sendEmail(hostEmail, 17, params);
     res.status(200).json({ success: true, data: booking });
@@ -1396,10 +1403,10 @@ exports.cancelAdminBooking = async (req, res) => {
     //     .json({ success: false, message: "User data not found" });
     // }
     const userName = changeToUpperCase(
-      booking?.userId?.firstName + " " + booking?.userId?.lastName
+      booking?.userId?.firstName + " " + booking?.userId?.lastName,
     );
     const hostName = changeToUpperCase(
-      booking?.hostId?.firstName + " " + booking?.hostId?.lastName
+      booking?.hostId?.firstName + " " + booking?.hostId?.lastName,
     );
 
     const instance = new Razorpay({ key_id: key, key_secret: secret });
@@ -1408,7 +1415,7 @@ exports.cancelAdminBooking = async (req, res) => {
     const paymentData = await Payment.findOneAndUpdate(
       { bookingId: bookingId },
       { status: "refund initiated" },
-      { new: true }
+      { new: true },
     );
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("batm1");
@@ -1446,7 +1453,7 @@ exports.cancelAdminBooking = async (req, res) => {
     await Payment.findOneAndUpdate(
       { bookingId: bookingId },
       { status: "refunded", paymentType: "refunded" }, // ✅ both fields updated
-      { new: true }
+      { new: true },
     );
     await Booking.findByIdAndUpdate(bookingId, {
       paymentStatus: "refunded",
@@ -1456,7 +1463,7 @@ exports.cancelAdminBooking = async (req, res) => {
     await sendEmail(booking.userId.email, 32, params);
 
     await Promise.all(
-      adminEmail.map((email) => sendEmail(email.trim(), 31, params))
+      adminEmail.map((email) => sendEmail(email.trim(), 31, params)),
     );
 
     await sendEmail(booking.hostId.email, 33, params);
@@ -1578,7 +1585,7 @@ exports.unblockDates = async (req, res) => {
     const unblock = await Booking.findByIdAndUpdate(
       booking._id,
       { status: "cancelled" },
-      { new: true }
+      { new: true },
     );
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("unblock3", unblock);
@@ -1678,7 +1685,7 @@ exports.terminateBooking = async (req, res) => {
     const paymentData = await Payment.findOneAndUpdate(
       { bookingId: bookingId },
       { status: "refund initiated" },
-      { new: true }
+      { new: true },
     );
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("batm1", paymentData);
@@ -1717,7 +1724,7 @@ exports.terminateBooking = async (req, res) => {
     await Payment.findOneAndUpdate(
       { bookingId: bookingId },
       { status: "refunded" },
-      { paymentType: "refunded" }
+      { paymentType: "refunded" },
     );
     await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
 
@@ -1725,7 +1732,7 @@ exports.terminateBooking = async (req, res) => {
     await sendEmail(hostEmail, 14, params);
 
     await Promise.all(
-      adminEmail.map((email) => sendEmail(email.trim(), 15, params))
+      adminEmail.map((email) => sendEmail(email.trim(), 15, params)),
     );
 
     res.status(200).json({ success: true, data: booking });
@@ -1887,7 +1894,7 @@ exports.terminateUserBooking = async (req, res) => {
       const paymentData = await Payment.findOneAndUpdate(
         { bookingId: id },
         { status: "refund initiated" },
-        { new: true }
+        { new: true },
       );
       const payment = await Payment.findOne({ bookingId: id });
       if (!payment) {
@@ -1915,7 +1922,7 @@ exports.terminateUserBooking = async (req, res) => {
       // Update statuses only if refund is successful
       await Payment.findOneAndUpdate(
         { bookingId: id },
-        { status: "refunded", paymentType: "refunded" }
+        { status: "refunded", paymentType: "refunded" },
       );
       await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
     }
@@ -1927,7 +1934,7 @@ exports.terminateUserBooking = async (req, res) => {
     await sendEmail(hostEmail, 20, params);
 
     await Promise.all(
-      adminEmail.map((email) => sendEmail(email.trim(), 21, params))
+      adminEmail.map((email) => sendEmail(email.trim(), 21, params)),
     );
 
     res.status(200).json({
@@ -1980,7 +1987,7 @@ exports.terminateNonUserBooking = async (req, res) => {
       const paymentData = await Payment.findOneAndUpdate(
         { bookingId: id },
         { status: "refund initiated" },
-        { new: true }
+        { new: true },
       );
       const payment = await Payment.findOne({ bookingId: id });
       if (!payment) {
@@ -2008,7 +2015,7 @@ exports.terminateNonUserBooking = async (req, res) => {
       // Update statuses only if refund is successful
       await Payment.findOneAndUpdate(
         { bookingId: id },
-        { status: "refunded", paymentType: "refunded" }
+        { status: "refunded", paymentType: "refunded" },
       );
       await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
     }
@@ -2107,7 +2114,7 @@ exports.confirmBooking = async (req, res) => {
     const booking = await Booking.findByIdAndUpdate(
       bookingId,
       { status: "confirmed" },
-      { new: true }
+      { new: true },
     ).populate("hostId userId propertyId");
 
     if (!booking) {
@@ -2275,7 +2282,7 @@ exports.confirmInstantBooking = async (req, res) => {
     const booking = await Booking.findByIdAndUpdate(
       bookingId,
       { status: "confirmed" },
-      { new: true }
+      { new: true },
     ).populate("hostId userId");
 
     if (!booking) {
@@ -2333,7 +2340,7 @@ exports.markBookingAsPaid = async (req, res) => {
     const booking = await Booking.findByIdAndUpdate(
       bookingId,
       { paymentStatus: "paid", payment: payment },
-      { new: true }
+      { new: true },
     ).populate("userId hostId propertyId payment");
 
     if (!booking)
@@ -2374,7 +2381,7 @@ exports.markBookingAsPaid = async (req, res) => {
     };
     const tax = calTax(
       booking.subTotal,
-      booking.subTotal * 0.12
+      booking.subTotal * 0.12,
     ).toLocaleString();
     console.log("Calculated Tax");
     const html = generateInvoiceHTML(booking, bank, tax);
@@ -2420,10 +2427,10 @@ exports.markBookingAsPaid = async (req, res) => {
     ];
 
     const userName = changeToUpperCase(
-      booking.userId.firstName + " " + booking.userId.lastName
+      booking.userId.firstName + " " + booking.userId.lastName,
     );
     const hostName = changeToUpperCase(
-      booking.hostId.firstName + " " + booking.hostId.lastName
+      booking.hostId.firstName + " " + booking.hostId.lastName,
     );
     const params = paramsToObject(userName, hostName, booking);
 
@@ -2436,8 +2443,8 @@ exports.markBookingAsPaid = async (req, res) => {
 
       await Promise.all(
         adminEmail.map((email) =>
-          sendEmail(email.trim(), 9, params, invoiceAttachment)
-        )
+          sendEmail(email.trim(), 9, params, invoiceAttachment),
+        ),
       );
 
       await sendEmail(booking.userId.email, 8, params, invoiceAttachment);
@@ -2458,8 +2465,8 @@ exports.markBookingAsPaid = async (req, res) => {
       // console.log("=======after host");
       await Promise.all(
         adminEmail.map((email) =>
-          sendEmail(email.trim(), 36, params, invoiceAttachment)
-        )
+          sendEmail(email.trim(), 36, params, invoiceAttachment),
+        ),
       );
       // console.log("invoice", invoiceAttachment);
       console.log("Done Send Email Instant");

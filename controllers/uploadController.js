@@ -6,11 +6,13 @@ exports.uploadImages = async (req, res) => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("Upload request received");
     }
+    console.log("Enter image upload");
     const files = req.files; // Array of files
+    console.log("Check if image upload exist", files);
     if (!files || files.length === 0) {
       return res.status(400).json({ error: "No files uploaded" });
     }
-
+    console.log("Start image upload on digital ocean");
     // Upload all files to DigitalOcean Spaces
     const uploadPromises = files.map((file) => {
       const params = {
@@ -24,11 +26,13 @@ exports.uploadImages = async (req, res) => {
     });
 
     const results = await Promise.all(uploadPromises);
+    console.log("Collect digital ocean image url");
     const urls = results.map((result) => result.Location);
 
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("Upload successful:", urls);
     }
+    console.log("Send digital ocean image url to front end");
     res.json({ urls }); // Return array of URLs
   } catch (error) {
     console.error("Upload error:", error);

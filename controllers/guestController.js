@@ -1,6 +1,7 @@
 const ListingProperty = require("../models/ListingProperty");
 const User = require("../models/User");
 const KycHostData = require("../models/KycHostForm");
+const { sanitizeHost, SAFE_HOST_SELECT } = require("../utils/sanitizeResponse");
 // Get user information by ID
 // exports.getGuests = async (req, res) => {
 //   try {
@@ -224,21 +225,23 @@ exports.getKycDetails = async (req, res) => {
 exports.getGuestsById = async (req, res) => {
   try {
     const { userId } = req.query;
-    const users = await User.findById(userId); // Fetch all users
+    // Only select safe fields to prevent PII leakage
+    const users = await User.findById(userId).select(SAFE_HOST_SELECT).lean();
     res.json(users);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch users" });
   }
 };
 
-// Get user information by ID
+// Get user information by ID - returns only safe fields to prevent PII leakage
 exports.getUserInfo = async (req, res) => {
   const { userId } = req.params;
 
   try {
+    // Only select safe fields - no email, phone, address, dob
     const user = await User.findById(userId)
-      .select("-otp.value -otp.expiry -lockUntil") // Exclude sensitive fields
-      .lean(); // Optimize for read-only
+      .select(SAFE_HOST_SELECT)
+      .lean();
 
     if (!user) return res.status(404).json({ message: "User not found" });
 

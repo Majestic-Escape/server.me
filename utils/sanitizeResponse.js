@@ -6,42 +6,37 @@
  */
 
 // Fields that are safe to expose for host information in public responses
-// MINIMAL - only show profile picture and ratings, NO names
+// Show name and profile for display, but NO contact info
 const SAFE_HOST_FIELDS = [
   '_id',
   'id',
+  'firstName',
+  'lastName',
+  'languages',
   'profilePicture',
+  'about',
   'averageRating',
   'reviewCount',
   'avgPropertyRating',
-  'propertyReviewCount'
+  'propertyReviewCount',
+  'createdAt'
 ];
 
 // Fields to remove from property responses to prevent contact info leakage
 const SENSITIVE_PROPERTY_FIELDS = [
   'hostEmail',
   'validRegistrationNo',
-  'bankDetails',
-  'host' // Remove entire host object in chat/public contexts
+  'bankDetails'
 ];
 
-// Sensitive fields to remove from property address - remove ALL location details
+// Sensitive fields to remove from property address - keep city/state for display, remove exact location
 const SENSITIVE_ADDRESS_FIELDS = [
   'street',
-  'registrationNumber',
-  'latitude',
-  'longitude',
-  'district',
-  'city',
-  'state',
-  'pincode',
-  'country'
+  'registrationNumber'
 ];
 
 // Fields to remove from host object to prevent PII leakage
 const SENSITIVE_HOST_FIELDS = [
-  'firstName',
-  'lastName',
   'email',
   'phoneNumber',
   'countryCode',
@@ -63,9 +58,6 @@ const SENSITIVE_HOST_FIELDS = [
   'bio',
   'role',
   'hostOffer',
-  'languages',
-  'about',
-  'createdAt',
   'updatedAt'
 ];
 
@@ -138,13 +130,26 @@ function sanitizeProperty(property) {
   
   const propObj = property.toObject ? property.toObject() : { ...property };
   
-  // Remove sensitive property fields including host object entirely
+  // Remove sensitive property fields
   SENSITIVE_PROPERTY_FIELDS.forEach(field => {
     delete propObj[field];
   });
   
-  // Remove entire address object to prevent any location leakage
-  delete propObj.address;
+  // Sanitize property address - remove street and registration number but keep city/state/coordinates for map
+  if (propObj.address && typeof propObj.address === 'object') {
+    propObj.address = sanitizeAddress(propObj.address);
+  }
+  
+  // Sanitize nested host object if present
+  if (propObj.host && typeof propObj.host === 'object') {
+    if (propObj.host.contact) {
+      // Embedded host from Property model
+      propObj.host = sanitizeEmbeddedHost(propObj.host);
+    } else {
+      // Populated host from User model
+      propObj.host = sanitizeHost(propObj.host);
+    }
+  }
   
   return propObj;
 }

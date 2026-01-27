@@ -14,6 +14,7 @@ const BankDetail = require("../models/BankDetail");
 const agenda = require("../utils/agenda");
 const adminEmail = process.env.ADMIN_EMAIL.split(",");
 const kycHostForm = require("../models/KycHostForm");
+const { sanitizeProperty, sanitizeProperties, SAFE_HOST_SELECT } = require("../utils/sanitizeResponse");
 // exports.getCustomSearch = async (req, res) => {
 //   try {
 //     const { location, from, to, guests, propertyType } = req.query;
@@ -252,8 +253,11 @@ exports.getCustomSearch = async (req, res) => {
       .skip(skip)
       .limit(limit);
 
+    // Sanitize properties to remove hostEmail and other sensitive data
+    const sanitizedProperties = sanitizeProperties(availableProperties);
+
     res.json({
-      data: availableProperties,
+      data: sanitizedProperties,
       pagination: {
         totalCount,
         totalPages: Math.ceil(totalCount / limit),
@@ -665,9 +669,12 @@ exports.getFrontPageAllStays = async (req, res) => {
     const totalPages = Math.ceil(totalProperties / limit);
     const hasMore = page * limit < totalProperties;
 
+    // Sanitize properties to remove hostEmail and other sensitive data
+    const sanitizedProperties = sanitizeProperties(properties);
+
     // Send response
     res.status(200).json({
-      properties,
+      properties: sanitizedProperties,
       currentPage: page,
       totalPages,
       totalProperties,
@@ -713,9 +720,12 @@ exports.getAllStays = async (req, res) => {
     const totalPages = Math.ceil(totalProperties / limit);
     const hasMore = page * limit < totalProperties;
 
+    // Sanitize properties to remove hostEmail and other sensitive data
+    const sanitizedProperties = sanitizeProperties(properties);
+
     // Send response
     res.status(200).json({
-      properties,
+      properties: sanitizedProperties,
       currentPage: page,
       totalPages,
       totalProperties,
@@ -739,8 +749,12 @@ exports.getIdandName = async (req, res) => {
     if (!data) {
       return res.status(404).json({ message: "Listing not found" });
     }
+    
+    // Sanitize properties to remove hostEmail and other sensitive data
+    const sanitizedData = sanitizeProperties(data);
+    
     res.status(200).json({
-      data: data,
+      data: sanitizedData,
     });
   } catch (error) {
     console.error(error);
@@ -780,9 +794,12 @@ exports.getAllStaticProperties = async (req, res) => {
     const totalPages = Math.ceil(totalProperties / limit);
     const hasMore = page * limit < totalProperties;
 
+    // Sanitize properties to remove host contact info
+    const sanitizedProperties = sanitizeProperties(properties);
+
     // Send response
     res.status(200).json({
-      properties,
+      properties: sanitizedProperties,
       currentPage: page,
       totalPages,
       totalProperties,
@@ -832,9 +849,12 @@ exports.getAllProperties = async (req, res) => {
     const totalPages = Math.ceil(totalProperties / limit);
     const hasMore = page * limit < totalProperties;
 
+    // Sanitize properties to remove hostEmail and other sensitive data
+    const sanitizedProperties = sanitizeProperties(properties);
+
     // Send response
     res.status(200).json({
-      properties,
+      properties: sanitizedProperties,
       currentPage: page,
       totalPages,
       totalProperties,
@@ -1310,8 +1330,7 @@ exports.getPropertyById = async (req, res) => {
     const property = await ListingProperty.findById(req.params.id).populate({
       path: "host",
       model: "User",
-      select:
-        "firstName lastName languages profilePicture address dob about averageRating reviewCount avgPropertyRating propertyReviewCount",
+      select: SAFE_HOST_SELECT,
     });
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("si", property);
@@ -1319,7 +1338,11 @@ exports.getPropertyById = async (req, res) => {
     if (!property) {
       return res.status(404).json({ message: "Property not found" });
     }
-    res.status(200).json({ success: true, data: property });
+    
+    // Sanitize property to remove ALL sensitive data (host info, address, hostEmail, etc.)
+    const sanitizedData = sanitizeProperty(property);
+    
+    res.status(200).json({ success: true, data: sanitizedData });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

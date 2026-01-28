@@ -13,8 +13,8 @@ const authMiddleware = require("../middleware/authMiddleware");
 
 router.get("/", authMiddleware, getGuests);
 router.get("/kyc", authMiddleware, getKycDetails);
-// Get user information
-router.get("/info/:userId", getUserInfo);
+// Get user information - REQUIRES AUTH to prevent data leakage
+router.get("/info/:userId", authMiddleware, getUserInfo);
 
 router.get("/guest-by-id", authMiddleware, getGuestsById);
 

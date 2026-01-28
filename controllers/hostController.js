@@ -6,6 +6,7 @@ const User = require("../models/User");
 const { parseMDYToUTC } = require("../utils/convertDate");
 const axios = require("axios");
 const { encrypt } = require("../utils/encrypt");
+const { sanitizeHost, SAFE_HOST_SELECT } = require("../utils/sanitizeResponse");
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
@@ -22,7 +23,8 @@ const API_URL = process.env.RAZORPAY_API;
 // Get all hosts and their properties
 exports.getAllHosts = async (req, res) => {
   try {
-    const hosts = await User.find().populate("properties");
+    // Only select safe fields to prevent PII leakage
+    const hosts = await User.find().select(SAFE_HOST_SELECT).populate("properties");
     res.status(200).json({ hosts });
   } catch (error) {
     res.status(500).json({ message: "Error fetching hosts", error });
@@ -78,21 +80,31 @@ exports.submitBankDetails = async (req, res) => {
         console.log("enter");
       }
       // Update existing record
-      const createContact = await axios.post(
-        `${API_URL}/contacts`,
-        {
-          name: accountHolderName,
-          email: user.email,
-          contact: user.phoneNumber,
-          type: "vendor",
-        },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Basic ${auth}`,
+      let createContact;
+      try {
+        createContact = await axios.post(
+          `${API_URL}/contacts`,
+          {
+            name: accountHolderName,
+            email: user.email,
+            contact: user.phoneNumber,
+            type: "vendor",
           },
-        }
-      );
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Basic ${auth}`,
+            },
+          }
+        );
+      } catch (razorpayError) {
+        console.error("Razorpay Contact Error:", razorpayError.response?.data || razorpayError.message);
+        return res.status(400).json({ 
+          success: false, 
+          message: "Failed to create Razorpay contact",
+          error: razorpayError.response?.data || razorpayError.message 
+        });
+      }
 
       if (createContact.status != 200 && createContact.status !== 201) {
         return res.json({ success: false, message: createContact.status });
@@ -101,24 +113,34 @@ exports.submitBankDetails = async (req, res) => {
         console.log("reach");
       }
 
-      const fundAccount = await axios.post(
-        `${API_URL}/fund_accounts`,
-        {
-          contact_id: `${createContact.data.id}`,
-          account_type: "bank_account",
-          bank_account: {
-            name: accountHolderName,
-            ifsc: ifsc,
-            account_number: accountNumber,
+      let fundAccount;
+      try {
+        fundAccount = await axios.post(
+          `${API_URL}/fund_accounts`,
+          {
+            contact_id: `${createContact.data.id}`,
+            account_type: "bank_account",
+            bank_account: {
+              name: accountHolderName,
+              ifsc: ifsc,
+              account_number: accountNumber,
+            },
           },
-        },
-        {
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Basic ${auth}`,
-          },
-        }
-      );
+          {
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Basic ${auth}`,
+            },
+          }
+        );
+      } catch (razorpayError) {
+        console.error("Razorpay Fund Account Error:", razorpayError.response?.data || razorpayError.message);
+        return res.status(400).json({ 
+          success: false, 
+          message: "Failed to create Razorpay fund account",
+          error: razorpayError.response?.data || razorpayError.message 
+        });
+      }
       if (process.env.NEXT_PUBLIC_ENV === "dev") {
         console.log("reach2");
       }
@@ -243,7 +265,7 @@ exports.getHostReviewsById = async (req, res) => {
       })
       .populate({
         path: "property",
-        select: "title hostEmail",
+        select: "title", // Removed hostEmail to prevent PII leakage
       })
       .populate({
         path: "user",

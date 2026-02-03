@@ -1563,22 +1563,25 @@ exports.unblockDates = async (req, res) => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("unblock1", from, to, selectedDate);
     }
-
+    console.log("Entered", from, to, selectedDate);
     const booking = await Booking.findOne({
       propertyId,
       source: "local",
-      checkIn: { $gte: from, $lt: to }, // only future or today’s checkIn
-
+      // checkIn: { $gte: from, $lt: to }, // only future or today’s checkIn
+      checkIn: { $lt: to },
+      checkOut: { $gt: from },
       status: { $nin: ["rejected", "cancelled"] }, // exclude rejected & cancelled
 
       action: "host",
     }).lean();
+    console.log("Before", booking);
     if (!booking) {
       return res.status(404).json({
         success: false,
         message: "No booking found for that date",
       });
     }
+
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("unblock2", booking);
     }
@@ -1587,6 +1590,7 @@ exports.unblockDates = async (req, res) => {
       { status: "cancelled" },
       { new: true },
     );
+    console.log("Booking", unblock);
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("unblock3", unblock);
     }
@@ -2141,7 +2145,12 @@ exports.confirmBooking = async (req, res) => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("Agenda scheduling started");
     }
-
+    const confirmParams = paramsToObject(
+      params.userName,
+      params.hostName,
+      booking,
+    );
+    await sendEmail(userEmail, 10, confirmParams);
     // schedule 5 hours after checkout
     const now = new Date();
     const checkoutDate = new Date(booking.checkOut);
@@ -2372,17 +2381,15 @@ exports.markBookingAsPaid = async (req, res) => {
     }
     console.log("Found payment details");
     // console.log("=======Bank payment", bank);
-    const calTax = (subtotal, serviceFee) => {
-      if (subtotal <= 7500) {
-        return Math.round(subtotal * 0.12) + Math.round(serviceFee * 0.18); // 12% GST in India
-      } else if (subtotal > 7500) {
-        return Math.round(subtotal * 0.18) + Math.round(serviceFee * 0.18); // 18% GST in India
+    const calTax = (booking) => {
+      const nightlyRate = booking?.propertyId?.basePrice;
+      if (nightlyRate <= 7500) {
+        return Math.round(booking?.subtotal * 0.05); // 5% GST in India
+      } else if (nightlyRate > 7500) {
+        return Math.round(booking?.subtotal * 0.18); // 18% GST in India
       }
     };
-    const tax = calTax(
-      booking.subTotal,
-      booking.subTotal * 0.12,
-    ).toLocaleString();
+    const tax = calTax(booking).toLocaleString();
     console.log("Calculated Tax");
     const html = generateInvoiceHTML(booking, bank, tax);
     // console.log("=======pdf html", html);

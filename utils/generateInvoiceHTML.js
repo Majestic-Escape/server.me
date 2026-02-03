@@ -157,9 +157,10 @@ function generateInvoiceHTML(invoiceData, payment, tax) {
       <div class="section row">
         <div>
           <h2>${invoiceData?.propertyId?.title || ""}</h2>
-          <p>${invoiceData?.nights || ""} night in ${
-    invoiceData?.propertyId?.address.city || ""
-  }</p>
+          <p>${invoiceData?.propertyId?.address.street || ""},${invoiceData?.propertyId?.address.district || ""}</p>
+          <p>${invoiceData?.propertyId?.address.city || ""}, ${invoiceData?.propertyId?.address.state || ""}</p>
+          <p>${invoiceData?.propertyId?.address.pincode || ""}</p>
+          <br/>
           <p>
             ${new Date(invoiceData?.checkIn).toDateString()} –
             ${new Date(invoiceData?.checkOut).toDateString()}
@@ -178,10 +179,7 @@ function generateInvoiceHTML(invoiceData, payment, tax) {
             </strong>
           </p>
 
-          <div class="links">
-            <a href="#">Go to itinerary</a>
-            <a href="#">Go to listing</a>
-          </div>
+          
         </div>
 
         <img
@@ -211,8 +209,8 @@ function generateInvoiceHTML(invoiceData, payment, tax) {
             invoiceData?.cancellationPolicy === "moderate"
               ? "Moderate cancellation policy applies."
               : invoiceData?.cancellationPolicy === "flexible"
-              ? "Flexible cancellation policy applies."
-              : "Strict cancellation policy applies."
+                ? "Flexible cancellation policy applies."
+                : "Strict cancellation policy applies."
           }
         </p>
       </div>
@@ -221,20 +219,20 @@ function generateInvoiceHTML(invoiceData, payment, tax) {
       <div class="section">
         <h3>Price breakdown</h3>
         <div class="price-row">
-          <span>₹${invoiceData?.subTotal} × ${invoiceData?.nights} night</span>
-          <span>₹${invoiceData?.subTotal}</span>
+          <span>Rs. ${invoiceData?.propertyId?.basePrice} × ${invoiceData?.nights} night</span>
+          <span>Rs. ${invoiceData?.subTotal}</span>
         </div>
         <div class="price-row">
           <span>Service fee</span>
-          <span>₹${Math.round(invoiceData?.subTotal * 0.12)}</span>
+          <span>${`₹ ${Math.round(invoiceData?.subTotal * 0.12).toLocaleString("en-IN")}`}</span>
         </div>
         <div class="price-row">
           <span>Taxes</span>
-          <span>₹${tax}</span>
+          <span>Rs. ${tax.toLocaleString("en-IN")}</span>
         </div>
         <div class="price-row price-total">
           <span>Total (INR)</span>
-          <span>₹${invoiceData?.price}</span>
+          <span>Rs. ${invoiceData?.price.toLocaleString("en-IN")}</span>
         </div>
       </div>
 
@@ -243,15 +241,17 @@ function generateInvoiceHTML(invoiceData, payment, tax) {
         <h3>Payment</h3>
         <p>${payment?.paymentMethod?.toUpperCase()}</p>
         <p>${new Date(payment?.createdAt).toDateString()}</p>
-        <p><strong>₹${invoiceData?.price}</strong></p>
+        <p><strong>₹${invoiceData?.price?.toLocaleString("en-IN")}</strong></p>
+         <div class="price-row price-total">
+          <span>Amount Paid (INR)</span>
+          <span>Rs. ${invoiceData?.price?.toLocaleString("en-IN")}</span>
+        </div>
       </div>
+      
 
       <!-- FOOTER -->
       <div class="footer">
-        <p>
-          Payment processed by Majestic Escape Payments India Pvt. Ltd.<br/>
-          Connaught Place, New Delhi - 110001
-        </p>
+     
         <p>
           <a href="https://www.majesticescape.in">www.majesticescape.in</a>
         </p>
@@ -266,3 +266,9 @@ function generateInvoiceHTML(invoiceData, payment, tax) {
 }
 
 module.exports = generateInvoiceHTML;
+{
+  /* <div class="links">
+            <a href="#">Go to itinerary</a>
+            <a href="#">Go to listing</a>
+          </div> */
+}

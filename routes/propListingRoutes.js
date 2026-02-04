@@ -8,14 +8,17 @@ const {
   deletePListing,
   bulkActionPListings,
   exportPListings,
-  getListingStatus
+  getListingStatus,
+  getAdminPListingById,
 } = require("../controllers/PropListingController");
 
 router.get("/", getAllPListings);
-router.get('/status', getListingStatus);
+router.get("/status", getListingStatus);
 
 router.get("/export", exportPListings);
+router.get("/admin/:id", getAdminPListingById);
 router.get("/:id", getUserPListingById);
+
 router.post("/", createPListing);
 router.put("/:id", updatePListing);
 router.delete("/:id", deletePListing);

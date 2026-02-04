@@ -1,5 +1,9 @@
 const ListingProperty = require("../models/ListingProperty");
-const { sanitizeProperty, sanitizeProperties, SAFE_HOST_SELECT } = require("../utils/sanitizeResponse");
+const {
+  sanitizeProperty,
+  sanitizeProperties,
+  SAFE_HOST_SELECT,
+} = require("../utils/sanitizeResponse");
 
 exports.getListingStatus = async (req, res) => {
   try {
@@ -70,7 +74,7 @@ exports.getAllPListings = async (req, res) => {
       .limit(limit)
       .populate({
         path: "host",
-        select: SAFE_HOST_SELECT
+        select: SAFE_HOST_SELECT,
       });
 
     const total = await ListingProperty.countDocuments(query);
@@ -102,7 +106,7 @@ exports.getUserPListingById = async (req, res) => {
 
     const listing = await ListingProperty.findOne(query).populate({
       path: "host",
-      select: SAFE_HOST_SELECT
+      select: SAFE_HOST_SELECT,
     });
 
     if (!listing) {
@@ -110,7 +114,7 @@ exports.getUserPListingById = async (req, res) => {
         message: "Listing not found",
       });
     }
-    
+
     // Sanitize listing to remove hostEmail and other sensitive data
     const sanitizedListing = sanitizeProperty(listing);
     res.status(200).json(sanitizedListing);
@@ -121,7 +125,19 @@ exports.getUserPListingById = async (req, res) => {
     });
   }
 };
-
+exports.getAdminPListingById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log("Id", id);
+    const propertyDetail = await ListingProperty.findById(id);
+    if (!propertyDetail) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Property not found" });
+    }
+    return res.status(200).json({ success: true, data: propertyDetail });
+  } catch (error) {}
+};
 exports.createPListing = async (req, res) => {
   try {
     const newListing = new ListingProperty(req.body);
@@ -140,7 +156,7 @@ exports.updatePListing = async (req, res) => {
     const updatedListing = await ListingProperty.findByIdAndUpdate(
       id,
       req.body,
-      { new: true }
+      { new: true },
     );
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
@@ -212,7 +228,7 @@ exports.exportPListings = async (req, res) => {
 
     const listings = await ListingProperty.find(query).populate({
       path: "host",
-      select: SAFE_HOST_SELECT
+      select: SAFE_HOST_SELECT,
     });
 
     if (format === "csv") {

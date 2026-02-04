@@ -54,11 +54,8 @@ const app = express();
 //   "https://user.me.coderelix.in/",
 // ];
 const allowedOrigins = [
-  ...(process.env.ALLOWED_ORIGINS_PART1
-    ? process.env.ALLOWED_ORIGINS_PART1.split(",")
-    : []),
-  ...(process.env.ALLOWED_ORIGINS_PART2
-    ? process.env.ALLOWED_ORIGINS_PART2.split(",")
+  ...(process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(",")
     : []),
 ];
 app.use((req, res, next) => {

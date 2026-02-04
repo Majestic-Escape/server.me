@@ -30,12 +30,12 @@ const app = express();
 
 const allowedOrigins = [
   // "https://apidemo.digitap.work/validation/kyc/v1/pan-basic",
-  // "https://user-navy-five.vercel.app",
-  // "https://me-admin-swart.vercel.app",
-  // "https://me-backend-one.vercel.app",
-  // "http://localhost:3000",
-  // "http://localhost:5005",
-  // "http://localhost:3001",
+  "https://user-navy-five.vercel.app",
+  "https://me-admin-swart.vercel.app",
+  "https://me-backend-one.vercel.app",
+  "http://localhost:3000",
+  "http://localhost:5005",
+  "http://localhost:3001",
   "https://apidemo.digitap.work",
   "https://svcdemo.digitap.work",
   "https://svc.digitap.ai",
@@ -49,6 +49,9 @@ const allowedOrigins = [
   "https://majesticescape.in",
   "https://admin.majesticescape.in",
   "https://user.me.coderelix.in",
+  "http://localhost:3002",
+  "https://admin.me.coderelix.in/",
+  "https://user.me.coderelix.in/",
 ];
 
 app.use((req, res, next) => {
@@ -58,11 +61,11 @@ app.use((req, res, next) => {
     res.header("Access-Control-Allow-Credentials", "true");
     res.header(
       "Access-Control-Allow-Methods",
-      "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS"
+      "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
     );
     res.header(
       "Access-Control-Allow-Headers",
-      "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+      "Origin, X-Requested-With, Content-Type, Accept, Authorization",
     );
   }
   // For OPTIONS requests, short-circuit and respond immediately:
@@ -76,7 +79,7 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   res.set(
     "Cache-Control",
-    "no-store, no-cache, must-revalidate, proxy-revalidate"
+    "no-store, no-cache, must-revalidate, proxy-revalidate",
   );
   res.set("Pragma", "no-cache");
   res.set("Expires", "0");
@@ -96,7 +99,7 @@ app.use(
     limit: "50mb",
     extended: true,
     parameterLimit: 500000,
-  })
+  }),
 );
 app.use(bodyParser.json({ limit: "50mb" }));
 
@@ -148,7 +151,7 @@ const connectDB = async () => {
     await mongoose.connect(
       // "mongodb://localhost:27017/me"
 
-      process.env.DB_URI
+      process.env.DB_URI,
       //"mongodb+srv://admin:10VToU0WupyAbo4M@majestic-escape.nk49u.mongodb.net/master-db?retryWrites=true&w=majority&appName=Majestic-Escape&authSource=admin"
     );
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
@@ -253,7 +256,7 @@ app.use("*", (req, res) => {
 // Start Server
 const PORT = process.env.PORT || 5005;
 const server = app.listen(PORT, () =>
-  console.log(`Server running on port ${PORT}`)
+  console.log(`Server running on port ${PORT}`),
 );
 
 // Handle Unhandled Rejections

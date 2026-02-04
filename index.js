@@ -28,32 +28,39 @@ const app = express();
 //   next();
 // });
 
+// const allowedOrigins = [
+//   // "https://apidemo.digitap.work/validation/kyc/v1/pan-basic",
+//   "https://user-navy-five.vercel.app",
+//   "https://me-admin-swart.vercel.app",
+//   "https://me-backend-one.vercel.app",
+//   "http://localhost:3000",
+//   "http://localhost:5005",
+//   "http://localhost:3001",
+//   "https://apidemo.digitap.work",
+//   "https://svcdemo.digitap.work",
+//   "https://svc.digitap.ai",
+//   "https://api.digitap.ai",
+//   "https://majestic-escape-host-properties.blr1.digitaloceanspaces.com/",
+//   "https://apidemo.digitap.work/validation/kyc/v1",
+//   "https://svcdemo.digitap.work/validation/kyb/v1",
+//   "https://apidemo.digitap.work/ocr/v1",
+//   "https://api.razorpay.com/v1",
+//   "https://ifsc.razorpay.com",
+//   "https://majesticescape.in",
+//   "https://admin.majesticescape.in",
+//   "https://user.me.coderelix.in",
+//   "http://localhost:3002",
+//   "https://admin.me.coderelix.in/",
+//   "https://user.me.coderelix.in/",
+// ];
 const allowedOrigins = [
-  // "https://apidemo.digitap.work/validation/kyc/v1/pan-basic",
-  "https://user-navy-five.vercel.app",
-  "https://me-admin-swart.vercel.app",
-  "https://me-backend-one.vercel.app",
-  "http://localhost:3000",
-  "http://localhost:5005",
-  "http://localhost:3001",
-  "https://apidemo.digitap.work",
-  "https://svcdemo.digitap.work",
-  "https://svc.digitap.ai",
-  "https://api.digitap.ai",
-  "https://majestic-escape-host-properties.blr1.digitaloceanspaces.com/",
-  "https://apidemo.digitap.work/validation/kyc/v1",
-  "https://svcdemo.digitap.work/validation/kyb/v1",
-  "https://apidemo.digitap.work/ocr/v1",
-  "https://api.razorpay.com/v1",
-  "https://ifsc.razorpay.com",
-  "https://majesticescape.in",
-  "https://admin.majesticescape.in",
-  "https://user.me.coderelix.in",
-  "http://localhost:3002",
-  "https://admin.me.coderelix.in/",
-  "https://user.me.coderelix.in/",
+  ...(process.env.ALLOWED_ORIGINS_PART1
+    ? process.env.ALLOWED_ORIGINS_PART1.split(",")
+    : []),
+  ...(process.env.ALLOWED_ORIGINS_PART2
+    ? process.env.ALLOWED_ORIGINS_PART2.split(",")
+    : []),
 ];
-
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && allowedOrigins.includes(origin)) {

@@ -224,11 +224,11 @@ function generateInvoiceHTML(invoiceData, payment, tax) {
         </div>
         <div class="price-row">
           <span>Service fee</span>
-          <span>${`₹ ${Math.round(invoiceData?.subTotal * 0.12).toLocaleString("en-IN")}`}</span>
+          <span>${`Rs. ${Math.round(invoiceData?.subTotal * 0.12).toLocaleString("en-IN")}`}</span>
         </div>
         <div class="price-row">
           <span>Taxes</span>
-          <span>Rs. ${tax.toLocaleString("en-IN")}</span>
+          <span>Rs. ${Number(tax).toLocaleString("en-IN")}</span>
         </div>
         <div class="price-row price-total">
           <span>Total (INR)</span>
@@ -241,7 +241,7 @@ function generateInvoiceHTML(invoiceData, payment, tax) {
         <h3>Payment</h3>
         <p>${payment?.paymentMethod?.toUpperCase()}</p>
         <p>${new Date(payment?.createdAt).toDateString()}</p>
-        <p><strong>₹${invoiceData?.price?.toLocaleString("en-IN")}</strong></p>
+        <p><strong>Rs. ${invoiceData?.price?.toLocaleString("en-IN")}</strong></p>
          <div class="price-row price-total">
           <span>Amount Paid (INR)</span>
           <span>Rs. ${invoiceData?.price?.toLocaleString("en-IN")}</span>

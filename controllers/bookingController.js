@@ -2446,7 +2446,7 @@ exports.markBookingAsPaid = async (req, res) => {
     }
     if (manual) {
       console.log("Send Email Manual");
-      await sendEmail(booking.hostId.email, 42, params, invoiceAttachment);
+      await sendEmail(booking.hostId.email, 8, params, invoiceAttachment);
 
       await Promise.all(
         adminEmail.map((email) =>
@@ -2454,7 +2454,7 @@ exports.markBookingAsPaid = async (req, res) => {
         ),
       );
 
-      await sendEmail(booking.userId.email, 8, params, invoiceAttachment);
+      await sendEmail(booking.userId.email, 42, params, invoiceAttachment);
       //invoiceAttachment;
       console.log("Done Send Email Manual");
       try {

@@ -228,7 +228,7 @@ function generateInvoiceHTML(invoiceData, payment, tax) {
         </div>
         <div class="price-row">
           <span>Taxes</span>
-          <span>Rs. ${Number(tax).toLocaleString("en-IN")}</span>
+          <span>Rs. ${tax?.toLocaleString("en-IN")}</span>
         </div>
         <div class="price-row price-total">
           <span>Total (INR)</span>

@@ -21,6 +21,9 @@ const { paramsToObject } = require("../utils/paramsObject");
 const agenda = require("../utils/agenda");
 const generateInvoiceHTML = require("../utils/generateInvoiceHTML");
 const generateInvoicePDF = require("../utils/generateInvoicePDF");
+const {
+  generateBookingGuestListHTML,
+} = require("../utils/generateBookingGuestList");
 const TOKEN_EXPIRATION = "14d";
 const mongoConnectionString = process.env.DB_URI;
 const baseUrl = process.env.NEXTAUTH_URL;
@@ -2392,10 +2395,12 @@ exports.markBookingAsPaid = async (req, res) => {
     const tax = calTax(booking).toLocaleString();
     console.log("Calculated Tax", tax, typeof tax);
     const html = generateInvoiceHTML(booking, bank, tax);
+    const guestListHTML = generateBookingGuestListHTML(booking);
     // console.log("=======pdf html", html);
     // Generate PDF buffer
     console.log("Build Email HTML Body");
     const pdfBuffer = await generateInvoicePDF(html);
+    const guestListPdfBuffer = await generateInvoicePDF(guestListHTML);
     console.log(" Generate Email HTML Body");
     // console.log("=======pdf buffer");
     let invoicesDir;
@@ -2411,24 +2416,37 @@ exports.markBookingAsPaid = async (req, res) => {
     console.log("Generate PDF");
     // File path
     const filePath = path.join(invoicesDir, `invoice-${booking._id}.pdf`);
+    const guestListFilePath = path.join(
+      invoicesDir,
+      `guestlist-${booking._id}.pdf`,
+    );
 
     // Save PDF
     fs.writeFileSync(filePath, pdfBuffer);
+    fs.writeFileSync(guestListFilePath, guestListPdfBuffer);
     console.log("Save PDF");
     const localPdf = await fs.readFileSync(filePath);
-
+    const guestListPdfFile = await fs.readFileSync(guestListFilePath);
     // Convert buffer → base64
     // const pdfPath = path.join(process.cwd(), "test.pdf");
     // const pdfBuffer = fs.readFileSync(pdfPath);
     // console.log("pdf path", pdfPath);
     console.log("Read PDF");
     const attachmentBase64 = localPdf.toString("base64");
+    const guestListAttachmentBase64 = guestListPdfFile.toString("base64");
     console.log("Convert Base 64 PDF");
     // console.log("=======Attachment");
     const invoiceAttachment = [
       {
         name: `invoice-${booking._id}.pdf`,
         content: attachmentBase64,
+        type: "application/pdf",
+      },
+    ];
+    const guestListOnlyAttachment = [
+      {
+        name: `guest-list-${booking._id}.pdf`,
+        content: guestListAttachmentBase64,
         type: "application/pdf",
       },
     ];
@@ -2446,7 +2464,7 @@ exports.markBookingAsPaid = async (req, res) => {
     }
     if (manual) {
       console.log("Send Email Manual");
-      await sendEmail(booking.hostId.email, 8, params);
+      await sendEmail(booking.hostId.email, 8, params, guestListOnlyAttachment);
 
       await Promise.all(
         adminEmail.map((email) => sendEmail(email.trim(), 9, params)),
@@ -2465,7 +2483,12 @@ exports.markBookingAsPaid = async (req, res) => {
     } else {
       console.log("Send Email Instant");
       // console.log("=======Before email");
-      await sendEmail(booking.hostId.email, 34, params);
+      await sendEmail(
+        booking.hostId.email,
+        34,
+        params,
+        guestListOnlyAttachment,
+      );
       await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
       // console.log("=======after host");
       await Promise.all(

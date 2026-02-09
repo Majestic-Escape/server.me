@@ -2446,12 +2446,10 @@ exports.markBookingAsPaid = async (req, res) => {
     }
     if (manual) {
       console.log("Send Email Manual");
-      await sendEmail(booking.hostId.email, 8, params, invoiceAttachment);
+      await sendEmail(booking.hostId.email, 8, params);
 
       await Promise.all(
-        adminEmail.map((email) =>
-          sendEmail(email.trim(), 9, params, invoiceAttachment),
-        ),
+        adminEmail.map((email) => sendEmail(email.trim(), 9, params)),
       );
 
       await sendEmail(booking.userId.email, 42, params, invoiceAttachment);
@@ -2467,13 +2465,11 @@ exports.markBookingAsPaid = async (req, res) => {
     } else {
       console.log("Send Email Instant");
       // console.log("=======Before email");
-      await sendEmail(booking.hostId.email, 34, params, invoiceAttachment);
+      await sendEmail(booking.hostId.email, 34, params);
       await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
       // console.log("=======after host");
       await Promise.all(
-        adminEmail.map((email) =>
-          sendEmail(email.trim(), 36, params, invoiceAttachment),
-        ),
+        adminEmail.map((email) => sendEmail(email.trim(), 36, params)),
       );
       // console.log("invoice", invoiceAttachment);
       console.log("Done Send Email Instant");

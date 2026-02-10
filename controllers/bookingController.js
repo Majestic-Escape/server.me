@@ -2210,17 +2210,21 @@ exports.confirmBooking = async (req, res) => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("Agenda scheduling started");
     }
-    const confirmParams = paramsToObject(
-      params.userName,
-      params.hostName,
-      booking,
-    );
-    await sendEmail(userEmail, 10, confirmParams, invoiceAttachment);
-    await sendEmail(hostEmail, 19, confirmParams, guestListOnlyAttachment);
+    {
+      const userName = changeToUpperCase(
+        booking.userId.firstName + " " + booking.userId.lastName,
+      );
+      const hostName = changeToUpperCase(
+        booking.hostId.firstName + " " + booking.hostId.lastName,
+      );
+      const params = paramsToObject(userName, hostName, booking);
+      await sendEmail(userEmail, 10, params, invoiceAttachment);
+      await sendEmail(hostEmail, 19, params, guestListOnlyAttachment);
 
-    await Promise.all(
-      adminEmail.map((email) => sendEmail(email.trim(), 18, params)),
-    );
+      await Promise.all(
+        adminEmail.map((email) => sendEmail(email.trim(), 18, params)),
+      );
+    }
     // schedule 5 hours after checkout
     const now = new Date();
     const checkoutDate = new Date(booking.checkOut);

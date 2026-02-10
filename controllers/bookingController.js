@@ -2130,6 +2130,14 @@ exports.confirmBooking = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
+
+    const bank = await Payment.findOne({ bookingId: booking._id });
+    if (!bank) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Payment not found" });
+    }
+    console.log("Found payment details");
     const tax = calTax(booking).toLocaleString();
     console.log("Calculated Tax", tax, typeof tax);
     const html = generateInvoiceHTML(booking, bank, tax);

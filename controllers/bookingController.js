@@ -2123,7 +2123,7 @@ exports.confirmBooking = async (req, res) => {
       bookingId,
       { status: "confirmed" },
       { new: true },
-    ).populate("hostId userId propertyId");
+    ).populate("hostId userId propertyId payment");
 
     if (!booking) {
       return res

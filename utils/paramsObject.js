@@ -22,7 +22,7 @@ export function paramsToObject(userName, hostName, booking) {
     pincode: booking.propertyId.address.pincode,
     adults: booking.adults,
     children: booking.children,
-    amount: booking.price,
+    amount: booking.price.toLocaleString("en-IN"),
     paymentId: booking.payment.paymentId,
   };
   return params;

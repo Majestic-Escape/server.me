@@ -365,8 +365,8 @@ function generateBookingGuestListHTML(bookingData) {
       <div class="footer">
         <div class="footer-links">
           <a href="https://majesticescape.in">Visit Website</a> • 
-          <a href="https://majesticescape.in/contact">Contact Support</a> • 
-          <a href="https://majesticescape.in/help">Help Center</a>
+          
+          <a href="https://majesticescape.in/help-center">Help Center</a>
         </div>
         <p>Majestic Escape </p>
         <p class="print-date">Document generated on ${new Date().toLocaleDateString(
@@ -387,7 +387,7 @@ function generateBookingGuestListHTML(bookingData) {
 </html>
   `;
 }
-
+// <a href="https://majesticescape.in/contact">Contact Support</a>
 // Helper function to generate guest rows
 function generateGuestRows(bookingData) {
   if (!bookingData?.guestData) {

@@ -24,6 +24,7 @@ const generateInvoicePDF = require("../utils/generateInvoicePDF");
 const {
   generateBookingGuestListHTML,
 } = require("../utils/generateBookingGuestList");
+const { calTax } = require("../utils/tax");
 const TOKEN_EXPIRATION = "14d";
 const mongoConnectionString = process.env.DB_URI;
 const baseUrl = process.env.NEXTAUTH_URL;
@@ -2129,6 +2130,59 @@ exports.confirmBooking = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
+    const tax = calTax(booking).toLocaleString();
+    console.log("Calculated Tax", tax, typeof tax);
+    const html = generateInvoiceHTML(booking, bank, tax);
+    const guestListHTML = generateBookingGuestListHTML(booking);
+    // console.log("=======pdf html", html);
+    // Generate PDF buffer
+    console.log("Build Email HTML Body");
+    const pdfBuffer = await generateInvoicePDF(html);
+    const guestListPdfBuffer = await generateInvoicePDF(guestListHTML);
+    console.log(" Generate Email HTML Body");
+    // console.log("=======pdf buffer");
+    let invoicesDir;
+    if (process.env.NEXT_PUBLIC_ENV == "dev") {
+      invoicesDir = path.join(__dirname, "/..");
+    } else {
+      invoicesDir = "/tmp";
+    }
+
+    if (!fs.existsSync(invoicesDir)) {
+      fs.mkdirSync(invoicesDir, { recursive: true });
+    }
+    console.log("Generate PDF");
+    // File path
+    const filePath = path.join(invoicesDir, `invoice-${booking._id}.pdf`);
+    const guestListFilePath = path.join(
+      invoicesDir,
+      `guestlist-${booking._id}.pdf`,
+    );
+
+    // Save PDF
+    fs.writeFileSync(filePath, pdfBuffer);
+    fs.writeFileSync(guestListFilePath, guestListPdfBuffer);
+    console.log("Save PDF");
+    const localPdf = await fs.readFileSync(filePath);
+    const guestListPdfFile = await fs.readFileSync(guestListFilePath);
+    const attachmentBase64 = localPdf.toString("base64");
+    const guestListAttachmentBase64 = guestListPdfFile.toString("base64");
+    console.log("Convert Base 64 PDF");
+    // console.log("=======Attachment");
+    const invoiceAttachment = [
+      {
+        name: `invoice-${booking._id}.pdf`,
+        content: attachmentBase64,
+        type: "application/pdf",
+      },
+    ];
+    const guestListOnlyAttachment = [
+      {
+        name: `guest-list-${booking._id}.pdf`,
+        content: guestListAttachmentBase64,
+        type: "application/pdf",
+      },
+    ];
 
     const bookingStatus = booking.status;
     const hostEmail = booking.hostId.email;
@@ -2153,7 +2207,12 @@ exports.confirmBooking = async (req, res) => {
       params.hostName,
       booking,
     );
-    await sendEmail(userEmail, 10, confirmParams);
+    await sendEmail(userEmail, 10, confirmParams, invoiceAttachment);
+    await sendEmail(hostEmail, 19, confirmParams, guestListOnlyAttachment);
+
+    await Promise.all(
+      adminEmail.map((email) => sendEmail(email.trim(), 18, params)),
+    );
     // schedule 5 hours after checkout
     const now = new Date();
     const checkoutDate = new Date(booking.checkOut);
@@ -2177,6 +2236,11 @@ exports.confirmBooking = async (req, res) => {
 
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("✅ Job scheduled successfully");
+    }
+    try {
+      await fs.promises.unlink(filePath);
+    } catch (unlinkError) {
+      console.error("Failed to delete PDF file:", unlinkError);
     }
     res.status(200).json({ success: true });
   } catch (error) {
@@ -2384,14 +2448,7 @@ exports.markBookingAsPaid = async (req, res) => {
     }
     console.log("Found payment details");
     // console.log("=======Bank payment", bank);
-    const calTax = (booking) => {
-      const nightlyRate = Number(booking?.propertyId?.basePrice);
-      if (nightlyRate <= 7500) {
-        return Math.round(booking?.subTotal * 0.05); // 5% GST in India
-      } else if (nightlyRate > 7500) {
-        return Math.round(booking?.subTotal * 0.18); // 18% GST in India
-      }
-    };
+
     const tax = calTax(booking).toLocaleString();
     console.log("Calculated Tax", tax, typeof tax);
     const html = generateInvoiceHTML(booking, bank, tax);
@@ -2464,13 +2521,13 @@ exports.markBookingAsPaid = async (req, res) => {
     }
     if (manual) {
       console.log("Send Email Manual");
-      await sendEmail(booking.hostId.email, 8, params, guestListOnlyAttachment);
+      await sendEmail(booking.hostId.email, 8, params);
 
       await Promise.all(
         adminEmail.map((email) => sendEmail(email.trim(), 9, params)),
       );
 
-      await sendEmail(booking.userId.email, 42, params, invoiceAttachment);
+      await sendEmail(booking.userId.email, 42, params);
       //invoiceAttachment;
       console.log("Done Send Email Manual");
       try {

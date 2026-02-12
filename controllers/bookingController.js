@@ -21,6 +21,10 @@ const { paramsToObject } = require("../utils/paramsObject");
 const agenda = require("../utils/agenda");
 const generateInvoiceHTML = require("../utils/generateInvoiceHTML");
 const generateInvoicePDF = require("../utils/generateInvoicePDF");
+const {
+  generateBookingGuestListHTML,
+} = require("../utils/generateBookingGuestList");
+const { calTax } = require("../utils/tax");
 const TOKEN_EXPIRATION = "14d";
 const mongoConnectionString = process.env.DB_URI;
 const baseUrl = process.env.NEXTAUTH_URL;
@@ -1563,22 +1567,25 @@ exports.unblockDates = async (req, res) => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("unblock1", from, to, selectedDate);
     }
-
+    console.log("Entered", from, to, selectedDate);
     const booking = await Booking.findOne({
       propertyId,
       source: "local",
-      checkIn: { $gte: from, $lt: to }, // only future or today’s checkIn
-
+      // checkIn: { $gte: from, $lt: to }, // only future or today’s checkIn
+      checkIn: { $lt: to },
+      checkOut: { $gt: from },
       status: { $nin: ["rejected", "cancelled"] }, // exclude rejected & cancelled
 
       action: "host",
     }).lean();
+    console.log("Before", booking);
     if (!booking) {
       return res.status(404).json({
         success: false,
         message: "No booking found for that date",
       });
     }
+
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("unblock2", booking);
     }
@@ -1587,6 +1594,7 @@ exports.unblockDates = async (req, res) => {
       { status: "cancelled" },
       { new: true },
     );
+    console.log("Booking", unblock);
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("unblock3", unblock);
     }
@@ -2115,13 +2123,74 @@ exports.confirmBooking = async (req, res) => {
       bookingId,
       { status: "confirmed" },
       { new: true },
-    ).populate("hostId userId propertyId");
+    ).populate("hostId userId propertyId payment");
 
     if (!booking) {
       return res
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
+
+    const bank = await Payment.findOne({ bookingId: booking._id });
+    if (!bank) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Payment not found" });
+    }
+    console.log("Found payment details");
+    const tax = calTax(booking).toLocaleString();
+    console.log("Calculated Tax", tax, typeof tax);
+    const html = generateInvoiceHTML(booking, bank, tax);
+    const guestListHTML = generateBookingGuestListHTML(booking);
+    // console.log("=======pdf html", html);
+    // Generate PDF buffer
+    console.log("Build Email HTML Body");
+    const pdfBuffer = await generateInvoicePDF(html);
+    const guestListPdfBuffer = await generateInvoicePDF(guestListHTML);
+    console.log(" Generate Email HTML Body");
+    // console.log("=======pdf buffer");
+    let invoicesDir;
+    if (process.env.NEXT_PUBLIC_ENV == "dev") {
+      invoicesDir = path.join(__dirname, "/..");
+    } else {
+      invoicesDir = "/tmp";
+    }
+
+    if (!fs.existsSync(invoicesDir)) {
+      fs.mkdirSync(invoicesDir, { recursive: true });
+    }
+    console.log("Generate PDF");
+    // File path
+    const filePath = path.join(invoicesDir, `invoice-${booking._id}.pdf`);
+    const guestListFilePath = path.join(
+      invoicesDir,
+      `guestlist-${booking._id}.pdf`,
+    );
+
+    // Save PDF
+    fs.writeFileSync(filePath, pdfBuffer);
+    fs.writeFileSync(guestListFilePath, guestListPdfBuffer);
+    console.log("Save PDF");
+    const localPdf = await fs.readFileSync(filePath);
+    const guestListPdfFile = await fs.readFileSync(guestListFilePath);
+    const attachmentBase64 = localPdf.toString("base64");
+    const guestListAttachmentBase64 = guestListPdfFile.toString("base64");
+    console.log("Convert Base 64 PDF");
+    // console.log("=======Attachment");
+    const invoiceAttachment = [
+      {
+        name: `invoice-${booking._id}.pdf`,
+        content: attachmentBase64,
+        type: "application/pdf",
+      },
+    ];
+    const guestListOnlyAttachment = [
+      {
+        name: `guest-list-${booking._id}.pdf`,
+        content: guestListAttachmentBase64,
+        type: "application/pdf",
+      },
+    ];
 
     const bookingStatus = booking.status;
     const hostEmail = booking.hostId.email;
@@ -2141,7 +2210,21 @@ exports.confirmBooking = async (req, res) => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("Agenda scheduling started");
     }
+    {
+      const userName = changeToUpperCase(
+        booking.userId.firstName + " " + booking.userId.lastName,
+      );
+      const hostName = changeToUpperCase(
+        booking.hostId.firstName + " " + booking.hostId.lastName,
+      );
+      const params = paramsToObject(userName, hostName, booking);
+      await sendEmail(userEmail, 10, params, invoiceAttachment);
+      await sendEmail(hostEmail, 19, params, guestListOnlyAttachment);
 
+      await Promise.all(
+        adminEmail.map((email) => sendEmail(email.trim(), 18, params)),
+      );
+    }
     // schedule 5 hours after checkout
     const now = new Date();
     const checkoutDate = new Date(booking.checkOut);
@@ -2165,6 +2248,11 @@ exports.confirmBooking = async (req, res) => {
 
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("✅ Job scheduled successfully");
+    }
+    try {
+      await fs.promises.unlink(filePath);
+    } catch (unlinkError) {
+      console.error("Failed to delete PDF file:", unlinkError);
     }
     res.status(200).json({ success: true });
   } catch (error) {
@@ -2372,23 +2460,16 @@ exports.markBookingAsPaid = async (req, res) => {
     }
     console.log("Found payment details");
     // console.log("=======Bank payment", bank);
-    const calTax = (subtotal, serviceFee) => {
-      if (subtotal <= 7500) {
-        return Math.round(subtotal * 0.12) + Math.round(serviceFee * 0.18); // 12% GST in India
-      } else if (subtotal > 7500) {
-        return Math.round(subtotal * 0.18) + Math.round(serviceFee * 0.18); // 18% GST in India
-      }
-    };
-    const tax = calTax(
-      booking.subTotal,
-      booking.subTotal * 0.12,
-    ).toLocaleString();
-    console.log("Calculated Tax");
+
+    const tax = calTax(booking).toLocaleString();
+    console.log("Calculated Tax", tax, typeof tax);
     const html = generateInvoiceHTML(booking, bank, tax);
+    const guestListHTML = generateBookingGuestListHTML(booking);
     // console.log("=======pdf html", html);
     // Generate PDF buffer
     console.log("Build Email HTML Body");
     const pdfBuffer = await generateInvoicePDF(html);
+    const guestListPdfBuffer = await generateInvoicePDF(guestListHTML);
     console.log(" Generate Email HTML Body");
     // console.log("=======pdf buffer");
     let invoicesDir;
@@ -2404,24 +2485,37 @@ exports.markBookingAsPaid = async (req, res) => {
     console.log("Generate PDF");
     // File path
     const filePath = path.join(invoicesDir, `invoice-${booking._id}.pdf`);
+    const guestListFilePath = path.join(
+      invoicesDir,
+      `guestlist-${booking._id}.pdf`,
+    );
 
     // Save PDF
     fs.writeFileSync(filePath, pdfBuffer);
+    fs.writeFileSync(guestListFilePath, guestListPdfBuffer);
     console.log("Save PDF");
     const localPdf = await fs.readFileSync(filePath);
-
+    const guestListPdfFile = await fs.readFileSync(guestListFilePath);
     // Convert buffer → base64
     // const pdfPath = path.join(process.cwd(), "test.pdf");
     // const pdfBuffer = fs.readFileSync(pdfPath);
     // console.log("pdf path", pdfPath);
     console.log("Read PDF");
     const attachmentBase64 = localPdf.toString("base64");
+    const guestListAttachmentBase64 = guestListPdfFile.toString("base64");
     console.log("Convert Base 64 PDF");
     // console.log("=======Attachment");
     const invoiceAttachment = [
       {
         name: `invoice-${booking._id}.pdf`,
         content: attachmentBase64,
+        type: "application/pdf",
+      },
+    ];
+    const guestListOnlyAttachment = [
+      {
+        name: `guest-list-${booking._id}.pdf`,
+        content: guestListAttachmentBase64,
         type: "application/pdf",
       },
     ];
@@ -2439,15 +2533,13 @@ exports.markBookingAsPaid = async (req, res) => {
     }
     if (manual) {
       console.log("Send Email Manual");
-      await sendEmail(booking.hostId.email, 42, params, invoiceAttachment);
+      await sendEmail(booking.hostId.email, 8, params);
 
       await Promise.all(
-        adminEmail.map((email) =>
-          sendEmail(email.trim(), 9, params, invoiceAttachment),
-        ),
+        adminEmail.map((email) => sendEmail(email.trim(), 9, params)),
       );
 
-      await sendEmail(booking.userId.email, 8, params, invoiceAttachment);
+      await sendEmail(booking.userId.email, 42, params);
       //invoiceAttachment;
       console.log("Done Send Email Manual");
       try {
@@ -2460,13 +2552,16 @@ exports.markBookingAsPaid = async (req, res) => {
     } else {
       console.log("Send Email Instant");
       // console.log("=======Before email");
-      await sendEmail(booking.hostId.email, 34, params, invoiceAttachment);
+      await sendEmail(
+        booking.hostId.email,
+        34,
+        params,
+        guestListOnlyAttachment,
+      );
       await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
       // console.log("=======after host");
       await Promise.all(
-        adminEmail.map((email) =>
-          sendEmail(email.trim(), 36, params, invoiceAttachment),
-        ),
+        adminEmail.map((email) => sendEmail(email.trim(), 36, params)),
       );
       // console.log("invoice", invoiceAttachment);
       console.log("Done Send Email Instant");

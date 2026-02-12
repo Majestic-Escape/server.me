@@ -11,12 +11,12 @@ router.get("/id-and-name/:id", propertyController.getIdandName);
 router.get(
   "/active/:id",
   authMiddleware,
-  propertyController.getActivePropertyById
+  propertyController.getActivePropertyById,
 );
 router.get(
   "/active/filter/:id",
   authMiddleware,
-  propertyController.getFilterActivePropertyById
+  propertyController.getFilterActivePropertyById,
 );
 router.get("/countstays", propertyController.getPropertyCount);
 router.get("/admin-filter", propertyController.getAdminFilter);
@@ -28,21 +28,21 @@ router.put("/:id", propertyController.updateProperty);
 router.get(
   "/admin/active",
   authMiddleware,
-  propertyController.getAllActiveProperty
+  propertyController.getAllActiveProperty,
 );
 router.get(
   "/admin/processing-listings",
-  propertyController.getProcessingListingsForAdmin
+  propertyController.getProcessingListingsForAdmin,
 );
 router.get(
   "/admin/filtered-listings",
-  propertyController.getFilteredListingsForAdmin
+  propertyController.getFilteredListingsForAdmin,
 );
 // PUT approve a listing
 router.patch(
   "/admin/approve/:id",
   authMiddleware,
-  propertyController.approveListing
+  propertyController.approveListing,
 );
 
 router.patch("/admin/delist/:id", authMiddleware, propertyController.deListing);
@@ -50,7 +50,7 @@ router.patch("/host/delist/:id", authMiddleware, propertyController.deListing);
 router.patch(
   "/host/reactivate/:id",
   authMiddleware,
-  propertyController.reactivate
+  propertyController.reactivate,
 );
 
 // router.delete(
@@ -67,23 +67,27 @@ router.patch(
 
 router.post(
   "/create-listing-property",
-  propertyController.createListingProperty
+  propertyController.createListingProperty,
 );
 
 router.put(
   "/update-listing-property/:id",
-  propertyController.updateListingProperty
+  propertyController.updateListingProperty,
+);
+router.put(
+  "/admin-update-property/:id",
+  propertyController.adminUpdateListingProperty,
 );
 router.patch("/update-kyc-property/:id", propertyController.updateKycProperty);
 router.get(
   "/user-properties/:userEmail",
   authMiddleware,
-  propertyController.getUserPropertyListings
+  propertyController.getUserPropertyListings,
 );
 router.get(
   "/get-timings/:propertyId",
   authMiddleware,
-  propertyController.getTiming
+  propertyController.getTiming,
 );
 router.post("/timings", propertyController.timing);
 

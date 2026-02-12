@@ -1,4 +1,9 @@
 const ListingProperty = require("../models/ListingProperty");
+const {
+  sanitizeProperty,
+  sanitizeProperties,
+  SAFE_HOST_SELECT,
+} = require("../utils/sanitizeResponse");
 
 exports.getListingStatus = async (req, res) => {
   try {
@@ -67,12 +72,18 @@ exports.getAllPListings = async (req, res) => {
       .sort(sortQuery)
       .skip(skip)
       .limit(limit)
-      .populate("host");
+      .populate({
+        path: "host",
+        select: SAFE_HOST_SELECT,
+      });
 
     const total = await ListingProperty.countDocuments(query);
 
+    // Sanitize listings to remove hostEmail and other sensitive data
+    const sanitizedListings = sanitizeProperties(listings);
+
     res.status(200).json({
-      listings,
+      listings: sanitizedListings,
       currentPage: page ? parseInt(page) : 1,
       totalPages: Math.ceil(total / limit),
       total,
@@ -93,14 +104,20 @@ exports.getUserPListingById = async (req, res) => {
       query.hostEmail = hostEmail;
     }
 
-    const listing = await ListingProperty.findOne(query).populate("host");
+    const listing = await ListingProperty.findOne(query).populate({
+      path: "host",
+      select: SAFE_HOST_SELECT,
+    });
 
     if (!listing) {
       return res.status(404).json({
         message: "Listing not found",
       });
     }
-    res.status(200).json(listing);
+
+    // Sanitize listing to remove hostEmail and other sensitive data
+    const sanitizedListing = sanitizeProperty(listing);
+    res.status(200).json(sanitizedListing);
   } catch (error) {
     console.error("Error fetching user property listing:", error);
     res.status(500).json({
@@ -108,7 +125,19 @@ exports.getUserPListingById = async (req, res) => {
     });
   }
 };
-
+exports.getAdminPListingById = async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log("Id", id);
+    const propertyDetail = await ListingProperty.findById(id);
+    if (!propertyDetail) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Property not found" });
+    }
+    return res.status(200).json({ success: true, data: propertyDetail });
+  } catch (error) {}
+};
 exports.createPListing = async (req, res) => {
   try {
     const newListing = new ListingProperty(req.body);
@@ -127,7 +156,7 @@ exports.updatePListing = async (req, res) => {
     const updatedListing = await ListingProperty.findByIdAndUpdate(
       id,
       req.body,
-      { new: true }
+      { new: true },
     );
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
@@ -197,12 +226,15 @@ exports.exportPListings = async (req, res) => {
       query.hostEmail = hostEmail;
     }
 
-    const listings = await ListingProperty.find(query).populate("host");
+    const listings = await ListingProperty.find(query).populate({
+      path: "host",
+      select: SAFE_HOST_SELECT,
+    });
 
     if (format === "csv") {
-      // Implement CSV export logic here
-      // For simplicity, we're just sending JSON data
-      res.status(200).json(listings);
+      // Sanitize listings before export to remove sensitive data
+      const sanitizedListings = sanitizeProperties(listings);
+      res.status(200).json(sanitizedListings);
     } else {
       res.status(400).json({ message: "Unsupported export format" });
     }

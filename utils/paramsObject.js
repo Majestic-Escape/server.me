@@ -15,9 +15,14 @@ export function paramsToObject(userName, hostName, booking) {
     checkInTime: changeTime(booking.propertyId.checkinTime),
     checkOutTime: changeTime(booking.propertyId.checkoutTime),
     propertyTitle: booking.propertyId.title,
+    street: booking.propertyId.address.street,
+    city: booking.propertyId.address.city,
+    state: booking.propertyId.address.state,
+    district: booking.propertyId.address.district,
+    pincode: booking.propertyId.address.pincode,
     adults: booking.adults,
     children: booking.children,
-    amount: booking.price,
+    amount: booking.price.toLocaleString("en-IN"),
     paymentId: booking.payment.paymentId,
   };
   return params;

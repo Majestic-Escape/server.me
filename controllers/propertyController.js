@@ -14,6 +14,11 @@ const BankDetail = require("../models/BankDetail");
 const agenda = require("../utils/agenda");
 const adminEmail = process.env.ADMIN_EMAIL.split(",");
 const kycHostForm = require("../models/KycHostForm");
+const {
+  sanitizeProperty,
+  sanitizeProperties,
+  SAFE_HOST_SELECT,
+} = require("../utils/sanitizeResponse");
 // exports.getCustomSearch = async (req, res) => {
 //   try {
 //     const { location, from, to, guests, propertyType } = req.query;
@@ -252,8 +257,11 @@ exports.getCustomSearch = async (req, res) => {
       .skip(skip)
       .limit(limit);
 
+    // Sanitize properties to remove hostEmail and other sensitive data
+    const sanitizedProperties = sanitizeProperties(availableProperties);
+
     res.json({
-      data: availableProperties,
+      data: sanitizedProperties,
       pagination: {
         totalCount,
         totalPages: Math.ceil(totalCount / limit),
@@ -563,7 +571,7 @@ exports.getAdminFilter = async (req, res) => {
       total: totalHost,
 
       allEligibleHostEmails: result[0].allEligibleHostEmails.map(
-        (u) => u.email
+        (u) => u.email,
       ),
     });
   } catch (error) {
@@ -665,9 +673,12 @@ exports.getFrontPageAllStays = async (req, res) => {
     const totalPages = Math.ceil(totalProperties / limit);
     const hasMore = page * limit < totalProperties;
 
+    // Sanitize properties to remove hostEmail and other sensitive data
+    const sanitizedProperties = sanitizeProperties(properties);
+
     // Send response
     res.status(200).json({
-      properties,
+      properties: sanitizedProperties,
       currentPage: page,
       totalPages,
       totalProperties,
@@ -713,9 +724,12 @@ exports.getAllStays = async (req, res) => {
     const totalPages = Math.ceil(totalProperties / limit);
     const hasMore = page * limit < totalProperties;
 
+    // Sanitize properties to remove hostEmail and other sensitive data
+    const sanitizedProperties = sanitizeProperties(properties);
+
     // Send response
     res.status(200).json({
-      properties,
+      properties: sanitizedProperties,
       currentPage: page,
       totalPages,
       totalProperties,
@@ -739,8 +753,12 @@ exports.getIdandName = async (req, res) => {
     if (!data) {
       return res.status(404).json({ message: "Listing not found" });
     }
+
+    // Sanitize properties to remove hostEmail and other sensitive data
+    const sanitizedData = sanitizeProperties(data);
+
     res.status(200).json({
-      data: data,
+      data: sanitizedData,
     });
   } catch (error) {
     console.error(error);
@@ -780,9 +798,12 @@ exports.getAllStaticProperties = async (req, res) => {
     const totalPages = Math.ceil(totalProperties / limit);
     const hasMore = page * limit < totalProperties;
 
+    // Sanitize properties to remove host contact info
+    const sanitizedProperties = sanitizeProperties(properties);
+
     // Send response
     res.status(200).json({
-      properties,
+      properties: sanitizedProperties,
       currentPage: page,
       totalPages,
       totalProperties,
@@ -832,9 +853,12 @@ exports.getAllProperties = async (req, res) => {
     const totalPages = Math.ceil(totalProperties / limit);
     const hasMore = page * limit < totalProperties;
 
+    // Sanitize properties to remove hostEmail and other sensitive data
+    const sanitizedProperties = sanitizeProperties(properties);
+
     // Send response
     res.status(200).json({
-      properties,
+      properties: sanitizedProperties,
       currentPage: page,
       totalPages,
       totalProperties,
@@ -1125,7 +1149,7 @@ exports.approveListing = async (req, res) => {
     const updatedListing = await ListingProperty.findByIdAndUpdate(
       id,
       { status: "active" },
-      { new: true }
+      { new: true },
     ).populate("host");
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
@@ -1145,14 +1169,14 @@ exports.approveListing = async (req, res) => {
 
     if (updatedListing.delist == "admin") {
       await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 48, params))
+        adminEmail.map((email) => sendEmail(email.trim(), 48, params)),
       );
       await sendEmail(params.hostEmail, 49, params);
     } else {
       await sendEmail(params.hostEmail, 25, params);
 
       await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 26, params))
+        adminEmail.map((email) => sendEmail(email.trim(), 26, params)),
       );
     }
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
@@ -1236,7 +1260,7 @@ exports.deListing = async (req, res) => {
       const updatedListing = await ListingProperty.findByIdAndUpdate(
         id,
         { status: "inactive" },
-        { new: true }
+        { new: true },
       ).populate("host");
       if (!updatedListing) {
         return res.status(404).json({ message: "Listing not found" });
@@ -1257,7 +1281,7 @@ exports.deListing = async (req, res) => {
       await sendEmail(params.hostEmail, 29, params);
 
       await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 49, params))
+        adminEmail.map((email) => sendEmail(email.trim(), 49, params)),
       );
       return res.status(200).json({
         sucess: true,
@@ -1268,7 +1292,7 @@ exports.deListing = async (req, res) => {
       const updatedListing = await ListingProperty.findByIdAndUpdate(
         id,
         { status: "inactive", delist: "admin" },
-        { new: true }
+        { new: true },
       ).populate("host");
       if (!updatedListing) {
         return res.status(404).json({ message: "Listing not found" });
@@ -1310,8 +1334,7 @@ exports.getPropertyById = async (req, res) => {
     const property = await ListingProperty.findById(req.params.id).populate({
       path: "host",
       model: "User",
-      select:
-        "firstName lastName languages profilePicture address dob about averageRating reviewCount avgPropertyRating propertyReviewCount",
+      select: SAFE_HOST_SELECT,
     });
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("si", property);
@@ -1319,7 +1342,11 @@ exports.getPropertyById = async (req, res) => {
     if (!property) {
       return res.status(404).json({ message: "Property not found" });
     }
-    res.status(200).json({ success: true, data: property });
+
+    // Sanitize property to remove ALL sensitive data (host info, address, hostEmail, etc.)
+    const sanitizedData = sanitizeProperty(property);
+
+    res.status(200).json({ success: true, data: sanitizedData });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -1421,7 +1448,7 @@ exports.getFilterActivePropertyById = async (req, res) => {
         // 1. Fetch host details from User table
         User.findOne(
           { _id: hostId },
-          { password: 0 } // Exclude sensitive fields
+          { password: 0 }, // Exclude sensitive fields
         ),
 
         // 2. Fetch all KYC data from KycHostData table
@@ -1644,7 +1671,50 @@ exports.createListingProperty = async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 };
+exports.adminUpdateListingProperty = async (req, res) => {
+  try {
+    console.log("Entered the admin");
+    const { id } = req.params;
+    const { submit, status } = req.query;
 
+    const property = await ListingProperty.findOneAndUpdate(
+      { _id: id },
+      { $set: req.body },
+      { new: true, runValidators: true },
+    ).populate("host");
+    console.log("Updated");
+    if (!property) {
+      return res
+        .status(404)
+        .json({ message: "Property not found or unauthorized to update" });
+    }
+    // if (property.host.kyc === true) {
+    //   property.kycStatus = "completed";
+    //   await property.save();
+    // }
+    // if (property.host.bank === true) {
+    //   property.bankDetails = true;
+    //   await property.save();
+    // }
+    const host = property.host.firstName + " " + property.host.lastName;
+    const params = {
+      hostName: host,
+      propertyTitle: property.title,
+      city: property.address.city,
+      state: property.address.state,
+      propertyId: property._id,
+      createdAt: new Date(property.createdAt).toLocaleDateString(),
+      updatedAt: new Date(property.updatedAt).toLocaleDateString(),
+    };
+
+    const hostEmail = property.hostEmail;
+    const newStatus = property.status;
+
+    res.status(200).json(property);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
 exports.updateListingProperty = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1660,7 +1730,7 @@ exports.updateListingProperty = async (req, res) => {
     const property = await ListingProperty.findOneAndUpdate(
       { _id: id },
       { $set: req.body },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     ).populate("host");
 
     if (!property) {
@@ -1690,11 +1760,11 @@ exports.updateListingProperty = async (req, res) => {
     if (submit) {
       if (status == "active") {
         await Promise.all(
-          adminEmail.map((email) => sendEmail(email.trim(), 51, params))
+          adminEmail.map((email) => sendEmail(email.trim(), 51, params)),
         );
       } else {
         await Promise.all(
-          adminEmail.map((email) => sendEmail(email.trim(), 50, params))
+          adminEmail.map((email) => sendEmail(email.trim(), 50, params)),
         );
       }
     }
@@ -1735,7 +1805,7 @@ exports.updateKycProperty = async (req, res) => {
     }
     const property = await ListingProperty.updateMany(
       { host: id },
-      { $set: { kycStatus: "completed" } }
+      { $set: { kycStatus: "completed" } },
     ).populate("host");
 
     if (!property) {

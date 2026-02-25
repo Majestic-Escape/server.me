@@ -21,7 +21,7 @@ const razorpay = new Razorpay({
 // const YOUR_SECRET = "gYeQi2lZFvXMMBRs1lWjGANA";
 
 const auth = Buffer.from(
-  `${razorpay.key_id.trim()}:${razorpay.key_secret.trim()}`
+  `${razorpay.key_id.trim()}:${razorpay.key_secret.trim()}`,
 ).toString("base64");
 const API_URL = process.env.RAZORPAY_API;
 const ADMIN_ACCOUNT = process.env.ADMIN_ACCOUNT;
@@ -89,7 +89,7 @@ exports.fetch = async (req, res) => {
         (b) =>
           b.propertyId.title.toLowerCase().includes(search.toLowerCase()) ||
           b.paymentId.toLowerCase().includes(search.toLowerCase()) ||
-          b.customerDetails.name.toLowerCase().includes(search.toLowerCase())
+          b.customerDetails.name.toLowerCase().includes(search.toLowerCase()),
       );
     }
 
@@ -203,7 +203,7 @@ exports.verifyPayment = async (req, res) => {
           paymentId: razorpay_payment_id,
           paymentMethod: payment?.method,
           status: "paid",
-        }
+        },
       );
       if (!data) {
         return res.status(404).json({ success: false, error: "Not found" });
@@ -222,7 +222,7 @@ exports.verifyPayment = async (req, res) => {
       }
       await Payment.findOneAndUpdate(
         { orderId: razorpay_order_id },
-        { status: "failed" }
+        { status: "failed" },
       );
 
       res.status(400).json({
@@ -453,6 +453,10 @@ async function initiatePayout(booking) {
     }
     const bank = await BankDetail.findOne({ hostId: booking.hostId });
     if (!bank) {
+      await HostPayout.findOneAndUpdate(
+        { bookingId: booking._id },
+        { status: "failed" },
+      );
       return { success: false, error: "Bank details not found" };
     }
     const host = await HostPayout.findOne({ bookingId: booking._id });
@@ -466,12 +470,13 @@ async function initiatePayout(booking) {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("Entered payout3");
     }
+    console.log("the actual amount", host.amount * 100);
     const payout = await axios.post(
       `${API_URL}/payouts`,
       {
         account_number: ADMIN_ACCOUNT,
         fund_account_id: bank.fundId,
-        amount: host.amount * 100, // paise
+        amount: Math.round(host.amount * 100), // paise
         currency: "INR",
         mode: "IMPS",
         purpose: "payout",
@@ -491,7 +496,7 @@ async function initiatePayout(booking) {
           "X-Payout-Idempotency": generateString,
           Authorization: `Basic ${auth}`,
         },
-      }
+      },
     );
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("Entered payout4");
@@ -501,7 +506,7 @@ async function initiatePayout(booking) {
     }
     const updatePayoutId = await HostPayout.findOneAndUpdate(
       { bookingId: booking._id },
-      { paymentId: payout.data.id }
+      { paymentId: payout.data.id },
     );
     if (!updatePayoutId) {
       return { success: false, error: "Failed to save payout id" };
@@ -520,7 +525,7 @@ async function initiatePayout(booking) {
       console.error("Headers:", error.response.headers);
       console.error(
         "Response Data:",
-        JSON.stringify(error.response.data, null, 2)
+        JSON.stringify(error.response.data, null, 2),
       );
 
       const razorpayError = error.response.data;
@@ -530,7 +535,12 @@ async function initiatePayout(booking) {
         "Razorpay API error";
 
       console.error("Razorpay Error Message:", errorMessage);
-
+      await HostPayout.findOneAndUpdate(
+        { bookingId: booking._id },
+        {
+          status: "failed",
+        },
+      );
       return {
         success: false,
         error: errorMessage,
@@ -657,7 +667,7 @@ exports.schedulecron = async (req, res) => {
     });
 
     console.log(
-      `📅 Found ${confirmedBookings.length} bookings for payout today`
+      `📅 Found ${confirmedBookings.length} bookings for payout today`,
     );
     const bookingsToProcess = [];
 
@@ -667,62 +677,68 @@ exports.schedulecron = async (req, res) => {
       // CASE A: No payout exists → process it
       if (!payoutRecord) {
         console.log(
-          `🆕 No payout record found → processing booking ${booking._id}`
+          `🆕 No payout record found → processing booking ${booking._id}`,
         );
         await createPayout(
           booking._id,
           booking?.propertyId,
           booking?.subTotal,
-          booking.hostId
+          booking.hostId,
         );
         bookingsToProcess.push(booking);
         continue;
       }
 
-      // CASE B: Payout exists but failed or reversed → retry
       if (["failed", "reversed"].includes(payoutRecord.status)) {
         console.log(
-          `🔁 Payout status "${payoutRecord.status}" → retry booking ${booking._id}`
+          `🔁 Payout status "${payoutRecord.status}" → retry booking ${booking._id}`,
         );
         bookingsToProcess.push(booking);
         continue;
       }
 
-      // CASE C: Payout already successful → skip
-
       console.log(
-        `⏭️ Skipping booking ${booking._id} (payout status: ${payoutRecord.status})`
+        `⏭️ Skipping booking ${booking._id} (payout status: ${payoutRecord.status})`,
       );
     }
 
     const results = [];
-    for (const booking of confirmedBookings) {
-      const result = await initiatePayout(booking);
-      results.push(result);
+    for (const booking of bookingsToProcess) {
+      try {
+        const result = await initiatePayout(booking);
+        results.push(result);
 
-      // Log each result
-      if (result.success) {
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log(`✅ Payout successful for booking: ${booking._id}`);
+        // Log each result
+        if (result.success) {
+          if (process.env.NEXT_PUBLIC_ENV === "dev") {
+            console.log(`✅ Payout successful for booking: ${booking._id}`);
+          }
+        } else {
+          console.log(
+            `❌ Payout failed for booking: ${booking._id} - ${result.error}`,
+          );
         }
-        return { success: true, message: "Cron successful" };
-      } else {
-        console.log(
-          `❌ Payout failed for booking: ${booking._id} - ${result.error}`
-        );
+      } catch (error) {
+        console.error(`💥 Unexpected error for booking ${booking._id}:`, error);
+        results.push({
+          success: false,
+          error: error.message,
+          bookingId: booking._id,
+        });
       }
     }
     const successful = results.filter((r) => r.success).length;
     const failed = results.filter((r) => !r.success).length;
 
     console.log(
-      `📊 Cron job completed: ${successful} successful, ${failed} failed`
+      `📊 Cron job completed: ${successful} successful, ${failed} failed`,
     );
 
     return res.status(200).json({
       success: true,
       successful,
       failed,
+      total: bookingsToProcess.length,
     });
   } catch (err) {
     console.error("❌ Cron job error:", err.message);

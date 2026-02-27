@@ -472,7 +472,7 @@ async function initiatePayout(booking) {
     }
     console.log("the actual amount", host.amount * 100);
     const payout = await axios.post(
-      `${API_URL}/payouts`,
+      `https://api.razorpay.com/v1/payouts`,
       {
         account_number: ADMIN_ACCOUNT,
         fund_account_id: bank.fundId,

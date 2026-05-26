@@ -825,7 +825,9 @@ exports.update = async (req, res) => {
 async function processWebhookEvent(payload) {
   try {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("🔄 Processing webhook event:", payload);
+      console.log("🔄 Processing payout webhook event:", payload);
+      console.log("Payload object", payload?.payout?.entity);
+      console.log("Payload2 object", payload?.payment?.entity);
     }
 
     switch (payload.event) {
@@ -873,6 +875,7 @@ async function handlePayoutProcessed(payment) {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("💰 Payment Captured:", payment);
     }
+
     // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
     //   console.log("Amount:", payment.amount / 100);
     // } // Convert paise to rupees

@@ -828,6 +828,9 @@ async function processWebhookEvent(payload) {
       console.log("🔄 Processing payout webhook event:", payload);
       console.log("Payload object", payload?.payout?.entity);
       console.log("Payload2 object", payload?.payment?.entity);
+      console.log("🔄 Processing payout webhook event:", payload);
+      console.log("Payload object", payload?.payout?.entity);
+      console.log("Payload2 object", payload?.payment?.entity);
     }
 
     switch (payload.event) {
@@ -873,9 +876,8 @@ async function processWebhookEvent(payload) {
 async function handlePayoutProcessed(payment) {
   try {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("💰 Payment Captured:", payment);
+      console.log("💰Enterd Payout Processed:", payment);
     }
-<<<<<<< HEAD
     if (!payout.id) {
       console.error("❌ Missing payout/payment id");
       return;
@@ -890,9 +892,6 @@ async function handlePayoutProcessed(payment) {
       console.error("❌ Payment processing failed");
       return;
     }
-=======
-
->>>>>>> 195f9bfc979892faae652815c9a0cdeb14c8bec5
     // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
     //   console.log("Amount:", payment.amount / 100);
     // } // Convert paise to rupees
@@ -923,7 +922,7 @@ async function handlePayoutProcessed(payment) {
 
 async function handlePayoutInitiated(payment) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("💰 Payment Captured:", payment);
+    console.log("💰 Entered Payout Initiated:", payment);
   }
   if (!payout.id) {
     console.error("❌ Missing payout/payment id");
@@ -947,7 +946,7 @@ async function handlePayoutInitiated(payment) {
 
 async function handlePayoutUpdated(payment) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("🔐 Payment Update:", payment);
+    console.log("🔐 Entered Payment Update:", payment);
   }
   // Payment is authorized but not captured yet
 }
@@ -961,7 +960,7 @@ async function handlePayoutPending(payout) {
 
 async function handlePayoutRejected(payout) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("❌ Payout Failed:", payout);
+    console.log("❌ Entered Payout Rejected:", payout);
   }
   if (!payout.id) {
     console.error("❌ Missing payout/payment id");
@@ -983,7 +982,7 @@ async function handlePayoutRejected(payout) {
 
 async function handlePayoutReversed(payout) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("🔄 Payout Reversed:", payout);
+    console.log("🔄 Entered ayout Reversed:", payout);
   }
   if (!payout.id) {
     console.error("❌ Missing payout/payment id");

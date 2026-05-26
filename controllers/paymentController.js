@@ -875,6 +875,7 @@ async function handlePayoutProcessed(payment) {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("💰 Payment Captured:", payment);
     }
+<<<<<<< HEAD
     if (!payout.id) {
       console.error("❌ Missing payout/payment id");
       return;
@@ -889,6 +890,9 @@ async function handlePayoutProcessed(payment) {
       console.error("❌ Payment processing failed");
       return;
     }
+=======
+
+>>>>>>> 195f9bfc979892faae652815c9a0cdeb14c8bec5
     // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
     //   console.log("Amount:", payment.amount / 100);
     // } // Convert paise to rupees

@@ -748,72 +748,79 @@ exports.schedulecron = async (req, res) => {
 // );
 
 exports.update = async (req, res) => {
-  // ✅ Return response IMMEDIATELY
-  // res.status(200).json({ received: true, timestamp: new Date().toISOString() });
-  if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("Payment payout started");
-  }
   try {
-    const secret = process.env.RAZORPAY_WEBHOOK_KEY;
+    const isDev = process.env.NEXT_PUBLIC_ENV === "dev";
 
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    if (isDev) {
+      console.log("Payment payout started");
       console.log("🟢 Webhook received at:", new Date().toISOString());
     }
 
+    const secret = process.env.RAZORPAY_WEBHOOK_KEY;
     const signature = req.headers["x-razorpay-signature"];
 
-    // ✅ Manual raw body collection
-    let rawBody = "";
+    if (!secret || !signature) {
+      return res.status(400).json({ error: "Missing signature headers" });
+    }
 
-    req.on("data", (chunk) => {
-      rawBody += chunk.toString();
-    });
+    // ===============================
+    // 🔥 FIX 1: SAFE RAW BODY HANDLING
+    // ===============================
+    const rawBody = req.body.toString("utf8");
 
-    req.on("end", async () => {
-      try {
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log("🔍 Raw body length:", rawBody.length);
-        }
+    if (isDev) {
+      console.log("🔍 Raw body length:", rawBody.length);
+    }
 
-        // Verify signature
-        const expectedSignature = crypto
-          .createHmac("sha256", secret)
-          .update(rawBody)
-          .digest("hex");
+    // ===============================
+    // 🔥 FIX 2: SIGNATURE VERIFICATION
+    // ===============================
+    const expectedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(rawBody)
+      .digest("hex");
 
-        console.log("🔍 Signature check:", {
-          expected: expectedSignature.substring(0, 20) + "...",
-          received: signature?.substring(0, 20) + "...",
-          match: expectedSignature === signature,
-        });
+    if (expectedSignature !== signature) {
+      console.warn("❌ Invalid webhook signature");
+      return res.status(400).json({ error: "Invalid signature" });
+    }
 
-        if (expectedSignature !== signature) {
-          console.warn("❌ Invalid webhook signature");
-          return;
-        }
+    if (isDev) {
+      console.log("✅ Webhook verified!");
+    }
 
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log("✅ Webhook verified!");
-        }
+    let payload;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid JSON" });
+    }
 
-        // Parse payload
-        const payload = JSON.parse(rawBody);
+    if (isDev) {
+      console.log("📦 Webhook Event:", payload.event);
+    }
 
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log("📦 Webhook Event:", payload.event);
-        }
+    // ===============================
+    // Respond immediately to Razorpay
+    // ===============================
+    res.status(200).json({ received: true });
 
-        // Process asynchronously
-        processWebhookEvent(payload).catch(console.error);
-      } catch (error) {
-        console.error("❌ Webhook processing error:", error);
-      }
+    // ===============================
+    // Background processing
+    // ===============================
+    setImmediate(() => {
+      processWebhookEvent(payload).catch((err) => {
+        console.error("❌ Background processing error:", err);
+      });
     });
   } catch (error) {
-    console.error("❌ Webhook setup error:", error);
+    console.error("❌ Webhook error:", error);
+
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Webhook failed" });
+    }
   }
 };
-
 // Process webhook asynchronously
 async function processWebhookEvent(payload) {
   try {
@@ -894,7 +901,7 @@ async function handlePayoutProcessed(payment) {
   }
 }
 
-async function handlePaymentInitiated(payment) {
+async function handlePayoutInitiated(payment) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
     console.log("💰 Payment Captured:", payment);
   }

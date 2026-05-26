@@ -825,7 +825,12 @@ exports.update = async (req, res) => {
 async function processWebhookEvent(payload) {
   try {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("🔄 Processing webhook event:", payload);
+      console.log("🔄 Processing payout webhook event:", payload);
+      console.log("Payload object", payload?.payout?.entity);
+      console.log("Payload2 object", payload?.payment?.entity);
+      console.log("🔄 Processing payout webhook event:", payload);
+      console.log("Payload object", payload?.payout?.entity);
+      console.log("Payload2 object", payload?.payment?.entity);
     }
 
     switch (payload.event) {
@@ -835,22 +840,22 @@ async function processWebhookEvent(payload) {
         }
         break;
       case "payout.processed":
-        await handlePayoutProcessed(payload.payload.payout.entity);
+        await handlePayoutProcessed(payload?.payout?.entity);
         break;
       case "payout.initiated":
-        await handlePayoutInitiated(payload.payload.payout.entity);
+        await handlePayoutInitiated(payload?.payout?.entity);
         break;
       case "payout.reversed":
-        await handlePayoutReversed(payload.payload.payout.entity);
+        await handlePayoutReversed(payload?.payout?.entity);
         break;
       case "payout.updated":
-        await handlePayoutUpdated(payload.payload.payout.entity);
+        await handlePayoutUpdated(payload?.payout?.entity);
         break;
       case "payout.pending":
-        await handlePayoutPending(payload.payload.payout.entity);
+        await handlePayoutPending(payload?.payout?.entity);
         break;
       case "payout.rejected":
-        await handlePayoutRejected(payload.payload.payout.entity);
+        await handlePayoutRejected(payload?.payout?.entity);
         break;
       default:
         if (process.env.NEXT_PUBLIC_ENV === "dev") {
@@ -871,7 +876,21 @@ async function processWebhookEvent(payload) {
 async function handlePayoutProcessed(payment) {
   try {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("💰 Payment Captured:", payment);
+      console.log("💰Enterd Payout Processed:", payment);
+    }
+    if (!payout.id) {
+      console.error("❌ Missing payout/payment id");
+      return;
+    }
+    const paymentProcess = await HostPayout.findOneAndUpdate(
+      {
+        paymentId: payout.id,
+      },
+      { status: "paid" },
+    );
+    if (!paymentProcess) {
+      console.error("❌ Payment processing failed");
+      return;
     }
     // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
     //   console.log("Amount:", payment.amount / 100);
@@ -903,7 +922,21 @@ async function handlePayoutProcessed(payment) {
 
 async function handlePayoutInitiated(payment) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("💰 Payment Captured:", payment);
+    console.log("💰 Entered Payout Initiated:", payment);
+  }
+  if (!payout.id) {
+    console.error("❌ Missing payout/payment id");
+    return;
+  }
+  const paymentInitiate = await HostPayout.findOneAndUpdate(
+    {
+      paymentId: payout.id,
+    },
+    { status: "initiated" },
+  );
+  if (!paymentInitiate) {
+    console.error("❌ Payment initiation failed");
+    return;
   }
   // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
   //   console.log("❌ Payment Failed:", payment.id, payment.error_description);
@@ -913,7 +946,7 @@ async function handlePayoutInitiated(payment) {
 
 async function handlePayoutUpdated(payment) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("🔐 Payment Authorized:", payment);
+    console.log("🔐 Entered Payment Update:", payment);
   }
   // Payment is authorized but not captured yet
 }
@@ -927,14 +960,43 @@ async function handlePayoutPending(payout) {
 
 async function handlePayoutRejected(payout) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("❌ Payout Failed:", payout);
+    console.log("❌ Entered Payout Rejected:", payout);
   }
+  if (!payout.id) {
+    console.error("❌ Missing payout/payment id");
+    return;
+  }
+  const payment = await HostPayout.findOneAndUpdate(
+    {
+      paymentId: payout.id,
+    },
+    { status: "rejected" },
+  );
+  if (!payment) {
+    console.error("❌ Payment rejected");
+    return;
+  }
+
   // Your existing payout failure logic
 }
 
 async function handlePayoutReversed(payout) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("🔄 Payout Reversed:", payout);
+    console.log("🔄 Entered ayout Reversed:", payout);
+  }
+  if (!payout.id) {
+    console.error("❌ Missing payout/payment id");
+    return;
+  }
+  const payment = await HostPayout.findOneAndUpdate(
+    {
+      paymentId: payout.id,
+    },
+    { status: "reversed" },
+  );
+  if (!payment) {
+    console.error("❌ Payment reversed");
+    return;
   }
 }
 

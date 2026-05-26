@@ -93,7 +93,11 @@ app.use((req, res, next) => {
 
 const webhookRoutes = require("./routes/webhookRoutes");
 
-app.use("/api/v1/paymentforpayout", webhookRoutes);
+app.use(
+  "/api/v1/paymentforpayout",
+  express.raw({ type: "application/json" }),
+  webhookRoutes,
+);
 
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));

@@ -749,6 +749,7 @@ exports.schedulecron = async (req, res) => {
 
 exports.update = async (req, res) => {
   try {
+    console.log("Entered the Payout update Function");
     const isDev = process.env.NEXT_PUBLIC_ENV === "dev";
 
     if (isDev) {
@@ -762,7 +763,7 @@ exports.update = async (req, res) => {
     if (!secret || !signature) {
       return res.status(400).json({ error: "Missing signature headers" });
     }
-
+    console.log("Secret present");
     // ===============================
     // 🔥 FIX 1: SAFE RAW BODY HANDLING
     // ===============================
@@ -784,7 +785,7 @@ exports.update = async (req, res) => {
       console.warn("❌ Invalid webhook signature");
       return res.status(400).json({ error: "Invalid signature" });
     }
-
+    console.log("Signature match");
     if (isDev) {
       console.log("✅ Webhook verified!");
     }
@@ -799,7 +800,7 @@ exports.update = async (req, res) => {
     if (isDev) {
       console.log("📦 Webhook Event:", payload.event);
     }
-
+    console.log("Parsed");
     // ===============================
     // Respond immediately to Razorpay
     // ===============================
@@ -824,11 +825,16 @@ exports.update = async (req, res) => {
 // Process webhook asynchronously
 async function processWebhookEvent(payload) {
   try {
+    console.log("Entered processing", payload);
+    console.log("Entered processing", payload.payout);
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("🔄 Processing payout webhook event:", payload);
-      console.log("Payload object", payload?.payout?.entity);
-      console.log("Payload2 object", payload?.payment?.entity);
-      console.log("🔄 Processing payout webhook event:", payload);
+      console.log("Payload object", payload?.payload);
+      console.log("Payload2 object", payload?.payload?.payout);
+      console.log(
+        "🔄 Processing payout webhook event:",
+        payload?.payload?.payout?.entity,
+      );
       console.log("Payload object", payload?.payout?.entity);
       console.log("Payload2 object", payload?.payment?.entity);
     }

@@ -846,22 +846,22 @@ async function processWebhookEvent(payload) {
         }
         break;
       case "payout.processed":
-        await handlePayoutProcessed(payload?.payout?.entity);
+        await handlePayoutProcessed(payload?.payload?.payout?.entity);
         break;
       case "payout.initiated":
-        await handlePayoutInitiated(payload?.payout?.entity);
+        await handlePayoutInitiated(payload?.payload?.payout?.entity);
         break;
       case "payout.reversed":
-        await handlePayoutReversed(payload?.payout?.entity);
+        await handlePayoutReversed(payload?.payload?.payout?.entity);
         break;
       case "payout.updated":
-        await handlePayoutUpdated(payload?.payout?.entity);
+        await handlePayoutUpdated(payload?.payload?.payout?.entity);
         break;
       case "payout.pending":
-        await handlePayoutPending(payload?.payout?.entity);
+        await handlePayoutPending(payload?.payload?.payout?.entity);
         break;
       case "payout.rejected":
-        await handlePayoutRejected(payload?.payout?.entity);
+        await handlePayoutRejected(payload?.payload?.payout?.entity);
         break;
       default:
         if (process.env.NEXT_PUBLIC_ENV === "dev") {
@@ -884,13 +884,13 @@ async function handlePayoutProcessed(payment) {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("💰Enterd Payout Processed:", payment);
     }
-    if (!payout.id) {
+    if (!payment.id) {
       console.error("❌ Missing payout/payment id");
       return;
     }
     const paymentProcess = await HostPayout.findOneAndUpdate(
       {
-        paymentId: payout.id,
+        paymentId: payment.id,
       },
       { status: "paid" },
     );
@@ -930,13 +930,13 @@ async function handlePayoutInitiated(payment) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
     console.log("💰 Entered Payout Initiated:", payment);
   }
-  if (!payout.id) {
+  if (!payment.id) {
     console.error("❌ Missing payout/payment id");
     return;
   }
   const paymentInitiate = await HostPayout.findOneAndUpdate(
     {
-      paymentId: payout.id,
+      paymentId: payment.id,
     },
     { status: "initiated" },
   );

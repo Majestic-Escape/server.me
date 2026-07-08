@@ -840,11 +840,6 @@ async function processWebhookEvent(payload) {
     }
 
     switch (payload.event) {
-      case "payment.captured":
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log("payment captured");
-        }
-        break;
       case "payout.processed":
         await handlePayoutProcessed(payload?.payload?.payout?.entity);
         break;

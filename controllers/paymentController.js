@@ -748,102 +748,115 @@ exports.schedulecron = async (req, res) => {
 // );
 
 exports.update = async (req, res) => {
-  // ✅ Return response IMMEDIATELY
-  // res.status(200).json({ received: true, timestamp: new Date().toISOString() });
-  if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("Payment payout started");
-  }
   try {
-    const secret = process.env.RAZORPAY_WEBHOOK_KEY;
+    console.log("Entered the Payout update Function");
+    const isDev = process.env.NEXT_PUBLIC_ENV === "dev";
 
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
+    if (isDev) {
+      console.log("Payment payout started");
       console.log("🟢 Webhook received at:", new Date().toISOString());
     }
 
+    const secret = process.env.RAZORPAY_WEBHOOK_KEY;
     const signature = req.headers["x-razorpay-signature"];
 
-    // ✅ Manual raw body collection
-    let rawBody = "";
+    if (!secret || !signature) {
+      return res.status(400).json({ error: "Missing signature headers" });
+    }
+    console.log("Secret present");
+    // ===============================
+    // 🔥 FIX 1: SAFE RAW BODY HANDLING
+    // ===============================
+    const rawBody = req.body.toString("utf8");
 
-    req.on("data", (chunk) => {
-      rawBody += chunk.toString();
-    });
+    if (isDev) {
+      console.log("🔍 Raw body length:", rawBody.length);
+    }
 
-    req.on("end", async () => {
-      try {
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log("🔍 Raw body length:", rawBody.length);
-        }
+    // ===============================
+    // 🔥 FIX 2: SIGNATURE VERIFICATION
+    // ===============================
+    const expectedSignature = crypto
+      .createHmac("sha256", secret)
+      .update(rawBody)
+      .digest("hex");
 
-        // Verify signature
-        const expectedSignature = crypto
-          .createHmac("sha256", secret)
-          .update(rawBody)
-          .digest("hex");
+    if (expectedSignature !== signature) {
+      console.warn("❌ Invalid webhook signature");
+      return res.status(400).json({ error: "Invalid signature" });
+    }
+    console.log("Signature match");
+    if (isDev) {
+      console.log("✅ Webhook verified!");
+    }
 
-        console.log("🔍 Signature check:", {
-          expected: expectedSignature.substring(0, 20) + "...",
-          received: signature?.substring(0, 20) + "...",
-          match: expectedSignature === signature,
-        });
+    let payload;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch (e) {
+      return res.status(400).json({ error: "Invalid JSON" });
+    }
 
-        if (expectedSignature !== signature) {
-          console.warn("❌ Invalid webhook signature");
-          return;
-        }
+    if (isDev) {
+      console.log("📦 Webhook Event:", payload.event);
+    }
+    console.log("Parsed");
+    // ===============================
+    // Respond immediately to Razorpay
+    // ===============================
+    res.status(200).json({ received: true });
 
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log("✅ Webhook verified!");
-        }
-
-        // Parse payload
-        const payload = JSON.parse(rawBody);
-
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log("📦 Webhook Event:", payload.event);
-        }
-
-        // Process asynchronously
-        processWebhookEvent(payload).catch(console.error);
-      } catch (error) {
-        console.error("❌ Webhook processing error:", error);
-      }
+    // ===============================
+    // Background processing
+    // ===============================
+    setImmediate(() => {
+      processWebhookEvent(payload).catch((err) => {
+        console.error("❌ Background processing error:", err);
+      });
     });
   } catch (error) {
-    console.error("❌ Webhook setup error:", error);
+    console.error("❌ Webhook error:", error);
+
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Webhook failed" });
+    }
   }
 };
-
 // Process webhook asynchronously
 async function processWebhookEvent(payload) {
   try {
+    console.log("Entered processing", payload);
+    console.log("Entered processing", payload.payout);
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("🔄 Processing webhook event:", payload);
+      console.log("🔄 Processing payout webhook event:", payload);
+      console.log("Payload object", payload?.payload);
+      console.log("Payload2 object", payload?.payload?.payout);
+      console.log(
+        "🔄 Processing payout webhook event:",
+        payload?.payload?.payout?.entity,
+      );
+      console.log("Payload object", payload?.payout?.entity);
+      console.log("Payload2 object", payload?.payment?.entity);
     }
 
     switch (payload.event) {
-      case "payment.captured":
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log("payment captured");
-        }
-        break;
       case "payout.processed":
-        await handlePayoutProcessed(payload.payload.payout.entity);
+        await handlePayoutProcessed(payload?.payload?.payout?.entity);
         break;
       case "payout.initiated":
-        await handlePayoutInitiated(payload.payload.payout.entity);
+        await handlePayoutInitiated(payload?.payload?.payout?.entity);
         break;
       case "payout.reversed":
-        await handlePayoutReversed(payload.payload.payout.entity);
+        await handlePayoutReversed(payload?.payload?.payout?.entity);
         break;
       case "payout.updated":
-        await handlePayoutUpdated(payload.payload.payout.entity);
+        await handlePayoutUpdated(payload?.payload?.payout?.entity);
         break;
       case "payout.pending":
-        await handlePayoutPending(payload.payload.payout.entity);
+        await handlePayoutPending(payload?.payload?.payout?.entity);
         break;
       case "payout.rejected":
-        await handlePayoutRejected(payload.payload.payout.entity);
+        await handlePayoutRejected(payload?.payload?.payout?.entity);
         break;
       default:
         if (process.env.NEXT_PUBLIC_ENV === "dev") {
@@ -864,7 +877,21 @@ async function processWebhookEvent(payload) {
 async function handlePayoutProcessed(payment) {
   try {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("💰 Payment Captured:", payment);
+      console.log("💰Enterd Payout Processed:", payment);
+    }
+    if (!payment.id) {
+      console.error("❌ Missing payout/payment id");
+      return;
+    }
+    const paymentProcess = await HostPayout.findOneAndUpdate(
+      {
+        paymentId: payment.id,
+      },
+      { status: "paid" },
+    );
+    if (!paymentProcess) {
+      console.error("❌ Payment processing failed");
+      return;
     }
     // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
     //   console.log("Amount:", payment.amount / 100);
@@ -894,9 +921,23 @@ async function handlePayoutProcessed(payment) {
   }
 }
 
-async function handlePaymentInitiated(payment) {
+async function handlePayoutInitiated(payment) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("💰 Payment Captured:", payment);
+    console.log("💰 Entered Payout Initiated:", payment);
+  }
+  if (!payment.id) {
+    console.error("❌ Missing payout/payment id");
+    return;
+  }
+  const paymentInitiate = await HostPayout.findOneAndUpdate(
+    {
+      paymentId: payment.id,
+    },
+    { status: "initiated" },
+  );
+  if (!paymentInitiate) {
+    console.error("❌ Payment initiation failed");
+    return;
   }
   // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
   //   console.log("❌ Payment Failed:", payment.id, payment.error_description);
@@ -906,7 +947,7 @@ async function handlePaymentInitiated(payment) {
 
 async function handlePayoutUpdated(payment) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("🔐 Payment Authorized:", payment);
+    console.log("🔐 Entered Payment Update:", payment);
   }
   // Payment is authorized but not captured yet
 }
@@ -920,14 +961,43 @@ async function handlePayoutPending(payout) {
 
 async function handlePayoutRejected(payout) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("❌ Payout Failed:", payout);
+    console.log("❌ Entered Payout Rejected:", payout);
   }
+  if (!payout.id) {
+    console.error("❌ Missing payout/payment id");
+    return;
+  }
+  const payment = await HostPayout.findOneAndUpdate(
+    {
+      paymentId: payout.id,
+    },
+    { status: "rejected" },
+  );
+  if (!payment) {
+    console.error("❌ Payment rejected");
+    return;
+  }
+
   // Your existing payout failure logic
 }
 
 async function handlePayoutReversed(payout) {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("🔄 Payout Reversed:", payout);
+    console.log("🔄 Entered ayout Reversed:", payout);
+  }
+  if (!payout.id) {
+    console.error("❌ Missing payout/payment id");
+    return;
+  }
+  const payment = await HostPayout.findOneAndUpdate(
+    {
+      paymentId: payout.id,
+    },
+    { status: "reversed" },
+  );
+  if (!payment) {
+    console.error("❌ Payment reversed");
+    return;
   }
 }
 

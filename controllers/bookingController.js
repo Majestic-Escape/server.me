@@ -25,6 +25,21 @@ const {
   generateBookingGuestListHTML,
 } = require("../utils/generateBookingGuestList");
 const { calTax } = require("../utils/tax");
+const authz = require("../middleware/authz");
+const inventory = require("../services/inventory");
+const BookingNight = require("../models/BookingNight");
+
+// Batch S: reads are scoped to the caller. Returns the id a non-admin may
+// query for (their own), or the requested id for admins.
+async function scopedId(req, requested) {
+  const actor = await authz.resolveActor(req);
+  if (!actor) return null;
+  if (authz.isAdmin(actor)) return requested || null;
+  return actor.id;
+}
+function isForbiddenScope(actorId, requested) {
+  return !!requested && String(requested) !== String(actorId);
+}
 const TOKEN_EXPIRATION = "14d";
 const mongoConnectionString = process.env.DB_URI;
 const baseUrl = process.env.NEXTAUTH_URL;
@@ -110,110 +125,7 @@ const adminEmail = process.env.ADMIN_EMAIL.split(",");
 //   }
 // };
 
-exports.createBooking = async (req, res) => {
-  try {
-    const { propertyId, checkIn, checkOut } = req.body;
-    function normalizeDate(dateStr) {
-      const d = new Date(dateStr);
-      return new Date(
-        Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
-      );
-    }
-    if (!propertyId || !checkIn || !checkOut) {
-      return res.status(400).json({
-        success: false,
-        message: "propertyId, checkIn and checkOut are required",
-      });
-    }
-
-    // Normalize dates
-    //  const newCheckIn = normalizeDate(checkIn);
-    // const newCheckOut = normalizeDate(checkOut);
-    const newCheckIn = new Date(checkIn);
-
-    const newCheckOut = new Date(checkOut);
-    console.log("Checkin and checkout Dates", newCheckIn, newCheckOut);
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("gobl", checkIn, checkOut);
-    }
-    if (
-      Number.isNaN(newCheckIn.getTime()) ||
-      Number.isNaN(newCheckOut.getTime())
-    ) {
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid date format" });
-    }
-
-    if (newCheckIn >= newCheckOut) {
-      return res.status(400).json({
-        success: false,
-        message: "checkIn must be earlier than checkOut",
-      });
-    }
-    const fmt = new Intl.DateTimeFormat("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-
-    // Check overlaps
-    const overlapping = await Booking.findOne({
-      propertyId,
-      status: { $nin: ["rejected", "cancelled"] },
-      paymentStatus: "paid",
-      checkIn: { $lt: newCheckOut },
-      checkOut: { $gt: newCheckIn },
-    }).lean();
-    console.log("check overlap booking", overlapping);
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("have found any overlap", overlapping);
-    }
-
-    if (overlapping) {
-      const existingCheckOut = new Date(overlapping.checkOut);
-      console.log("overlapping checkout date", existingCheckOut);
-      console.log(
-        "gob2",
-        newCheckIn.getDate(),
-        newCheckIn.getMonth(),
-        overlapping.checkOut.getDate(),
-        overlapping.checkOut.getMonth(),
-      );
-      // ✅ Allow exact checkout == new checkin
-      if (
-        `${newCheckIn.getDate()}/${newCheckIn.getMonth()}` !==
-        `${overlapping.checkOut.getDate()}/${existingCheckOut.getMonth()}`
-      ) {
-        return res.status(409).json({
-          success: false,
-          message: "Selected dates overlap with an existing booking",
-        });
-      }
-    }
-    function getOffset(utcDate) {
-      const offsetHours = 5.5;
-      const offsetMilliseconds = offsetHours * 3600000; // 3600 seconds * 1000 ms
-      const localTime = new Date(utcDate.getTime() + offsetMilliseconds);
-      return localTime;
-    }
-    const offsetCheckin = getOffset(newCheckIn);
-    const offsetCheckout = getOffset(newCheckOut);
-    // Save booking
-    const booking = new Booking({
-      ...req.body,
-      checkIn: newCheckIn,
-      checkOut: newCheckOut,
-    });
-
-    await booking.save();
-
-    return res.status(201).json({ success: true, data: booking });
-  } catch (err) {
-    console.error("createBooking error:", err);
-    return res.status(500).json({ success: false, error: err.message });
-  }
-};
+// createBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 
 // Get all bookings (admin or host-specific)
 exports.getAllBookings = async (req, res) => {
@@ -230,9 +142,12 @@ exports.getAllBookings = async (req, res) => {
 
 exports.getAnalyticsFilterBookings = async (req, res) => {
   try {
+    const actor = await authz.resolveActor(req);
+    const scope = authz.isAdmin(actor) ? {} : { hostId: actor.id };
     const bookings = await Booking.find({
       source: "local",
       action: "user",
+      ...scope,
     }).populate("userId propertyId hostId");
     res.status(200).json({ success: true, data: bookings });
   } catch (error) {
@@ -370,7 +285,8 @@ exports.getAllFilterBookings = async (req, res) => {
 
 exports.getHostFilterBookingStats = async (req, res) => {
   try {
-    const { search, status, from, to, title, hostEmail, hostId } = req.query;
+    const { search, status, from, to, title, hostEmail } = req.query;
+    const hostId = await scopedId(req, req.query.hostId);
 
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("All the data that we need", from, to);
@@ -447,7 +363,8 @@ exports.getHostFilterBookingStats = async (req, res) => {
 
 exports.getHostFilterBookings = async (req, res) => {
   try {
-    const { search, status, from, to, title, hostEmail, hostId } = req.query;
+    const { search, status, from, to, title, hostEmail } = req.query;
+    const hostId = await scopedId(req, req.query.hostId);
 
     const limit = parseInt(req.query.limit) || 10;
     const skip = parseInt(req.query.skip) || 0;
@@ -595,7 +512,8 @@ exports.getHostFilterBookings = async (req, res) => {
 
 exports.getRevenueFilter = async (req, res) => {
   try {
-    const { search, status, from, to, title, hostEmail, hostId } = req.query;
+    const { search, status, from, to, title, hostEmail } = req.query;
+    const hostId = await scopedId(req, req.query.hostId);
 
     const filter = {};
 
@@ -676,19 +594,7 @@ exports.getRevenueFilter = async (req, res) => {
   }
 };
 
-exports.updateCloseModal = async (req, res) => {
-  try {
-    const { bookingId } = req.body;
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("triggggg");
-    }
-    const data = await Booking.findByIdAndUpdate(bookingId, {});
-
-    res.json({ success: true, data: data });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
+// updateCloseModal: moved to controllers/bookingLifecycleController.js (Batch S)
 exports.modifyBooking = async (req, res) => {
   try {
     const {
@@ -703,28 +609,66 @@ exports.modifyBooking = async (req, res) => {
       to,
     } = req.query;
 
+    if (!mongoose.isValidObjectId(String(bookingId))) {
+      return res.status(400).json({ success: false, code: "INVALID_ID", message: "Invalid bookingId" });
+    }
     const date = parseMDYToUTCBooking(from, to);
+    if (!date || !date.from || !date.to || !(date.from < date.to)) {
+      return res.status(400).json({ success: false, code: "INVALID_DATES", message: "Invalid date range" });
+    }
     const filter = {
       guests: Number(guest),
       adults: Number(adults),
       checkIn: date.from,
       checkOut: date.to,
     };
+    if (![filter.guests, filter.adults].every((n) => Number.isInteger(n) && n >= 0)) {
+      return res.status(400).json({ success: false, code: "VALIDATION", message: "guest and adults must be whole numbers" });
+    }
     if (property && property.toLowerCase() != "all") {
+      if (!mongoose.isValidObjectId(String(property))) {
+        return res.status(400).json({ success: false, code: "INVALID_ID", message: "Invalid property" });
+      }
       filter.propertyId = property;
     }
     if (children) {
       filter.children = Number(children);
     }
-    const data = await Booking.findByIdAndUpdate(bookingId, filter);
+    const current = await Booking.findById(bookingId);
+    if (!current) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Booking not found" });
+    }
+    // Batch S: a date/property change moves inventory. Reserve the new nights
+    // first (409 if any is taken), then release the old ones — never leave a
+    // window where the booking blocks nothing or two ranges at once.
+    const targetProperty = filter.propertyId || current.propertyId;
+    const newNights = inventory.nightsBetween(filter.checkIn, filter.checkOut);
+    const blocksInventory = current.paymentStatus === "paid" && !["rejected", "cancelled"].includes(current.status);
+    const moved = String(targetProperty) !== String(current.propertyId) || +new Date(current.checkIn) !== +filter.checkIn || +new Date(current.checkOut) !== +filter.checkOut;
+    if (blocksInventory && moved) {
+      await inventory.releaseNights(current._id);
+      const reserved = await inventory.reserveNights({ propertyId: targetProperty, nights: newNights, bookingId: current._id, kind: current.action === "host" ? "block" : "booking" });
+      if (!reserved.ok) {
+        // Put the original nights back (still ours unless another booking took them meanwhile).
+        await inventory.ensureNightsBestEffort({ propertyId: current.propertyId, nights: inventory.nightsBetween(current.checkIn, current.checkOut), bookingId: current._id, kind: current.action === "host" ? "block" : "booking" });
+        return res.status(409).json({ success: false, code: "DATES_UNAVAILABLE", message: "The new dates overlap with an existing booking" });
+      }
+      await BookingNight.updateMany({ bookingId: current._id }, { $set: { expiresAt: null } });
+    }
+    filter.nights = newNights.length;
+    filter.updatedAt = new Date();
+    const data = await Booking.findByIdAndUpdate(bookingId, filter, { new: true }).populate("userId hostId");
     if (!data) {
       return res
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
+    // Recipients are the booking parties (were client-supplied addresses).
     const params = { firstName: "Ad" };
-    await sendEmail(hostEmail, 40, params);
-    await sendEmail(userEmail, 40, params);
+    if (data.hostId?.email) await sendEmail(data.hostId.email, 40, params);
+    if (data.userId?.email) await sendEmail(data.userId.email, 40, params);
 
     res.status(200).json({ success: true, data: data });
   } catch (error) {
@@ -734,8 +678,19 @@ exports.modifyBooking = async (req, res) => {
 
 exports.updateFlag = async (req, res) => {
   try {
-    const { id, email } = req.query;
-    const data = await Booking.findByIdAndUpdate(id, { flag: true }).populate(
+    const { id } = req.query;
+    if (!mongoose.isValidObjectId(String(id))) {
+      return res.status(400).json({ success: false, code: "INVALID_ID", message: "Invalid booking id" });
+    }
+    const actor = await authz.resolveActor(req);
+    const existing = await Booking.findById(id).select("hostId").lean();
+    if (!existing) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Booking not found" });
+    }
+    if (!(authz.isBookingHost(actor, existing) || authz.isAdmin(actor))) return authz.forbid(res);
+    const data = await Booking.findByIdAndUpdate(id, { flag: true }, { new: true }).populate(
       "hostId propertyId userId payment",
     );
     if (!data) {
@@ -743,6 +698,11 @@ exports.updateFlag = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
+    // Recipient is the booking's host (was a client-supplied address); the
+    // names used to be undefined identifiers (ReferenceError → 500).
+    const email = data.hostId?.email;
+    const userName = `${data.userId?.firstName || ""} ${data.userId?.lastName || ""}`.trim();
+    const lastName = `${data.hostId?.firstName || ""} ${data.hostId?.lastName || ""}`.trim();
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log(email);
     }
@@ -781,10 +741,13 @@ exports.getActiveBookings = async (req, res) => {
     endOfDay.setHours(23, 59, 59, 999);
 
     const now = new Date();
+    const actor = await authz.resolveActor(req);
+    const scope = authz.isAdmin(actor) ? {} : { hostId: actor.id };
     // Query: checkIn <= endOfDay AND checkOut >= startOfDay
     const bookings = await Booking.find({
       checkIn: { $lte: endOfDay },
       checkOut: { $gte: startOfDay },
+      ...scope,
     }).populate("userId propertyId hostId");
 
     const bookingData = bookings.filter((item) => {
@@ -823,7 +786,8 @@ exports.getAllHostEmails = async (req, res) => {
 };
 exports.getAllUserBookings = async (req, res) => {
   try {
-    const { userId } = req.query;
+    const userId = await scopedId(req, req.query.userId);
+    if (!userId) return res.status(403).json({ success: false, code: "FORBIDDEN" });
     const bookings = await Booking.find({
       userId: userId,
       source: "local",
@@ -847,6 +811,8 @@ exports.getAllUserBookings = async (req, res) => {
 // Get bookings for a specific user
 exports.getBookingsByUser = async (req, res) => {
   try {
+    const actor = await authz.resolveActor(req);
+    if (!authz.isAdmin(actor) && isForbiddenScope(actor.id, req.params.userId)) return authz.forbid(res);
     const bookings = await Booking.find({
       userId: req.params.userId,
       source: "local",
@@ -861,6 +827,8 @@ exports.getBookingsByUser = async (req, res) => {
 // Get bookings for a specific host
 exports.getBookingsByHost = async (req, res) => {
   try {
+    const actor = await authz.resolveActor(req);
+    if (!authz.isAdmin(actor) && isForbiddenScope(actor.id, req.params.hostId)) return authz.forbid(res);
     const bookings = await Booking.find({
       hostId: req.params.hostId,
       source: "local",
@@ -1278,210 +1246,15 @@ exports.getBookingsByHostGroupByUsers = async (req, res) => {
 };
 
 // Get a specific booking by ID
-exports.getBookingById = async (req, res) => {
-  try {
-    const booking = await Booking.findById(req.params.bookingId).populate(
-      "userId propertyId hostId",
-    );
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("try try", booking);
-    }
-    if (!booking)
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
-    res.status(200).json({ success: true, data: booking });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
+// getBookingById: moved to controllers/bookingLifecycleController.js (Batch S)
 
 // Update a booking
-exports.updateBooking = async (req, res) => {
-  try {
-    const booking = await Booking.findByIdAndUpdate(
-      req.params.bookingId,
-      req.body,
-      { new: true },
-    );
-    if (!booking)
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
-    res.status(200).json({ success: true, data: booking });
-  } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
-  }
-};
+// updateBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 
 // Reject a booking
-exports.cancelBooking = async (req, res) => {
-  try {
-    const { bookingId, userEmail, hostEmail, userName, hostName } = req.body;
-    const booking = await Booking.findByIdAndUpdate(bookingId, {
-      status: "rejected",
-    }).populate("hostId userId propertyId payment");
-    const params = paramsToObject(userName, hostName, booking);
-    if (!booking)
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
+// cancelBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 
-    const instance = new Razorpay({ key_id: key, key_secret: secret });
-    let refundSuccessful = false;
-
-    const paymentData = await Payment.findOneAndUpdate(
-      { bookingId: bookingId },
-      { status: "refund initiated" },
-      { new: true },
-    );
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm1");
-    }
-    const payment = await Payment.findOne({ bookingId: bookingId });
-    if (!payment) {
-      return res.status(404).json({
-        success: false,
-        message: "Payment refund initiation failed",
-      });
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm2");
-    }
-    const refund = await instance.payments.refund(payment.paymentId, {
-      amount: payment.amount,
-      speed: "normal",
-      notes: { notes_key_1: "Full Refund" },
-      receipt: `Refund No. ${bookingId}`,
-    });
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm3");
-    }
-    if (!refund) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Payment refund failed" });
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm4");
-    }
-    refundSuccessful = true;
-
-    // Update statuses only if refund is successful
-    await Payment.findOneAndUpdate(
-      { bookingId: bookingId },
-      { status: "refunded" },
-      { paymentType: "refunded" },
-    );
-    await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
-
-    await sendEmail(userEmail, 11, params);
-
-    await Promise.all(
-      adminEmail.map((email) => sendEmail(email.trim(), 16, params)),
-    );
-    await sendEmail(hostEmail, 17, params);
-    res.status(200).json({ success: true, data: booking });
-  } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
-  }
-};
-
-exports.cancelAdminBooking = async (req, res) => {
-  try {
-    const { bookingId } = req.body;
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("testc", bookingId);
-    }
-    const booking = await Booking.findByIdAndUpdate(bookingId, {
-      status: "cancelled",
-    }).populate("userId hostId propertyId payment");
-    if (!booking)
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
-    // const data = await Booking.findById(bookingId).populate("userId hostId");
-    // if (!data) {
-    //   return res
-    //     .status(404)
-    //     .json({ success: false, message: "User data not found" });
-    // }
-    const userName = changeToUpperCase(
-      booking?.userId?.firstName + " " + booking?.userId?.lastName,
-    );
-    const hostName = changeToUpperCase(
-      booking?.hostId?.firstName + " " + booking?.hostId?.lastName,
-    );
-
-    const instance = new Razorpay({ key_id: key, key_secret: secret });
-    let refundSuccessful = false;
-
-    const paymentData = await Payment.findOneAndUpdate(
-      { bookingId: bookingId },
-      { status: "refund initiated" },
-      { new: true },
-    );
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm1");
-    }
-    const payment = await Payment.findOne({ bookingId: bookingId });
-    if (!payment) {
-      return res.status(404).json({
-        success: false,
-        message: "Payment refund initiation failed",
-      });
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm2");
-    }
-    const refund = await instance.payments.refund(payment.paymentId, {
-      amount: payment.amount,
-      speed: "normal",
-      notes: { notes_key_1: "Full Refund" },
-      receipt: `Refund No. ${bookingId}`,
-    });
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm3");
-    }
-    if (!refund) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Payment refund failed" });
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm4");
-    }
-    refundSuccessful = true;
-
-    // Update statuses only if refund is successful
-    await Payment.findOneAndUpdate(
-      { bookingId: bookingId },
-      { status: "refunded", paymentType: "refunded" }, // ✅ both fields updated
-      { new: true },
-    );
-    await Booking.findByIdAndUpdate(bookingId, {
-      paymentStatus: "refunded",
-    }).populate("hostId userId propertyId payment");
-    const params = paramsToObject(userName, hostName, booking);
-
-    await sendEmail(booking.userId.email, 32, params);
-
-    await Promise.all(
-      adminEmail.map((email) => sendEmail(email.trim(), 31, params)),
-    );
-
-    await sendEmail(booking.hostId.email, 33, params);
-    res.status(200).json({
-      success: true,
-      message: refundSuccessful
-        ? "Refund issued and booking terminated"
-        : "Booking cancelled without refund",
-      data: booking,
-    });
-  } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
-  }
-};
+// cancelAdminBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 
 exports.checkDates = async (req, res) => {
   try {
@@ -1552,60 +1325,7 @@ exports.blockedDates = async (req, res) => {
 };
 
 //host side unblocking dates that host blocked
-exports.unblockDates = async (req, res) => {
-  if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("entsssssssss");
-  }
-  try {
-    const { propertyId } = req.params;
-    const { selectedDate } = req.body;
-
-    const from = moment.utc(selectedDate).startOf("day").toDate();
-    const to = moment.utc(selectedDate).endOf("day").toDate();
-    // normalize to midnight
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("unblock1", from, to, selectedDate);
-    }
-    console.log("Entered", from, to, selectedDate);
-    const booking = await Booking.findOne({
-      propertyId,
-      source: "local",
-      // checkIn: { $gte: from, $lt: to }, // only future or today’s checkIn
-      checkIn: { $lt: to },
-      checkOut: { $gt: from },
-      status: { $nin: ["rejected", "cancelled"] }, // exclude rejected & cancelled
-
-      action: "host",
-    }).lean();
-    console.log("Before", booking);
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: "No booking found for that date",
-      });
-    }
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("unblock2", booking);
-    }
-    const unblock = await Booking.findByIdAndUpdate(
-      booking._id,
-      { status: "cancelled" },
-      { new: true },
-    );
-    console.log("Booking", unblock);
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("unblock3", unblock);
-    }
-    res.json({
-      success: true,
-      data: unblock,
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
+// unblockDates: moved to controllers/bookingLifecycleController.js (Batch S)
 // exports.checkDates = async (req, res) => {
 //   try {
 //     const { propertyId } = req.params;
@@ -1670,93 +1390,7 @@ exports.unblockDates = async (req, res) => {
 // };
 
 //Cancel a booking (host)
-exports.terminateBooking = async (req, res) => {
-  try {
-    const { bookingId, userEmail, hostEmail, userName, hostName } = req.body;
-    const ObjectId = require("mongoose").Types.ObjectId;
-    const id = new ObjectId(`${bookingId}`);
-    const booking = await Booking.findByIdAndUpdate(bookingId, {
-      status: "cancelled",
-    }).populate("userId hostId propertyId payment");
-
-    if (!booking)
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
-
-    const params = paramsToObject(userName, hostName, booking);
-
-    const instance = new Razorpay({ key_id: key, key_secret: secret });
-
-    let refundSuccessful = false;
-
-    const paymentData = await Payment.findOneAndUpdate(
-      { bookingId: bookingId },
-      { status: "refund initiated" },
-      { new: true },
-    );
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm1", paymentData);
-    }
-    const payment = await Payment.findOne({ bookingId: id });
-    if (!payment) {
-      return res.status(404).json({
-        success: false,
-        message: "Payment refund initiation failed",
-      });
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm2", payment);
-    }
-    const refund = await instance.payments.refund(payment.paymentId, {
-      amount: payment?.amount,
-      speed: "normal",
-      notes: { notes_key_1: "Full Refund" },
-      receipt: `Refund No. ${bookingId}`,
-    });
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm3");
-    }
-    if (!refund) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Payment refund failed" });
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("batm4");
-    }
-    refundSuccessful = true;
-
-    // Update statuses only if refund is successful
-    await Payment.findOneAndUpdate(
-      { bookingId: bookingId },
-      { status: "refunded" },
-      { paymentType: "refunded" },
-    );
-    await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
-
-    await sendEmail(userEmail, 13, params);
-    await sendEmail(hostEmail, 14, params);
-
-    await Promise.all(
-      adminEmail.map((email) => sendEmail(email.trim(), 15, params)),
-    );
-
-    res.status(200).json({ success: true, data: booking });
-  } catch (err) {
-    if (err.response) {
-      console.error("Razorpay Error Status:", err.response.status);
-      console.error("Razorpay Error Body:", err.response.data); // 👈 full details
-    } else {
-      console.error("Refund Error:", err);
-    }
-    return res.status(400).json({
-      success: false,
-      error: err.response?.data || err.message,
-    });
-  }
-};
+// terminateBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 
 //Cancel a booking (user)
 // exports.terminateUserBooking = async (req, res) => {
@@ -1863,186 +1497,9 @@ exports.terminateBooking = async (req, res) => {
 //     res.status(400).json({ success: false, error: error.message });
 //   }
 // };
-exports.terminateUserBooking = async (req, res) => {
-  try {
-    const { bookingId, userEmail, hostEmail, userName, hostName } = req.body;
-    const ObjectId = require("mongoose").Types.ObjectId;
-    const id = new ObjectId(`${bookingId}`);
+// terminateUserBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 
-    const booking = await Booking.findByIdAndUpdate(bookingId, {
-      status: "cancelled",
-    }).populate("userId hostId propertyId payment");
-    if (!booking) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
-    }
-
-    // const bookingData = await Booking.findById(bookingId);
-    // if (!bookingData) {
-    //   return res
-    //     .status(404)
-    //     .json({ success: false, message: "Check Out date not found" });
-    // }
-
-    const futureDate = new Date(booking?.checkIn);
-    const now = new Date();
-    const differenceInSeconds = (futureDate - now) / 1000;
-
-    const instance = new Razorpay({ key_id: key, key_secret: secret });
-
-    let refundSuccessful = false;
-
-    if (
-      (booking.cancellationPolicy === "moderate" &&
-        differenceInSeconds >= moderate) ||
-      (booking.cancellationPolicy === "flexible" &&
-        differenceInSeconds >= flexible)
-    ) {
-      const paymentData = await Payment.findOneAndUpdate(
-        { bookingId: id },
-        { status: "refund initiated" },
-        { new: true },
-      );
-      const payment = await Payment.findOne({ bookingId: id });
-      if (!payment) {
-        return res.status(404).json({
-          success: false,
-          message: "Payment refund initiation failed",
-        });
-      }
-
-      const refund = await instance.payments.refund(payment.paymentId, {
-        amount: payment.amount,
-        speed: "normal",
-        notes: { notes_key_1: "Full Refund" },
-        receipt: `Refund No. ${bookingId}`,
-      });
-
-      if (!refund) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Payment refund failed" });
-      }
-
-      refundSuccessful = true;
-
-      // Update statuses only if refund is successful
-      await Payment.findOneAndUpdate(
-        { bookingId: id },
-        { status: "refunded", paymentType: "refunded" },
-      );
-      await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
-    }
-    const params = paramsToObject(userName, hostName, booking);
-
-    // Email Notifications
-
-    await sendEmail(userEmail, 22, params);
-    await sendEmail(hostEmail, 20, params);
-
-    await Promise.all(
-      adminEmail.map((email) => sendEmail(email.trim(), 21, params)),
-    );
-
-    res.status(200).json({
-      success: true,
-      message: refundSuccessful
-        ? "Refund issued and booking terminated"
-        : "Booking cancelled without refund",
-    });
-  } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
-  }
-};
-
-exports.terminateNonUserBooking = async (req, res) => {
-  try {
-    const { bookingId, userEmail, hostEmail, userName, hostName } = req.body;
-    const ObjectId = require("mongoose").Types.ObjectId;
-    const id = new ObjectId(`${bookingId}`);
-
-    const booking = await Booking.findByIdAndUpdate(bookingId, {
-      status: "cancelled",
-    });
-    if (!booking) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
-    }
-
-    const bookingData = await Booking.findById(bookingId);
-    if (!bookingData) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Check Out date not found" });
-    }
-
-    const futureDate = new Date(bookingData?.checkIn);
-    const now = new Date();
-    const differenceInSeconds = (futureDate - now) / 1000;
-
-    const instance = new Razorpay({ key_id: key, key_secret: secret });
-
-    let refundSuccessful = false;
-
-    if (
-      (bookingData.cancellationPolicy === "moderate" &&
-        differenceInSeconds >= moderate) ||
-      (bookingData.cancellationPolicy === "flexible" &&
-        differenceInSeconds >= flexible)
-    ) {
-      const paymentData = await Payment.findOneAndUpdate(
-        { bookingId: id },
-        { status: "refund initiated" },
-        { new: true },
-      );
-      const payment = await Payment.findOne({ bookingId: id });
-      if (!payment) {
-        return res.status(404).json({
-          success: false,
-          message: "Payment refund initiation failed",
-        });
-      }
-
-      const refund = await instance.payments.refund(payment.paymentId, {
-        amount: payment.amount,
-        speed: "normal",
-        notes: { notes_key_1: "Full Refund" },
-        receipt: `Refund No. ${bookingId}`,
-      });
-
-      if (!refund) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Payment refund failed" });
-      }
-
-      refundSuccessful = true;
-
-      // Update statuses only if refund is successful
-      await Payment.findOneAndUpdate(
-        { bookingId: id },
-        { status: "refunded", paymentType: "refunded" },
-      );
-      await Booking.findByIdAndUpdate(bookingId, { paymentStatus: "refunded" });
-    }
-
-    // Email Notifications
-    const params = { userName, hostName };
-    await sendEmail(userEmail, 22, params);
-    await sendEmail(hostEmail, 20, params);
-
-    res.status(200).json({
-      success: true,
-      message: refundSuccessful
-        ? "Refund issued and booking terminated"
-        : "Booking cancelled without refund",
-    });
-  } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
-  }
-};
+// terminateNonUserBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 
 // Confirm a booking
 // exports.confirmBooking = async (req, res) => {
@@ -2116,150 +1573,7 @@ exports.terminateNonUserBooking = async (req, res) => {
 //   }
 // };
 
-exports.confirmBooking = async (req, res) => {
-  try {
-    const { bookingId } = req.body;
-    const booking = await Booking.findByIdAndUpdate(
-      bookingId,
-      { status: "confirmed" },
-      { new: true },
-    ).populate("hostId userId propertyId payment");
-
-    if (!booking) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
-    }
-
-    const bank = await Payment.findOne({ bookingId: booking._id });
-    if (!bank) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Payment not found" });
-    }
-    console.log("Found payment details");
-    const tax = calTax(booking).toLocaleString();
-    console.log("Calculated Tax", tax, typeof tax);
-    const html = generateInvoiceHTML(booking, bank, tax);
-    const guestListHTML = generateBookingGuestListHTML(booking);
-    // console.log("=======pdf html", html);
-    // Generate PDF buffer
-    console.log("Build Email HTML Body");
-    const pdfBuffer = await generateInvoicePDF(html);
-    const guestListPdfBuffer = await generateInvoicePDF(guestListHTML);
-    console.log(" Generate Email HTML Body");
-    // console.log("=======pdf buffer");
-    let invoicesDir;
-    if (process.env.NEXT_PUBLIC_ENV == "dev") {
-      invoicesDir = path.join(__dirname, "/..");
-    } else {
-      invoicesDir = "/tmp";
-    }
-
-    if (!fs.existsSync(invoicesDir)) {
-      fs.mkdirSync(invoicesDir, { recursive: true });
-    }
-    console.log("Generate PDF");
-    // File path
-    const filePath = path.join(invoicesDir, `invoice-${booking._id}.pdf`);
-    const guestListFilePath = path.join(
-      invoicesDir,
-      `guestlist-${booking._id}.pdf`,
-    );
-
-    // Save PDF
-    fs.writeFileSync(filePath, pdfBuffer);
-    fs.writeFileSync(guestListFilePath, guestListPdfBuffer);
-    console.log("Save PDF");
-    const localPdf = await fs.readFileSync(filePath);
-    const guestListPdfFile = await fs.readFileSync(guestListFilePath);
-    const attachmentBase64 = localPdf.toString("base64");
-    const guestListAttachmentBase64 = guestListPdfFile.toString("base64");
-    console.log("Convert Base 64 PDF");
-    // console.log("=======Attachment");
-    const invoiceAttachment = [
-      {
-        name: `invoice-${booking._id}.pdf`,
-        content: attachmentBase64,
-        type: "application/pdf",
-      },
-    ];
-    const guestListOnlyAttachment = [
-      {
-        name: `guest-list-${booking._id}.pdf`,
-        content: guestListAttachmentBase64,
-        type: "application/pdf",
-      },
-    ];
-
-    const bookingStatus = booking.status;
-    const hostEmail = booking.hostId.email;
-    const userEmail = booking.userId.email;
-    const token = jwt.sign({ bookingId }, process.env.JWT_SECRET, {
-      expiresIn: "14d",
-    });
-
-    const params = {
-      userName: `${booking.userId.firstName} ${booking.userId.lastName}`,
-      hostName: `${booking.hostId.firstName} ${booking.hostId.lastName}`,
-      propertyTitle: `${booking.propertyId.title}`,
-      userUrl: `${baseUrl}/rating?token=${token}&booking=${bookingId}`,
-      hostUrl: `${baseUrl}/rating?token=${token}&booking=${bookingId}`,
-    };
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("Agenda scheduling started");
-    }
-    {
-      const userName = changeToUpperCase(
-        booking.userId.firstName + " " + booking.userId.lastName,
-      );
-      const hostName = changeToUpperCase(
-        booking.hostId.firstName + " " + booking.hostId.lastName,
-      );
-      const params = paramsToObject(userName, hostName, booking);
-      await sendEmail(userEmail, 10, params, invoiceAttachment);
-      await sendEmail(hostEmail, 19, params, guestListOnlyAttachment);
-
-      await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 18, params)),
-      );
-    }
-    // schedule 5 hours after checkout
-    const now = new Date();
-    const checkoutDate = new Date(booking.checkOut);
-    const delayMs = checkoutDate.getTime() + 5 * 60 * 60 * 1000 - now.getTime();
-    const delaySeconds = Math.max(0, Math.round(delayMs / 1000));
-    if (process.env.ENV === "dev") {
-      await agenda.schedule(`40 seconds`, "sendReviewEmail", {
-        userEmail,
-        hostEmail,
-        params,
-        bookingStatus,
-      });
-    } else {
-      await agenda.schedule(`${delaySeconds} seconds`, "sendReviewEmail", {
-        userEmail,
-        hostEmail,
-        params,
-        bookingStatus,
-      });
-    }
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("✅ Job scheduled successfully");
-    }
-    try {
-      await fs.promises.unlink(filePath);
-    } catch (unlinkError) {
-      console.error("Failed to delete PDF file:", unlinkError);
-    }
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error("Booking confirm error:", error);
-    res.status(400).json({ success: false, error: error.message });
-  }
-};
+// confirmBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 // exports.confirmInstantBooking = async (req, res) => {
 //   try {
 //     const { bookingId, userId, propertyTitle } = req.body;
@@ -2364,236 +1678,12 @@ exports.confirmBooking = async (req, res) => {
 // };
 // Mark booking as paid
 
-exports.confirmInstantBooking = async (req, res) => {
-  try {
-    const { bookingId, propertyTitle } = req.body;
-    const booking = await Booking.findByIdAndUpdate(
-      bookingId,
-      { status: "confirmed" },
-      { new: true },
-    ).populate("hostId userId");
+// confirmInstantBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 
-    if (!booking) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
-    }
-
-    const bookingStatus = booking.status;
-    const hostEmail = booking.hostId.email;
-    const userEmail = booking.userId.email;
-    const token = jwt.sign({ bookingId }, process.env.JWT_SECRET, {
-      expiresIn: "14d",
-    });
-
-    const params = {
-      userName: `${booking.userId.firstName} ${booking.userId.lastName}`,
-      hostName: `${booking.hostId.firstName} ${booking.hostId.lastName}`,
-      propertyTitle,
-      userUrl: `${baseUrl}/rating?token=${token}&booking=${bookingId}`,
-      hostUrl: `${baseUrl}/rating?token=${token}&booking=${bookingId}`,
-    };
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("Agenda scheduling started");
-    }
-
-    // schedule 5 hours after checkout
-    const now = new Date();
-    const checkoutDate = new Date(booking.checkOut);
-    const delayMs = checkoutDate.getTime() + 5 * 60 * 60 * 1000 - now.getTime();
-    const delaySeconds = Math.max(0, Math.round(delayMs / 1000));
-
-    await agenda.schedule(`${delaySeconds} seconds`, "sendReviewEmail", {
-      userEmail,
-      hostEmail,
-      params,
-      bookingStatus,
-    });
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("✅ Job scheduled successfully");
-    }
-    res.status(200).json({ success: true });
-  } catch (error) {
-    console.error("Booking confirm error:", error);
-    res.status(400).json({ success: false, error: error.message });
-  }
-};
-
-exports.markBookingAsPaid = async (req, res) => {
-  try {
-    const { bookingId, userId, manual, payment } = req.body;
-    console.log("Entered update status");
-    const booking = await Booking.findByIdAndUpdate(
-      bookingId,
-      { paymentStatus: "paid", payment: payment },
-      { new: true },
-    ).populate("userId hostId propertyId payment");
-
-    if (!booking)
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
-    console.log("Updated booking id");
-    const data = await User.findById(userId);
-    if (!data)
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    console.log("Found user details");
-    const userEmail = await data.email;
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("inside the mark");
-    }
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("inside the mark2");
-    }
-    // console.log("=======Before payment");
-
-    const bank = await Payment.findOne({ bookingId: booking._id });
-    if (!bank) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Payment not found" });
-    }
-    console.log("Found payment details");
-    // console.log("=======Bank payment", bank);
-
-    const tax = calTax(booking).toLocaleString();
-    console.log("Calculated Tax", tax, typeof tax);
-    const html = generateInvoiceHTML(booking, bank, tax);
-    const guestListHTML = generateBookingGuestListHTML(booking);
-    // console.log("=======pdf html", html);
-    // Generate PDF buffer
-    console.log("Build Email HTML Body");
-    const pdfBuffer = await generateInvoicePDF(html);
-    const guestListPdfBuffer = await generateInvoicePDF(guestListHTML);
-    console.log(" Generate Email HTML Body");
-    // console.log("=======pdf buffer");
-    let invoicesDir;
-    if (process.env.NEXT_PUBLIC_ENV == "dev") {
-      invoicesDir = path.join(__dirname, "/..");
-    } else {
-      invoicesDir = "/tmp";
-    }
-
-    if (!fs.existsSync(invoicesDir)) {
-      fs.mkdirSync(invoicesDir, { recursive: true });
-    }
-    console.log("Generate PDF");
-    // File path
-    const filePath = path.join(invoicesDir, `invoice-${booking._id}.pdf`);
-    const guestListFilePath = path.join(
-      invoicesDir,
-      `guestlist-${booking._id}.pdf`,
-    );
-
-    // Save PDF
-    fs.writeFileSync(filePath, pdfBuffer);
-    fs.writeFileSync(guestListFilePath, guestListPdfBuffer);
-    console.log("Save PDF");
-    const localPdf = await fs.readFileSync(filePath);
-    const guestListPdfFile = await fs.readFileSync(guestListFilePath);
-    // Convert buffer → base64
-    // const pdfPath = path.join(process.cwd(), "test.pdf");
-    // const pdfBuffer = fs.readFileSync(pdfPath);
-    // console.log("pdf path", pdfPath);
-    console.log("Read PDF");
-    const attachmentBase64 = localPdf.toString("base64");
-    const guestListAttachmentBase64 = guestListPdfFile.toString("base64");
-    console.log("Convert Base 64 PDF");
-    // console.log("=======Attachment");
-    const invoiceAttachment = [
-      {
-        name: `invoice-${booking._id}.pdf`,
-        content: attachmentBase64,
-        type: "application/pdf",
-      },
-    ];
-    const guestListOnlyAttachment = [
-      {
-        name: `guest-list-${booking._id}.pdf`,
-        content: guestListAttachmentBase64,
-        type: "application/pdf",
-      },
-    ];
-
-    const userName = changeToUpperCase(
-      booking.userId.firstName + " " + booking.userId.lastName,
-    );
-    const hostName = changeToUpperCase(
-      booking.hostId.firstName + " " + booking.hostId.lastName,
-    );
-    const params = paramsToObject(userName, hostName, booking);
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("inside the mark3");
-    }
-    if (manual) {
-      console.log("Send Email Manual");
-      await sendEmail(booking.hostId.email, 8, params);
-
-      await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 9, params)),
-      );
-
-      await sendEmail(booking.userId.email, 42, params);
-      //invoiceAttachment;
-      console.log("Done Send Email Manual");
-      try {
-        await fs.promises.unlink(filePath);
-      } catch (unlinkError) {
-        console.error("Failed to delete PDF file:", unlinkError);
-      }
-      console.log("Delete PDF");
-      return res.status(200).json({ success: true, data: booking });
-    } else {
-      console.log("Send Email Instant");
-      // console.log("=======Before email");
-      await sendEmail(
-        booking.hostId.email,
-        34,
-        params,
-        guestListOnlyAttachment,
-      );
-      await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
-      // console.log("=======after host");
-      await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 36, params)),
-      );
-      // console.log("invoice", invoiceAttachment);
-      console.log("Done Send Email Instant");
-      // invoiceAttachment
-      try {
-        await fs.promises.unlink(filePath);
-      } catch (unlinkError) {
-        console.error("Failed to delete PDF file:", unlinkError);
-      }
-    }
-    console.log("Delete PDF");
-    return res.status(200).json({ success: true, data: booking });
-  } catch (error) {
-    res.status(400).json({ success: false, error: error.message });
-  }
-};
+// markBookingAsPaid: moved to controllers/bookingLifecycleController.js (Batch S)
 
 // Delete a booking
-exports.deleteBooking = async (req, res) => {
-  try {
-    const booking = await Booking.findByIdAndDelete(req.params.bookingId);
-    if (!booking)
-      return res
-        .status(404)
-        .json({ success: false, message: "Booking not found" });
-    res
-      .status(200)
-      .json({ success: true, message: "Booking deleted successfully" });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
+// deleteBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 
 // Utility to calculate refund (add your logic here)
 const calculateRefund = (booking) => {

@@ -1,143 +1,69 @@
 const express = require("express");
 const router = express.Router();
 const bookingController = require("../controllers/bookingController");
+const lifecycle = require("../controllers/bookingLifecycleController");
 const authMiddleware = require("../middleware/authMiddleware");
-// Create a new booking
-router.post("/", authMiddleware, bookingController.createBooking);
+const { requireActor, requireAdmin } = require("../middleware/authz");
+const { validateParam } = require("../middleware/validateObjectId");
 
-// Get all bookings (admin or host-specific)
-router.get("/", authMiddleware, bookingController.getAllBookings);
+// Every authenticated route below also resolves the actor (user / admin) so
+// controllers can enforce ownership; object-level checks live in the
+// controllers. See docs/batch-s-authz-matrix.md.
+const auth = [authMiddleware, requireActor];
+const admin = [authMiddleware, requireAdmin];
 
-// Get all filtered booking (host side)
-router.get(
-  "/filter",
-  authMiddleware,
-  bookingController.getAnalyticsFilterBookings
-);
-router.get(
-  "/blocked-dates/:propertyId",
+// Create a booking (guest) or a calendar block (listing host, action: "host")
+router.post("/", ...auth, lifecycle.createBooking);
 
-  bookingController.blockedDates
-);
-router.get(
-  "/admin/analytics-filter",
-  authMiddleware,
-  bookingController.getAllFilterBookings
-);
-router.get(
-  "/analytics-filter",
-  authMiddleware,
-  bookingController.getHostFilterBookings
-);
-router.get(
-  "/analytics-stats-filter",
-  authMiddleware,
-  bookingController.getHostFilterBookingStats
-);
+// Admin: every local guest booking
+router.get("/", ...admin, bookingController.getAllBookings);
 
-router.get(
-  "/revenue-filter",
-  authMiddleware,
-  bookingController.getRevenueFilter
-);
+// Host analytics (scoped to the caller)
+router.get("/filter", ...auth, bookingController.getAnalyticsFilterBookings);
+router.get("/blocked-dates/:propertyId", validateParam("propertyId"), bookingController.blockedDates);
+router.get("/admin/analytics-filter", ...admin, bookingController.getAllFilterBookings);
+router.get("/analytics-filter", ...auth, bookingController.getHostFilterBookings);
+router.get("/analytics-stats-filter", ...auth, bookingController.getHostFilterBookingStats);
+router.get("/revenue-filter", ...auth, bookingController.getRevenueFilter);
 
-router.patch(
-  "/modal-close",
-  authMiddleware,
-  bookingController.updateCloseModal
-);
+router.patch("/modal-close", ...auth, lifecycle.updateCloseModal);
+router.post("/admin-modify", ...admin, bookingController.modifyBooking);
+router.patch("/update-flag", ...auth, bookingController.updateFlag);
 
-router.post("/admin-modify", authMiddleware, bookingController.modifyBooking);
+// Host removes a calendar block (listing host or admin)
+router.post("/unblock-dates/:propertyId", ...auth, validateParam("propertyId"), lifecycle.unblockDates);
 
-router.patch("/update-flag", authMiddleware, bookingController.updateFlag);
-// router.get(
-//   "/basic-filter",
-//   authMiddleware,
-//   bookingController.getBasicFilterBookings
-// );
+router.get("/filter-active-bookings", ...auth, bookingController.getActiveBookings);
+router.get("/hostEmails", ...admin, bookingController.getAllHostEmails);
 
-router.post("/unblock-dates/:propertyId", bookingController.unblockDates);
+// Guest: own bookings
+router.get("/data", ...auth, bookingController.getAllUserBookings);
 
-router.get(
-  "/filter-active-bookings",
-  authMiddleware,
-  bookingController.getActiveBookings
-);
+// Legacy post-payment call: notifications only (payment recorded by verify-payment)
+router.post("/updateStatus", ...auth, lifecycle.markBookingAsPaid);
 
-router.get("/hostEmails", authMiddleware, bookingController.getAllHostEmails);
-//Get all bookings (user)
-router.get("/data", authMiddleware, bookingController.getAllUserBookings);
+router.get("/user/:userId", ...auth, validateParam("userId"), bookingController.getBookingsByUser);
+router.get("/host/:hostId", ...auth, validateParam("hostId"), bookingController.getBookingsByHost);
 
-// Mark booking as paid
-router.post(
-  "/updateStatus",
-  authMiddleware,
-  bookingController.markBookingAsPaid
-);
+// Demo PDF (static content); signed-in only so it is no longer an anonymous Chromium launcher
+router.get("/generate-pdf", ...auth, bookingController.generatePdf);
+router.get("/users-by-host", ...admin, bookingController.getBookingsByHostGroupByUsers);
 
-// Get bookings for a specific user
-router.get(
-  "/user/:userId",
-  authMiddleware,
-  bookingController.getBookingsByUser
-);
+router.get("/check-dates/:propertyId", validateParam("propertyId"), bookingController.checkDates);
 
-// Get bookings for a specific host
-router.get(
-  "/host/:hostId",
-  authMiddleware,
-  bookingController.getBookingsByHost
-);
+// Lifecycle (ownership enforced in the controller)
+router.patch("/host/cancel", ...auth, lifecycle.cancelBooking);
+router.patch("/admin/cancel", ...admin, lifecycle.cancelAdminBooking);
+router.patch("/user/terminate", ...auth, lifecycle.terminateUserBooking);
+router.patch("/host/terminate", ...auth, lifecycle.terminateBooking);
+router.patch("/host/confirm", ...auth, lifecycle.confirmBooking);
+router.patch("/instant/confirm", ...auth, lifecycle.confirmInstantBooking);
 
-router.get("/generate-pdf", bookingController.generatePdf);
-router.get(
-  "/users-by-host",
-  authMiddleware,
-  bookingController.getBookingsByHostGroupByUsers
-);
-// Get a specific booking by ID
-router.get("/:bookingId", authMiddleware, bookingController.getBookingById);
-
-// Update a booking (e.g., change dates, update status)
-router.put("/:bookingId", authMiddleware, bookingController.updateBooking);
-
-// Reject a booking (host action)
-router.patch("/host/cancel", authMiddleware, bookingController.cancelBooking);
-
-// Reject a booking (Admin action)
-router.patch(
-  "/admin/cancel",
-  authMiddleware,
-  bookingController.cancelAdminBooking
-);
-
-// Cancel a booking (user action)
-router.patch(
-  "/user/terminate",
-  authMiddleware,
-  bookingController.terminateUserBooking
-);
-
-// Cancel a booking (host action)
-router.patch(
-  "/host/terminate",
-  authMiddleware,
-  bookingController.terminateBooking
-);
-
-router.get("/check-dates/:propertyId", bookingController.checkDates);
-
-// Confirm a booking (host action)
-router.patch("/host/confirm", authMiddleware, bookingController.confirmBooking);
-
-router.patch(
-  "/instant/confirm",
-  authMiddleware,
-  bookingController.confirmInstantBooking
-);
-
-// Delete a booking (admin or system cleanup)
-router.delete("/:bookingId", authMiddleware, bookingController.deleteBooking);
+// Single booking: guest, host or admin of that booking
+router.get("/:bookingId", ...auth, validateParam("bookingId"), lifecycle.getBookingById);
+// Admin-only, whitelisted fields
+router.put("/:bookingId", ...admin, validateParam("bookingId"), lifecycle.updateBooking);
+// Admin-only
+router.delete("/:bookingId", ...admin, validateParam("bookingId"), lifecycle.deleteBooking);
 
 module.exports = router;
-//

@@ -165,6 +165,19 @@ const connectDB = async () => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("MongoDB connected");
     }
+    // Batch S: the double-booking / one-open-order invariants live in unique
+    // indexes; make sure they exist (and shout if they do not).
+    try {
+      const { verifyRequiredIndexes } = require("./services/startupChecks");
+      await Promise.all([
+        require("./models/BookingNight").init(),
+        require("./models/Payment").init(),
+        require("./models/Booking").init(),
+      ]).catch((err) => console.error("[startup] index build error:", err.message));
+      await verifyRequiredIndexes();
+    } catch (err) {
+      console.error("[startup] index verification failed:", err.message);
+    }
   } catch (err) {
     console.error(`Error connecting to MongoDB: ${err.message}`);
     process.exit(1); // Exit process with failure
@@ -272,3 +285,6 @@ process.on("unhandledRejection", (err) => {
   console.error(`Unhandled Rejection: ${err.message}`);
   server.close(() => process.exit(1));
 });
+
+// Exported for in-process integration tests (tests/batch-s).
+module.exports = { app, server };

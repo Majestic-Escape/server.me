@@ -9,6 +9,12 @@ const DEFAULT_SENDER = {
 };
 
 async function sendEmail(recipientEmail, templateId, params, attachments = []) {
+  // Test seam (never set in a deployment): record instead of sending.
+  if (process.env.EMAIL_DISABLED === "1") {
+    sendEmail.sent = sendEmail.sent || [];
+    sendEmail.sent.push({ recipientEmail, templateId: Number(templateId), attachments: attachments.length });
+    return { skipped: true, recipientEmail, templateId };
+  }
   // Prepare the request payload for Brevo API
   const requestPayload = {
     sender: DEFAULT_SENDER,

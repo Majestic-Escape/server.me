@@ -12,13 +12,17 @@ const cron = require("node-cron");
 const { generateUniqueString } = require("../utils/generateString");
 const HostPayout = require("../models/HostPayout");
 const Configure = require("../models/Configure");
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID,
-  key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+const { getRazorpay } = require("../services/razorpayClient");
+const {
+  PaymentError,
+  createOrderForBooking,
+  verifySignature,
+  applyPaymentSuccess,
+} = require("../services/payments");
+const authz = require("../middleware/authz");
+const { isObjectId } = require("../middleware/validateObjectId");
+const razorpay = getRazorpay();
 
-// const YOUR_KEY = "rzp_test_RRelkKgMDh3dun";
-// const YOUR_SECRET = "gYeQi2lZFvXMMBRs1lWjGANA";
 
 const auth = Buffer.from(
   `${razorpay.key_id.trim()}:${razorpay.key_secret.trim()}`,
@@ -104,154 +108,112 @@ exports.fetch = async (req, res) => {
     });
   }
 };
-// Create a new order
-
+// Create a new order — Batch S: the amount is the server quote, never the
+// client's; one open order per booking; the caller must own the booking.
 exports.createOrder = async (req, res) => {
   try {
-    const { bookingId, userId, currency, amount, propertyId } = req.body;
-
-    // Validate amount
-    if (!amount || amount < 100) {
-      return res.status(400).json({
-        success: false,
-        error: "Amount must be at least 100 paisa (₹1)",
-      });
+    const actor = await authz.resolveActor(req);
+    if (!actor || actor.kind !== "user" || !actor.user) {
+      return res.status(403).json({ success: false, code: "FORBIDDEN", error: "Only the booking's guest can pay" });
     }
-
-    //Find User Details
-    const user = await User.findById(userId);
-    const ObjectId = require("mongoose").Types.ObjectId;
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("not nic", bookingId);
+    const { bookingId, currency, amount } = req.body || {};
+    if (!isObjectId(String(bookingId))) {
+      return res.status(400).json({ success: false, code: "INVALID_ID", error: "Invalid bookingId" });
     }
-
-    // Create order with Razorpay
-    const order = await razorpay.orders.create({
-      amount,
-      currency,
-      receipt: `receipt_${Date.now()}`,
+    const booking = await Booking.findById(bookingId);
+    if (!booking) return res.status(404).json({ success: false, code: "BOOKING_NOT_FOUND", error: "Booking not found" });
+    if (!authz.isBookingGuest(actor, booking)) {
+      return res.status(403).json({ success: false, code: "FORBIDDEN", error: "Only the booking's guest can pay" });
+    }
+    const { order, quote, reused } = await createOrderForBooking({
+      booking,
+      user: actor.user,
+      clientAmount: amount,
+      clientCurrency: currency,
     });
-
-    // Save order details to database
-    const payment = new Payment({
-      orderId: order.id,
-      amount: order.amount,
-      currency: order.currency,
-      bookingId: bookingId,
-      propertyId: propertyId,
-      customerDetails: {
-        name: user.firstName + " " + user.lastName,
-        email: user.email,
-        contact: user.phoneNumber,
-      },
-      status: "created",
-    });
-    await payment.save();
-
-    res.json({
-      success: true,
-      data: order,
-    });
+    return res.json({ success: true, data: order, quote, reused });
   } catch (error) {
+    if (error instanceof PaymentError) {
+      return res.status(error.status).json({ success: false, code: error.code, error: error.message, ...error.extra });
+    }
     console.error("Create order error:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to create order",
-    });
+    return res.status(500).json({ success: false, error: "Failed to create order" });
   }
 };
-// Verify payment
+
+// Verify payment — Batch S: signature + Razorpay-side amount/order/currency/
+// status checks, then idempotent conditional transitions. The booking is
+// marked paid here (and confirmed for instant-book listings); the legacy
+// /booking/updateStatus call only sends notifications afterwards.
 exports.verifyPayment = async (req, res) => {
   try {
-    const {
-      razorpay_order_id,
-      razorpay_payment_id,
-      razorpay_signature,
-      paymentMethod,
-    } = req.body;
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("t0");
+    const actor = await authz.resolveActor(req);
+    if (!actor || actor.kind !== "user" || !actor.user) {
+      return res.status(403).json({ success: false, code: "FORBIDDEN", error: "Only the booking's guest can verify a payment" });
     }
-    // Verify signature
-    const body = razorpay_order_id + "|" + razorpay_payment_id;
-    const expectedSignature = crypto
-      .createHmac("sha256", razorpay.key_secret)
-      .update(body.toString())
-      .digest("hex");
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("t1");
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, paymentMethod } = req.body || {};
+    if (typeof razorpay_order_id !== "string" || typeof razorpay_payment_id !== "string") {
+      return res.status(400).json({ success: false, code: "VALIDATION", error: "razorpay_order_id and razorpay_payment_id are required" });
     }
-    const isAuthentic = expectedSignature === razorpay_signature;
-    const payment = await razorpay.payments.fetch(razorpay_payment_id);
-    if (!payment) {
-      return res
-        .status(404)
-        .json({ success: false, error: "Payment method not found" });
+    const stored = await Payment.findOne({ orderId: razorpay_order_id });
+    if (!stored) return res.status(404).json({ success: false, code: "ORDER_NOT_FOUND", error: "Not found" });
+    const booking = await Booking.findById(stored.bookingId).select("userId").lean();
+    if (!booking || !authz.isBookingGuest(actor, booking)) {
+      return res.status(403).json({ success: false, code: "FORBIDDEN", error: "This order does not belong to you" });
     }
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("t2");
+    if (!verifySignature({ orderId: razorpay_order_id, paymentId: razorpay_payment_id, signature: razorpay_signature })) {
+      // A bad signature never touches the order's state (an attacker must not
+      // be able to flip a real order to "failed").
+      return res.status(400).json({ success: false, code: "INVALID_SIGNATURE", error: "Invalid signature" });
     }
-    if (isAuthentic) {
-      // Update payment details in database
-      const data = await Payment.findOneAndUpdate(
-        { orderId: razorpay_order_id },
-        {
-          paymentId: razorpay_payment_id,
-          paymentMethod: payment?.method,
-          status: "paid",
-        },
-      );
-      if (!data) {
-        return res.status(404).json({ success: false, error: "Not found" });
-      }
-
-      res.status(200).json({
-        success: true,
-        data: data,
-        message: "Payment verified successfully",
-      });
-    } else {
-      // Update payment status to failed
-
-      if (process.env.NEXT_PUBLIC_ENV === "dev") {
-        console.log("t3");
-      }
-      await Payment.findOneAndUpdate(
-        { orderId: razorpay_order_id },
-        { status: "failed" },
-      );
-
-      res.status(400).json({
-        success: false,
-        error: "Invalid signature",
-      });
-    }
-  } catch (error) {
-    console.error("Payment verification error:", error);
-    res.status(500).json({
-      success: false,
-      error: "Payment verification failed",
+    const rp = await getRazorpay().payments.fetch(razorpay_payment_id);
+    if (!rp) return res.status(404).json({ success: false, error: "Payment method not found" });
+    const result = await applyPaymentSuccess({
+      orderId: razorpay_order_id,
+      razorpayPayment: rp,
+      paymentMethod: paymentMethod || rp.method,
+      source: "callback",
     });
+    return res.status(200).json({
+      success: true,
+      data: result.payment,
+      booking: { _id: result.booking?._id, status: result.booking?.status, paymentStatus: result.booking?.paymentStatus },
+      alreadyProcessed: result.alreadyProcessed,
+      message: "Payment verified successfully",
+    });
+  } catch (error) {
+    if (error instanceof PaymentError) {
+      return res.status(error.status).json({ success: false, code: error.code, error: error.message, ...error.extra });
+    }
+    console.error("Payment verification error:", error);
+    return res.status(500).json({ success: false, error: "Payment verification failed" });
   }
 };
+
 // Get payment details
+// Only a party to the booking (guest, host) or an admin may read a payment.
+async function canReadPayment(req, payment) {
+  const actor = await authz.resolveActor(req);
+  if (!actor) return false;
+  if (authz.isAdmin(actor)) return true;
+  const booking = await Booking.findById(payment.bookingId).select("userId hostId").lean();
+  return !!booking && (authz.isBookingGuest(actor, booking) || authz.isBookingHost(actor, booking));
+}
+
 exports.getPayment = async (req, res) => {
   try {
     const payment = await Payment.findOne({
       $or: [{ paymentId: req.params.id }, { orderId: req.params.id }],
     });
-
     if (!payment) {
       return res.status(404).json({
         success: false,
         error: "Payment not found",
       });
     }
-
+    if (!(await canReadPayment(req, payment))) {
+      return res.status(403).json({ success: false, code: "FORBIDDEN", error: "Not allowed" });
+    }
     res.json({
       success: true,
       data: payment,
@@ -267,17 +229,21 @@ exports.getPayment = async (req, res) => {
 
 exports.getPaymentByBooking = async (req, res) => {
   try {
+    if (!isObjectId(String(req.query.id))) {
+      return res.status(400).json({ success: false, code: "INVALID_ID", error: "Invalid booking id" });
+    }
     const payment = await Payment.findOne({
       bookingId: req.query.id,
     });
-
     if (!payment) {
       return res.status(404).json({
         success: false,
         error: "Payment not found",
       });
     }
-
+    if (!(await canReadPayment(req, payment))) {
+      return res.status(403).json({ success: false, code: "FORBIDDEN", error: "Not allowed" });
+    }
     res.json({
       success: true,
       data: payment,
@@ -605,9 +571,10 @@ async function createPayout(bookingId, propertyId, amount, hostId) {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("testing the stran", kycDate, diffDays);
     }
+    let data;
     if (hostData.hostOffer == true && hostData.kyc && diffDays <= 90) {
       const newAmount = Number(amount);
-      const data = new HostPayout({
+      data = new HostPayout({
         bookingId,
         propertyId,
         amount: newAmount,
@@ -618,7 +585,7 @@ async function createPayout(bookingId, propertyId, amount, hostId) {
       const newAmount =
         Number(amount) -
         (process.env.MAJESTIC_COMMISSION / 100) * Number(amount);
-      const data = new HostPayout({
+      data = new HostPayout({
         bookingId,
         propertyId,
         amount: newAmount,
@@ -840,6 +807,26 @@ async function processWebhookEvent(payload) {
     }
 
     switch (payload.event) {
+      // Pay-in events (Batch S): the same idempotent transition as the
+      // client callback, so callback + webhook or a redelivered webhook can
+      // never double-apply, and a payment the client never reported still
+      // lands on the booking.
+      case "payment.captured":
+      case "payment.authorized": {
+        const p = payload?.payload?.payment?.entity;
+        if (p && p.order_id) {
+          await applyPaymentSuccess({ orderId: p.order_id, razorpayPayment: p, paymentMethod: p.method, source: payload.event });
+        }
+        break;
+      }
+      case "order.paid": {
+        const p = payload?.payload?.payment?.entity;
+        const o = payload?.payload?.order?.entity;
+        if (p && (p.order_id || o?.id)) {
+          await applyPaymentSuccess({ orderId: p.order_id || o.id, razorpayPayment: p, paymentMethod: p.method, source: payload.event });
+        }
+        break;
+      }
       case "payout.processed":
         await handlePayoutProcessed(payload?.payload?.payout?.entity);
         break;

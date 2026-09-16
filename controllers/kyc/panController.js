@@ -13,7 +13,9 @@ const getAuthHeader = () => {
 // Verify PAN API
 exports.verifyPan = async (req, res) => {
   try {
-    // const { panNumber, name } = req.body;
+    // Route is GET /kyc/verify/pan; accept query or body. (The destructuring
+    // had been commented out, so every call threw a ReferenceError → 500.)
+    const { panNumber, name } = { ...(req.body || {}), ...(req.query || {}) };
 
     if (!panNumber || !name) {
       return res

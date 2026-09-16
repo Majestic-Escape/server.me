@@ -14,7 +14,7 @@ async function start() {
   const uri = mongod.getUri("batch_s_test");
   Object.assign(process.env, {
     DB_URI: uri,
-    PORT: "0",
+    PORT: process.env.E2E_PORT || "0",
     JWT_SECRET: "test-jwt-secret",
     RAZORPAY_MOCK: "1",
     RAZORPAY_KEY_ID: "rzp_test_mock",

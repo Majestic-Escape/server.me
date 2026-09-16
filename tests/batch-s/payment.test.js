@@ -362,3 +362,23 @@ test("cron requires the secret", async () => {
   r = await h.api("GET", "/payment/schedule-cron", { token: process.env.CRON_SECRET });
   assert.equal(r.status, 200, JSON.stringify(r.body));
 });
+
+test("price change → second Confirm replays the pending booking at the fresh quote and can be paid", async () => {
+  const { listing, booking } = await freshBooking();
+  await require("../../models/ListingProperty").updateOne({ _id: listing._id }, { $set: { basePrice: 10000 } });
+  let r = await createOrder(booking);
+  assert.equal(r.body.code, "PRICE_CHANGED");
+  // the client re-submits the same stay (same user, same dates) after showing the new total
+  const again = await h.api("POST", "/booking/", { token: T, body: h.bookingBody(listing, { checkIn: booking.checkIn.slice(0, 10), checkOut: booking.checkOut.slice(0, 10) }) });
+  assert.equal(again.status, 200, JSON.stringify(again.body));
+  assert.equal(again.body.data._id, booking._id, "same booking, not a second one");
+  assert.equal(again.body.repriced, true);
+  assert.equal(again.body.data.quote.totalPaise, 2600000);
+  assert.equal(again.body.data.price, 26000);
+  // paying the old figure is still refused; the fresh figure works
+  r = await createOrder(again.body.data, { amount: 2340000 });
+  assert.equal(r.body.code, "AMOUNT_MISMATCH");
+  r = await createOrder(again.body.data, { amount: 2600000 });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.amount, 2600000);
+});

@@ -175,7 +175,37 @@ exports.createBooking = async (req, res) => {
           paymentStatus: "unpaid",
           holdExpiresAt: { $gt: new Date() },
         });
-        if (own) return res.status(200).json({ success: true, data: own, replayed: true });
+        if (own) {
+          // The listing may have been repriced since the first submit (the
+          // client re-quoted and the customer confirmed the new figure). An
+          // unpaid hold is moved to the fresh quote; create-order still
+          // verifies the client's amount against it, so nothing unseen is
+          // ever charged.
+          if (!own.quote || own.quote.totalPaise !== quote.totalPaise) {
+            await Booking.updateOne(
+              { _id: own._id, status: "pending", paymentStatus: "unpaid" },
+              {
+                $set: {
+                  price: quote.total,
+                  subTotal: quote.subTotal,
+                  quote: {
+                    basePrice: quote.basePrice,
+                    nights: quote.nights,
+                    subTotalPaise: quote.subTotalPaise,
+                    serviceFeePaise: quote.serviceFeePaise,
+                    gstPaise: quote.gstPaise,
+                    totalPaise: quote.totalPaise,
+                    currency: "INR",
+                  },
+                  updatedAt: new Date(),
+                },
+              },
+            );
+            const repriced = await Booking.findById(own._id);
+            return res.status(200).json({ success: true, data: repriced, replayed: true, repriced: true });
+          }
+          return res.status(200).json({ success: true, data: own, replayed: true });
+        }
       }
       return fail(res, 409, "DATES_UNAVAILABLE", "Selected dates overlap with an existing booking");
     }

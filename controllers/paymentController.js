@@ -1007,8 +1007,6 @@ async function handlePayoutReversed(payout) {
 //   key_secret: "gYeQi2lZFvXMMBRs1lWjGANA",
 // });
 
-// // const YOUR_KEY = "rzp_test_RRelkKgMDh3dun";
-// // const YOUR_SECRET = "gYeQi2lZFvXMMBRs1lWjGANA";
 
 // const auth = Buffer.from(
 //   `${razorpay.key_id.trim()}:${razorpay.key_secret.trim()}`

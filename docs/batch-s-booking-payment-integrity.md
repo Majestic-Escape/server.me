@@ -177,3 +177,28 @@ Rollback: redeploy the previous backend build; `node scripts/backfill-
 booking-nights.js --rollback` drops the additive `bookingnights` collection
 (only needed if the collection should not persist). Payment rows retired as
 `failed` by the backfill were stale unpaid orders and need no reversal.
+
+## 8. Evidence summary (all on isolated in-memory MongoDB + mock gateway)
+
+* `npm test` — 39 integration tests: 20 simultaneous same-night bookings →
+  1×201 / 19×409 / 1 booking / 3 night rows; 20 identical submissions from
+  one user → 1 booking; 10 concurrent create-order → 1 gateway order;
+  verify ×3 + webhook ×2 racing → one transition, one payment row;
+  ₹1 / tampered amount / wrong currency / wrong order / failed status /
+  forged signature → refused, order state untouched; host terminate +
+  admin cancel racing → one gateway refund; gateway refund failure → state
+  unchanged; DB failure after gateway refund → retried and recorded;
+  expired hold reclaimed immediately; hold lost before payment → paid but
+  flagged, never confirmed; 40-case authorization matrix; backfill dry-run /
+  apply / idempotent rerun / index refused on conflict / index created /
+  rollback.
+* `tests/batch-s/e2e-server.js` + the Batch D checkout in a real browser
+  (Playwright, gateway script blocked, mock gateway signing real HMACs):
+  triple-click Confirm → one booking priced ₹35,100 by the server, one
+  order (reused across attempts), one verified payment, 3 permanent nights,
+  emails 34/35/36/36 once, summary page correct; host repricing between view
+  and Pay → first Confirm halted ("changed to ₹31,200"), second Confirm
+  paid ₹31,200 — the stale figure was never charged.
+* `npm run check:js` — 0 undefined identifiers across 132 backend files
+  (4 latent ReferenceErrors fixed, including the payout cron's
+  createPayout return path).

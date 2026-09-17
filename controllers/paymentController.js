@@ -110,7 +110,7 @@ exports.createOrder = async (req, res) => {
       return res.status(403).json({ success: false, code: "FORBIDDEN", error: "Only the booking's guest can pay" });
     }
     const { bookingId, currency, amount } = req.body || {};
-    if (!isObjectId(String(bookingId))) {
+    if (!isObjectId(bookingId)) {
       return res.status(400).json({ success: false, code: "INVALID_ID", error: "Invalid bookingId" });
     }
     const booking = await Booking.findById(bookingId);
@@ -227,7 +227,7 @@ exports.getPayment = async (req, res) => {
 
 exports.getPaymentByBooking = async (req, res) => {
   try {
-    if (!isObjectId(String(req.query.id))) {
+    if (!isObjectId(req.query.id)) {
       return res.status(400).json({ success: false, code: "INVALID_ID", error: "Invalid booking id" });
     }
     const payment = await Payment.findOne({

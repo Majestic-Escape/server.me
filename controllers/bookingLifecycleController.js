@@ -94,7 +94,7 @@ function validateStay(checkIn, checkOut, { forBlock = false } = {}) {
 }
 
 async function loadBooking(res, bookingId, populate = POPULATE) {
-  if (!isObjectId(String(bookingId))) {
+  if (!isObjectId(bookingId)) {
     fail(res, 400, "INVALID_ID", "Invalid bookingId");
     return null;
   }
@@ -118,7 +118,7 @@ exports.createBooking = async (req, res) => {
     if (!propertyId || !checkIn || !checkOut) {
       return fail(res, 400, "VALIDATION", "propertyId, checkIn and checkOut are required");
     }
-    if (rejectInvalidId(res, String(propertyId), "propertyId")) return;
+    if (rejectInvalidId(res, propertyId, "propertyId")) return;
     const listing = await ListingProperty.findById(propertyId).lean();
     if (!listing) return fail(res, 404, "LISTING_NOT_FOUND", "Listing not found");
     if (!listing.host) return fail(res, 409, "LISTING_INACTIVE", "This stay is not bookable");

@@ -17,7 +17,7 @@ function requireListingHostOrAdmin(param = "id") {
       if (!actor) return deny(res, 401, "AUTH_REQUIRED", "Authentication required");
       if (authz.isAdmin(actor)) return next();
       const id = req.params[param];
-      if (!isObjectId(String(id))) return deny(res, 404, "NOT_FOUND", "Not found");
+      if (!isObjectId(id)) return deny(res, 404, "NOT_FOUND", "Not found");
       const listing = await ListingProperty.findById(id).select("host").lean();
       if (!listing) return deny(res, 404, "NOT_FOUND", "Listing not found");
       if (!authz.isListingHost(actor, listing)) return deny(res, 403, "FORBIDDEN", "Only the listing host can do this");
@@ -36,7 +36,7 @@ async function requireBodyListingHostOrAdmin(req, res, next) {
     if (!actor) return deny(res, 401, "AUTH_REQUIRED", "Authentication required");
     if (authz.isAdmin(actor)) return next();
     const id = req.body && req.body.propertyId;
-    if (!isObjectId(String(id))) return deny(res, 400, "INVALID_ID", "Invalid propertyId");
+    if (!isObjectId(id)) return deny(res, 400, "INVALID_ID", "Invalid propertyId");
     const listing = await ListingProperty.findById(id).select("host").lean();
     if (!listing) return deny(res, 404, "NOT_FOUND", "Listing not found");
     if (!authz.isListingHost(actor, listing)) return deny(res, 403, "FORBIDDEN", "Only the listing host can do this");

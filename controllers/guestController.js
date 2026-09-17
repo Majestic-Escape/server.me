@@ -9,6 +9,7 @@
 // "needs review" upload as verified.
 const mongoose = require("mongoose");
 const ListingProperty = require("../models/ListingProperty");
+const { notifyListingChanged } = require("../services/listingChanged");
 const User = require("../models/User");
 const KycHostData = require("../models/KycHostForm");
 const KycLogs = require("../models/KycLogs");
@@ -179,6 +180,9 @@ exports.banUser = async (req, res) => {
   try {
     const user = await User.findById(userId);
     if (!user) return fail(res, 404, "USER_NOT_FOUND", "User not found");
+    // Batch P: the listings this flips were (or become) public — purge the
+    // catalogue caches for exactly those ids.
+    const affected = await ListingProperty.distinct("_id", active ? { host: userId, status: "active" } : { host: userId, ban: true });
     if (active) {
       user.status.active = false;
       user.status.banned = true;
@@ -190,6 +194,7 @@ exports.banUser = async (req, res) => {
       await ListingProperty.updateMany({ host: userId, ban: true }, { status: "active", ban: false });
     }
     await user.save();
+    if (affected.length) await notifyListingChanged(affected, active ? "ban" : "unban");
     res.status(200).json({ success: true, message: active ? "User banned successfully" : "User unbanned successfully", data: { _id: user._id, status: user.status } });
   } catch (err) {
     console.error("banUser error", err && err.message);

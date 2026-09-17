@@ -1,9 +1,9 @@
+// Batch P: cold-start hygiene — aws-sdk v2 (~100 MB on disk) and puppeteer are
+// required where they are used, not here; the boot line below is the evidence.
 const express = require("express");
-const cors = require("cors");
 const bodyParser = require("body-parser");
 const mongoose = require("mongoose");
 
-const AWS = require("aws-sdk");
 require("dotenv").config();
 const app = express();
 
@@ -74,6 +74,8 @@ app.use((req, res, next) => {
     // Browsers hide every non-safelisted response header from cross-origin
     // callers; the admin reads the server-mapped KYC download filename.
     res.header("Access-Control-Expose-Headers", "Content-Disposition");
+    // The response now depends on the Origin: caches must key on it.
+    res.header("Vary", "Origin");
   }
   // For OPTIONS requests, short-circuit and respond immediately:
   if (req.method === "OPTIONS") {
@@ -113,13 +115,6 @@ app.use(
   }),
 );
 app.use(bodyParser.json({ limit: "50mb" }));
-
-const spacesEndpoint = new AWS.Endpoint(process.env.DO_SPACES_ENDPOINT);
-const s3 = new AWS.S3({
-  endpoint: spacesEndpoint,
-  accessKeyId: process.env.DO_SPACES_KEY,
-  secretAccessKey: process.env.DO_SPACES_SECRET,
-});
 
 // Global error handler middleware
 app.use((error, req, res, next) => {
@@ -296,3 +291,5 @@ process.on("unhandledRejection", (err) => {
 module.exports = app;
 module.exports.app = app;
 module.exports.server = server;
+
+console.log(`[boot] modules loaded in ${Math.round(process.uptime() * 1000)} ms`);

@@ -16,15 +16,20 @@ const {
 const authMiddleware = require("../middleware/authMiddleware");
 const { requireAdmin } = require("../middleware/authz");
 const { validateParam } = require("../middleware/validateObjectId");
+const { requireSelfEmailQueryOrAdmin } = require("../middleware/userOwnership");
 
 const admin = [authMiddleware, requireAdmin];
 
 router.get("/", getAllPListings);
-router.get("/status", getListingStatus);
+// Batch P: a host reads their own stage (the site sends ?email=<own> with the
+// session token); admins may ask for any host.
+router.get("/status", authMiddleware, requireSelfEmailQueryOrAdmin, getListingStatus);
 
-router.get("/export", exportPListings);
-router.get("/admin/:id", getAdminPListingById);
-router.get("/:id", getUserPListingById);
+// Batch P: the export (whole catalogue with hosts) and the raw admin document
+// (hostEmail, street, registration number) were anonymous.
+router.get("/export", ...admin, exportPListings);
+router.get("/admin/:id", ...admin, validateParam("id"), getAdminPListingById);
+router.get("/:id", validateParam("id"), getUserPListingById);
 
 router.post("/", ...admin, createPListing);
 router.put("/:id", ...admin, validateParam("id"), updatePListing);

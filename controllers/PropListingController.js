@@ -4,18 +4,23 @@ const {
   sanitizeProperties,
   SAFE_HOST_SELECT,
 } = require("../utils/sanitizeResponse");
+const { notifyListingChanged } = require("../services/listingChanged");
 
+// Host dashboard stage card. Used to read req.params.email on a route that
+// has no :email param, so the filter was { email: undefined } — which
+// matched every listing in the collection (hydrated, with vectors) and told
+// every host the site-wide aggregate. Now: the caller's own listings, by
+// host id or legacy hostEmail, status only.
 exports.getListingStatus = async (req, res) => {
   try {
-    const email = req.params.email;
-    const listings = await ListingProperty.find({ email: email });
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("Listings", email);
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("Length", listings.length);
-    }
+    const email = String(req.query.email || "").trim().toLowerCase();
+    const actor = req.actor; // resolved by requireSelfEmailQueryOrAdmin
+    const or = [];
+    if (email) or.push({ hostEmail: email });
+    if (actor && actor.kind === "user") or.push({ host: actor.id });
+    const listings = or.length
+      ? await ListingProperty.find({ $or: or }).select("status").lean()
+      : [];
 
     if (!listings.length) {
       return res.json({ status: "noListings" });
@@ -128,7 +133,6 @@ exports.getUserPListingById = async (req, res) => {
 exports.getAdminPListingById = async (req, res) => {
   try {
     const { id } = req.params;
-    console.log("Id", id);
     const propertyDetail = await ListingProperty.findById(id);
     if (!propertyDetail) {
       return res
@@ -136,12 +140,17 @@ exports.getAdminPListingById = async (req, res) => {
         .json({ success: false, message: "Property not found" });
     }
     return res.status(200).json({ success: true, data: propertyDetail });
-  } catch (error) {}
+  } catch (error) {
+    // Used to be an empty catch: the request hung until the function timed out.
+    console.error("getAdminPListingById error", error && error.message);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
 };
 exports.createPListing = async (req, res) => {
   try {
     const newListing = new ListingProperty(req.body);
     const savedListing = await newListing.save();
+    if (savedListing.status === "active") await notifyListingChanged([savedListing._id], "admin-create"); // PUBLIC_CHANGE only when created live
     res.status(201).json(savedListing);
   } catch (error) {
     res
@@ -153,6 +162,7 @@ exports.createPListing = async (req, res) => {
 exports.updatePListing = async (req, res) => {
   const { id } = req.params;
   try {
+    const before = await ListingProperty.findById(id).select("status").lean();
     const updatedListing = await ListingProperty.findByIdAndUpdate(
       id,
       req.body,
@@ -160,6 +170,9 @@ exports.updatePListing = async (req, res) => {
     );
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
+    }
+    if ((before && before.status === "active") || updatedListing.status === "active") {
+      await notifyListingChanged([id], "admin-prop-update"); // PUBLIC_CHANGE when visible before or after
     }
     res.status(200).json(updatedListing);
   } catch (error) {

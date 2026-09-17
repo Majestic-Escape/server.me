@@ -23,13 +23,15 @@ router.get(
   authMiddleware,
   propertyController.getActivePropertyById,
 );
+// Batch P: admin host-profile data (host contact details) — admin only.
 router.get(
   "/active/filter/:id",
-  authMiddleware,
+  ...admin,
+  validateParam("id"),
   propertyController.getFilterActivePropertyById,
 );
 router.get("/countstays", propertyController.getPropertyCount);
-router.get("/admin-filter", propertyController.getAdminFilter);
+router.get("/admin-filter", ...admin, propertyController.getAdminFilter); // Batch P: was anonymous
 router.get("/search-properties", propertyController.getCustomSearch);
 router.get("/:id", validateParam("id"), propertyController.getPropertyById);
 // Legacy `Property` model endpoints (no client uses them): admin only.

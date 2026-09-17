@@ -77,9 +77,10 @@ booking/payment suites.
 
 # Batch A2 — admin tools + trust-boundary hardening (2026-09-17)
 
-Every row below is exercised by `tests/batch-s/trust-boundary.test.js` and
-`tests/batch-s/admin-tools.test.js` (20 cases on the replica-set harness with
-the Spaces and KYC-provider fakes). Same legend as above; **self** = the user
+Every row below is exercised by `tests/batch-s/trust-boundary.test.js`,
+`tests/batch-s/admin-tools.test.js` and `tests/batch-s/admin-tools-cost.test.js`
+(24 cases on the replica-set harness with the Spaces and KYC-provider fakes;
+the cost suite asserts operation-count ceilings per action). Same legend as above; **self** = the user
 the request is about (query email / body userId / form owner).
 
 ## Profile (`/api/v1/accounts`) — was anonymous

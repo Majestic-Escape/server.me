@@ -122,6 +122,7 @@ async function makeUser(overrides = {}) {
     lastName: "Test",
     email: `user${seq}@test.local`,
     phoneNumber: `9000000${String(seq).padStart(3, "0")}`,
+    dob: new Date("1990-01-01T00:00:00.000Z"),
     role: "user",
     ...overrides,
   });
@@ -154,6 +155,7 @@ async function makeListing(host, overrides = {}) {
   return ListingProperty.create({
     title: `Listing ${seq}`,
     host: host._id,
+    hostEmail: host.email,
     basePrice: 9000,
     guests: 4,
     status: "active",

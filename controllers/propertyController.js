@@ -1572,6 +1572,28 @@ exports.updateProperty = async (req, res) => {
   }
 };
 
+// DELETE /properties/admin/:id — admin deletes a pending listing.
+exports.adminDeleteListing = async (req, res) => {
+  const authz = require("../middleware/authz");
+  const listingDeletion = require("../services/listingDeletion");
+  try {
+    const actor = await authz.resolveActor(req);
+    if (!authz.isAdmin(actor)) return authz.forbid(res, "Admin access required");
+    const { snapshot, outcome } = await listingDeletion.deletePendingListing({ listingId: req.params.id, actorId: actor.id });
+    return res.status(200).json({
+      success: true,
+      message: "Listing deleted",
+      data: { _id: snapshot.id, title: snapshot.title, photosRemoved: outcome.photosRemoved, photosSkipped: outcome.photosSkipped, photosFailed: outcome.photosFailed },
+    });
+  } catch (err) {
+    if (err && err.refused) {
+      return res.status(err.status).json({ success: false, code: err.code, message: err.message, statusCode: err.status, ...err.extra });
+    }
+    console.error("adminDeleteListing error", err && err.message);
+    return res.status(503).json({ success: false, code: "DELETE_UNAVAILABLE", message: "The listing could not be deleted right now. Nothing was changed — please try again.", statusCode: 503 });
+  }
+};
+
 // exports.deleteProperty = async (req, res) => {
 //   try {
 //     const { id } = req.params; // listing ID

@@ -68,17 +68,9 @@ router.patch(
   propertyController.reactivate,
 );
 
-// router.delete(
-//   "/user-property/:id",
-//   authMiddleware,
-//   propertyController.deleteProperty
-// );
-
-// router.delete(
-//   "/host/user-property/:id",
-//   authMiddleware,
-//   propertyController.deleteHostProperty
-// );
+// Admin deletes a pending listing (Batch A2): transactional, blocker-checked,
+// audited; photos removed from the Space after commit (services/listingDeletion.js).
+router.delete("/admin/:id", ...admin, validateParam("id"), propertyController.adminDeleteListing);
 
 router.post(
   "/create-listing-property",

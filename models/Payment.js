@@ -50,10 +50,26 @@ const paymentSchema = new mongoose.Schema({
     email: String,
     contact: String,
   },
+  // --- Batch S ---
+  // Razorpay-side facts recorded at verification (status as fetched).
+  razorpayStatus: { type: String, default: null },
+  paidAt: { type: Date, default: null },
+  // Refund bookkeeping: one refund per payment, recorded with the Razorpay
+  // refund id so a retry can never issue a second refund.
+  refundId: { type: String, default: null },
+  refundAmount: { type: Number, default: null },
+  refundInitiatedAt: { type: Date, default: null },
+  refundedAt: { type: Date, default: null },
   createdAt: {
     type: Date,
     default: Date.now,
   },
 });
+
+// At most one open (created) order per booking: the order-creation lock.
+paymentSchema.index(
+  { bookingId: 1 },
+  { unique: true, partialFilterExpression: { status: "created" } },
+);
 
 module.exports = mongoose.model("Payment", paymentSchema);

@@ -10,8 +10,12 @@ const LOCK_DURATION = 5 * 60 * 1000; // 30 minutes in milliseconds
 const TOKEN_EXPIRATION = "7d";
 
 const requestOTP = async (req, res) => {
+  // Read outside the try: the catch below echoes `email`, and a block-scoped
+  // declaration inside the try left it undefined there — every mail-provider
+  // failure became a ReferenceError inside the catch, an unhandled rejection
+  // and a request that never answered.
+  const { email, admin = false } = req.body || {};
   try {
-    const { email, admin = false } = req.body;
     const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
     if (!emailRegex.test(email)) {
       return res.status(404).json({

@@ -3,29 +3,28 @@ const express = require("express");
 const router = express.Router();
 const paymentController = require("../controllers/paymentController");
 const authMiddleware = require("../middleware/authMiddleware");
+const { requireActor, requireAdmin } = require("../middleware/authz");
+const cronAuth = require("../middleware/cronAuth");
+const { rejectWhilePaused } = require("../services/maintenance");
 
-// Create new order
+const auth = [authMiddleware, requireActor];
+const admin = [authMiddleware, requireAdmin];
 
-router.get("/fetch", paymentController.fetch);
+// Admin transactions list (was anonymous: every payment incl. customer contacts)
+router.get("/fetch", ...admin, paymentController.fetch);
 
-router.post("/create-order", paymentController.createOrder);
+// Create / reuse the Razorpay order for a booking (booking guest only)
+// (503 MAINTENANCE while the cutover gate is on; verify-payment and the
+// webhook stay open — they only record money already taken)
+router.post("/create-order", ...auth, rejectWhilePaused, paymentController.createOrder);
 
-// Verify payment
-router.post("/verify-payment", paymentController.verifyPayment);
+// Verify a payment (booking guest only)
+router.post("/verify-payment", ...auth, paymentController.verifyPayment);
 
-// Get payment details
-router.get("/payment/:id", paymentController.getPayment);
+// Payment details (guest / host of the booking, or admin)
+router.get("/payment/:id", ...auth, paymentController.getPayment);
+router.get("/booking", ...auth, paymentController.getPaymentByBooking);
 
-router.get("/booking", paymentController.getPaymentByBooking);
-
-// router.post(
-//   "/payout/update",
-//   express.raw({ type: "application/json" }),
-//   paymentController.update
-// );
-
-// router.post("/create-payout", paymentController.createPayout);
-
-// router.post("/payout", paymentController.payout);
-router.get("/schedule-cron", paymentController.schedulecron);
+// Payout cron — Vercel Cron presents CRON_SECRET; nothing else may trigger payouts
+router.get("/schedule-cron", cronAuth, paymentController.schedulecron);
 module.exports = router;

@@ -81,9 +81,46 @@ const bookingSchema = new mongoose.Schema({
     default: false,
   },
   refundAmount: Number,
+  // --- Batch S: server-authoritative fields ---
+  // The quote the customer confirmed, in integer paise. Razorpay orders are
+  // created from a *fresh* quote which must equal this; otherwise the customer
+  // is asked to reconfirm (PRICE_CHANGED). A booking is never silently
+  // repriced.
+  quote: {
+    basePrice: Number,
+    nights: Number,
+    subTotalPaise: Number,
+    serviceFeePaise: Number,
+    gstPaise: Number,
+    totalPaise: Number,
+    currency: { type: String, default: "INR" },
+  },
+  // While unpaid, the reserved nights are a hold that expires at this time.
+  holdExpiresAt: { type: Date, default: null },
+  // Optional client-supplied Idempotency-Key (unique when present).
+  idempotencyKey: { type: String, default: undefined },
+  // Side effects that must happen exactly once.
+  notifications: {
+    paidAt: { type: Date, default: null },
+    confirmedAt: { type: Date, default: null },
+    attentionAt: { type: Date, default: null },
+  },
+  // Operational queue (services/attention.js): set when money was taken but
+  // the booking cannot be honoured as-is — "inventory_conflict" (the hold was
+  // lost before payment completed) or "amount_mismatch" (the captured amount
+  // is not the server quote). Cleared by an admin resolution, never
+  // automatically; nothing is refunded or rebooked without a human.
+  needsAttention: { type: String, default: null },
+  attentionDetails: { type: mongoose.Schema.Types.Mixed, default: null },
+  attentionResolvedAt: { type: Date, default: null },
+  attentionResolution: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
+
+bookingSchema.index({ idempotencyKey: 1 }, { unique: true, sparse: true });
+bookingSchema.index({ propertyId: 1, checkIn: 1, checkOut: 1 });
+bookingSchema.index({ needsAttention: 1 }, { partialFilterExpression: { needsAttention: { $type: "string" } } });
 
 const Booking = mongoose.model("Booking", bookingSchema);
 

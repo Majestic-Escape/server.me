@@ -6,6 +6,7 @@ const ical = require("node-ical");
 const axios = require("axios");
 const cron = require("node-cron");
 const ListingProperty = require("../models/ListingProperty");
+const inventory = require("../services/inventory");
 let isCalendarCronRunning = false;
 // async function syncCalendars(hostId) {
 //   const calendars = await ExternalCalendar.find({ kind: "import" });
@@ -324,6 +325,14 @@ async function syncCalendars(hostId) {
             existing.price = existing.price ?? 0;
             existing.status = "confirmed";
             await existing.save();
+            // Batch S: keep the night inventory in step with the import.
+            await inventory.releaseNights(existing._id);
+            await inventory.ensureNightsBestEffort({
+              propertyId: cal.propertyId,
+              nights: inventory.nightsBetween(start, end),
+              bookingId: existing._id,
+              kind: "ical",
+            });
 
             if (process.env.NEXT_PUBLIC_ENV === "dev") {
               console.log("✅ Updated booking:", existing._id);
@@ -349,6 +358,12 @@ async function syncCalendars(hostId) {
               }`,
             });
             await newB.save();
+            await inventory.ensureNightsBestEffort({
+              propertyId: cal.propertyId,
+              nights: inventory.nightsBetween(start, end),
+              bookingId: newB._id,
+              kind: "ical",
+            });
 
             if (process.env.NEXT_PUBLIC_ENV === "dev") {
               console.log("✅ Created new booking:", newB._id);
@@ -375,6 +390,7 @@ async function syncCalendars(hostId) {
         if (!seenUIDs.includes(b.sourceId)) {
           b.status = "cancelled";
           await b.save();
+          await inventory.releaseNights(b._id);
 
           if (process.env.NEXT_PUBLIC_ENV === "dev") {
             console.log("❌ Cancelled missing booking:", b._id);

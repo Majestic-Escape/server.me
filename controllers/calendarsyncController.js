@@ -380,6 +380,21 @@ async function syncCalendars(hostId) {
         }
       }
 
+      // Batch A2: the listing may have been deleted by an admin while this
+      // import ran (an import can target a pending listing). Imports for a
+      // listing that no longer exists are withdrawn here; the admin delete's
+      // post-commit sweep covers the remaining interleavings.
+      const listingStillThere = await ListingProperty.exists({ _id: cal.propertyId });
+      if (!listingStillThere) {
+        const orphans = await Booking.find({ propertyId: cal.propertyId, source: "ical" }).select("_id").lean();
+        for (const b of orphans) {
+          await Booking.deleteOne({ _id: b._id });
+          await inventory.releaseNights(b._id);
+        }
+        console.log(`calendar sync: listing ${cal.propertyId} no longer exists; ${orphans.length} imported booking(s) withdrawn`);
+        continue;
+      }
+
       // Remove bookings that were imported from this calendar but no longer present
       const importedBookings = await Booking.find({
         propertyId: cal.propertyId,

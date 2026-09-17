@@ -15,22 +15,35 @@ const personalInfoSchema = {
   address: addressSchema,
 };
 
+// Server-owned since Batch A2: written only by the verification endpoints
+// (provider verdict) or an admin's audited manual verification — never from
+// a client body. reviewStatus: unverified | verified | needs_review | failed.
 const documentInfoSchema = {
   documentType: { type: String, default: "" },
-  // documentSize: {
-  //   type: Number,
-  //   default: null,
-  //   max: 5000000,
-  // },
-  // documentNumber: { type: String, default: null },
-  // documentFile: { type: String, default: null }, // Assuming you store file URL or path
   isVerified: { type: Boolean, default: false },
+  reviewStatus: { type: String, enum: ["unverified", "verified", "needs_review", "failed"], default: "unverified" },
+  reviewReason: { type: String, default: "" },
+  verifiedLogId: { type: mongoose.Schema.Types.ObjectId, ref: "KycLogs", default: null },
+  verifiedAt: { type: Date, default: null },
+  fingerprint: { type: String, default: "" }, // sha256 of the last submitted document bytes
+  lastAttemptAt: { type: Date, default: null },
 };
 
 const gstInfoSchema = {
   gstNumber: { type: String, default: "" },
   panNumber: { type: String, default: "" },
   isVerified: { type: Boolean, default: false },
+  verifiedLogId: { type: mongoose.Schema.Types.ObjectId, ref: "KycLogs", default: null },
+  verifiedAt: { type: Date, default: null },
+};
+
+// Provider abuse/cost guard state (services/kycGuard.js); absent on legacy
+// forms until their first attempt after Batch A2.
+const guardSchema = {
+  windowStart: { type: Date, default: null },
+  count: { type: Number, default: 0 },
+  lastAt: { type: Date, default: null },
+  inFlightUntil: { type: Date, default: null },
 };
 
 const acceptedTermsSchema = {
@@ -54,6 +67,10 @@ const kycHostSchema = new mongoose.Schema(
       default: "pending",
     },
     hostEmail: { type: String }, // Ensure it's set from auth.user.email
+    verification: {
+      ocr: { type: guardSchema, default: undefined },
+      gst: { type: guardSchema, default: undefined },
+    },
   },
   { timestamps: true }
 );

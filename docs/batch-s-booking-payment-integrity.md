@@ -157,6 +157,12 @@ The only intentional extra network call is the pre-payment re-quote inside
 
 ## 7. Rollout (production) — Batch S.1 cutover, no backfill race
 
+**This section is the single canonical order for pushing, deploying and
+cutting over.** Pushes mirror deploys: (1) user.website `compat/listing-auth`,
+(2) server.me `batch-s`, (3) user.website `shriraj-dev` and admin.site
+`shriraj-dev` (Batch D + S.1 UI). Anything elsewhere that lists a different
+order is superseded by this table.
+
 Why the earlier sequence had a race: the backfill materialises night rows
 for bookings that exist *when it runs*; the pre-S backend keeps writing
 bookings (and Razorpay orders) until the Batch S deployment takes every

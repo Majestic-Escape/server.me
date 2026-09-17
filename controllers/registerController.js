@@ -13,8 +13,9 @@ const LOCK_DURATION = 5 * 60 * 1000; // 5 minutes in milliseconds
 const TOKEN_EXPIRATION = "7d";
 
 const requestOTP = async (req, res) => {
+  // Read outside the try: the catch echoes `email`/`phoneNumber`.
+  const { firstName, lastName, phoneNumber, email, dob } = req.body || {};
   try {
-    const { firstName, lastName, phoneNumber, email, dob } = req.body;
 
     // Check if user already exists
     const existingUser = await User.findOne({

@@ -4,6 +4,10 @@ const chromium = require("@sparticuz/chromium");
 const path = require("path");
 const fs = require("fs");
 async function generateInvoicePDF(html) {
+  // Test seam (never set in a deployment): skip Chromium and return a stub.
+  if (process.env.INVOICE_PDF_DISABLED === "1") {
+    return Buffer.from(`%PDF-1.4 stub ${html.length}`);
+  }
   console.log("Enter Generate PDF");
   let browser;
   if (process.env.NEXT_PUBLIC_ENV == "dev") {

@@ -156,14 +156,26 @@ app.use((error, req, res, next) => {
 // MongoDB connection function
 const connectDB = async () => {
   try {
-    await mongoose.connect(
-      // "mongodb://localhost:27017/me"
-
-      process.env.DB_URI,
-      //"mongodb+srv://admin:10VToU0WupyAbo4M@majestic-escape.nk49u.mongodb.net/master-db?retryWrites=true&w=majority&appName=Majestic-Escape&authSource=admin"
-    );
+    // autoIndex is off: the booking/payment indexes are created only by
+    // scripts/backfill-booking-nights.js at the planned point of the cutover
+    // (a preview deployment or an early boot must never build them on the
+    // live database) and verified below on every start.
+    await mongoose.connect(process.env.DB_URI, { autoIndex: false });
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("MongoDB connected");
+    }
+    // Batch S: the double-booking / one-open-order invariants live in unique
+    // indexes; make sure they exist (and shout if they do not).
+    try {
+      const { verifyRequiredIndexes } = require("./services/startupChecks");
+      await Promise.all([
+        require("./models/BookingNight").init(),
+        require("./models/Payment").init(),
+        require("./models/Booking").init(),
+      ]).catch((err) => console.error("[startup] index build error:", err.message));
+      await verifyRequiredIndexes();
+    } catch (err) {
+      console.error("[startup] index verification failed:", err.message);
     }
   } catch (err) {
     console.error(`Error connecting to MongoDB: ${err.message}`);
@@ -272,3 +284,6 @@ process.on("unhandledRejection", (err) => {
   console.error(`Unhandled Rejection: ${err.message}`);
   server.close(() => process.exit(1));
 });
+
+// Exported for in-process integration tests (tests/batch-s).
+module.exports = { app, server };

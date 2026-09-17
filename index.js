@@ -156,12 +156,11 @@ app.use((error, req, res, next) => {
 // MongoDB connection function
 const connectDB = async () => {
   try {
-    await mongoose.connect(
-      // "mongodb://localhost:27017/me"
-
-      process.env.DB_URI,
-      //"mongodb+srv://admin:10VToU0WupyAbo4M@majestic-escape.nk49u.mongodb.net/master-db?retryWrites=true&w=majority&appName=Majestic-Escape&authSource=admin"
-    );
+    // autoIndex is off: the booking/payment indexes are created only by
+    // scripts/backfill-booking-nights.js at the planned point of the cutover
+    // (a preview deployment or an early boot must never build them on the
+    // live database) and verified below on every start.
+    await mongoose.connect(process.env.DB_URI, { autoIndex: false });
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("MongoDB connected");
     }

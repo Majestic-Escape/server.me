@@ -440,7 +440,7 @@ async function seedDatabase() {
   try {
     // Connect to MongoDB
     await mongoose.connect(
-      "mongodb+srv://admin:10VToU0WupyAbo4M@majestic-escape.nk49u.mongodb.net/master-db?retryWrites=true&w=majority&appName=Majestic-Escape&authSource=admin",
+      process.env.DB_URI /* no credentials in source; set DB_URI */,
       {
         useNewUrlParser: true,
         useUnifiedTopology: true,

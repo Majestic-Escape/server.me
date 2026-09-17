@@ -51,11 +51,13 @@ async function start() {
   });
   // wait for mongoose + index builds
   for (let i = 0; i < 100 && mongoose.connection.readyState !== 1; i++) await sleep(50);
+  // The app no longer builds indexes on boot (autoIndex: false); the test
+  // database gets them the way production does — explicitly.
   await Promise.all([
-    require("../../models/BookingNight").init(),
-    require("../../models/Payment").init(),
-    require("../../models/Booking").init(),
-    require("../../models/HostPayout").init(),
+    require("../../models/BookingNight").syncIndexes(),
+    require("../../models/Payment").syncIndexes(),
+    require("../../models/Booking").syncIndexes(),
+    require("../../models/HostPayout").syncIndexes(),
   ]);
   const port = server.address().port;
   started = { app, server, baseUrl: `http://127.0.0.1:${port}/api/v1`, uri };

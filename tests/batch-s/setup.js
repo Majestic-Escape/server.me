@@ -21,6 +21,10 @@ async function start() {
     RAZORPAY_MOCK: "1",
     SPACES_MOCK: "1",
     KYC_PROVIDER_MOCK: "1",
+    // Batch P: catalogue notifications are recorded, not sent; the fresh
+    // secret exists so the authenticated bypass can be exercised.
+    LISTING_CHANGE_MOCK: "1",
+    CATALOGUE_FRESH_SECRET: "test-fresh-secret",
     RAZORPAY_KEY_ID: "rzp_test_mock",
     RAZORPAY_KEY_SECRET: "mock_secret_key",
     RAZORPAY_WEBHOOK_KEY: "mock_webhook_secret",
@@ -68,6 +72,7 @@ async function start() {
     require("../../models/User").syncIndexes(),
     require("../../models/KycLogs").createIndexes(),
     require("../../models/AdminAuditLog").createIndexes(),
+    require("../../models/ListingProperty").createIndexes(), // Batch P
   ]);
   const port = server.address().port;
   started = { app, server, baseUrl: `http://127.0.0.1:${port}/api/v1`, uri };

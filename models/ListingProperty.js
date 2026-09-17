@@ -180,6 +180,32 @@ const propertySchema = new mongoose.Schema({
   },
 });
 
+// Public catalogue reads: {status, createdAt:-1} backs the home/search lists,
+// host / hostEmail back the host dashboard lookups. autoIndex is off in
+// production — scripts/ensure-indexes.js creates them (create-only).
+propertySchema.index({ status: 1, createdAt: -1, _id: -1 }); // _id: deterministic pages, no in-memory sort
+propertySchema.index({ host: 1 });
+propertySchema.index({ hostEmail: 1 });
+
+// The chat widget stores a 3072-float vector on every listing (`embedding`,
+// plus `embeddingUpdatedAt` / `embeddingVersion`) with the raw driver and
+// reads it back with $vectorSearch. The API never uses it, and it is 93% of
+// a listing's bytes, so every query — lean or hydrated, and every
+// populate("propertyId") — leaves it out unless a caller asks for it with
+// "+embedding". The paths stay undeclared on purpose: strict mode keeps
+// dropping them from $set / new Model(body), so no request body can ever
+// write (or null) the widget's vector.
+const EMBEDDING_PATHS = ["embedding", "embeddingUpdatedAt", "embeddingVersion"];
+propertySchema.pre(/^find/, function excludeEmbedding() {
+  if (this.selectedInclusively()) return; // an inclusive projection omits them already
+  const asked = Object.keys(this._fields || {});
+  if (asked.some((k) => k === "+embedding" || k === "embedding")) return; // caller opted in
+  this.select(EMBEDDING_PATHS.map((p) => "-" + p).join(" "));
+});
+propertySchema.statics.EMBEDDING_PATHS = EMBEDDING_PATHS;
+// Exclusion object for aggregation pipelines, which bypass query middleware.
+propertySchema.statics.EMBEDDING_PROJECTION = Object.fromEntries(EMBEDDING_PATHS.map((p) => [p, 0]));
+
 const ListingProperty = mongoose.model("ListingProperty", propertySchema);
 
 module.exports = ListingProperty;

@@ -286,4 +286,10 @@ process.on("unhandledRejection", (err) => {
 });
 
 // Exported for in-process integration tests (tests/batch-s).
-module.exports = { app, server };
+// Vercel's Node runtime requires the module export itself to be the request
+// handler (a function or an http.Server); an object export makes every
+// invocation exit before handling the request ("Invalid export found").
+// The Express app is a function; the test harness reads app/server off it.
+module.exports = app;
+module.exports.app = app;
+module.exports.server = server;

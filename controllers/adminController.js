@@ -145,8 +145,9 @@ const createAdmin = async (req, res) => {
 };
 
 const requestOTP = async (req, res) => {
+  // Read outside the try: the catch echoes `email` (see loginController).
+  const { email } = req.body || {};
   try {
-    const { email } = req.body;
 
     // Check if admin exists in the system
     const existingAdmin = await Admin.findOne({ email });

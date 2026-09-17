@@ -3,11 +3,21 @@ const express = require("express");
 const router = express.Router();
 const propertyController = require("../controllers/propertyController");
 const authMiddleware = require("../middleware/authMiddleware");
+const { requireAdmin } = require("../middleware/authz");
+const { validateParam } = require("../middleware/validateObjectId");
+const {
+  requireListingHostOrAdmin,
+  requireBodyListingHostOrAdmin,
+  requireSelfHostEmailOrAdmin,
+  requireSelfUserIdOrAdmin,
+} = require("../middleware/listingOwnership");
+// Batch S: listing mutations decide price/bookability -> host-or-admin only.
+const admin = [authMiddleware, requireAdmin];
 router.get("/", propertyController.getAllProperties);
 router.get("/static", propertyController.getAllStaticProperties);
 router.get("/dynamic", propertyController.getAllStays);
 router.get("/front/dynamic", propertyController.getFrontPageAllStays);
-router.get("/id-and-name/:id", propertyController.getIdandName);
+router.get("/id-and-name/:id", validateParam("id"), propertyController.getIdandName);
 router.get(
   "/active/:id",
   authMiddleware,
@@ -21,9 +31,10 @@ router.get(
 router.get("/countstays", propertyController.getPropertyCount);
 router.get("/admin-filter", propertyController.getAdminFilter);
 router.get("/search-properties", propertyController.getCustomSearch);
-router.get("/:id", propertyController.getPropertyById);
-router.post("/", propertyController.createProperty);
-router.put("/:id", propertyController.updateProperty);
+router.get("/:id", validateParam("id"), propertyController.getPropertyById);
+// Legacy `Property` model endpoints (no client uses them): admin only.
+router.post("/", ...admin, propertyController.createProperty);
+router.put("/:id", ...admin, validateParam("id"), propertyController.updateProperty);
 
 router.get(
   "/admin/active",
@@ -32,24 +43,28 @@ router.get(
 );
 router.get(
   "/admin/processing-listings",
+  ...admin,
   propertyController.getProcessingListingsForAdmin,
 );
 router.get(
   "/admin/filtered-listings",
+  ...admin,
   propertyController.getFilteredListingsForAdmin,
 );
 // PUT approve a listing
 router.patch(
   "/admin/approve/:id",
-  authMiddleware,
+  ...admin,
+  validateParam("id"),
   propertyController.approveListing,
 );
 
-router.patch("/admin/delist/:id", authMiddleware, propertyController.deListing);
-router.patch("/host/delist/:id", authMiddleware, propertyController.deListing);
+router.patch("/admin/delist/:id", ...admin, validateParam("id"), propertyController.deListing);
+router.patch("/host/delist/:id", authMiddleware, requireListingHostOrAdmin("id"), propertyController.deListing);
 router.patch(
   "/host/reactivate/:id",
   authMiddleware,
+  requireListingHostOrAdmin("id"),
   propertyController.reactivate,
 );
 
@@ -67,18 +82,24 @@ router.patch(
 
 router.post(
   "/create-listing-property",
+  authMiddleware,
+  requireSelfHostEmailOrAdmin,
   propertyController.createListingProperty,
 );
 
 router.put(
   "/update-listing-property/:id",
+  authMiddleware,
+  requireListingHostOrAdmin("id"),
   propertyController.updateListingProperty,
 );
 router.put(
   "/admin-update-property/:id",
+  ...admin,
+  validateParam("id"),
   propertyController.adminUpdateListingProperty,
 );
-router.patch("/update-kyc-property/:id", propertyController.updateKycProperty);
+router.patch("/update-kyc-property/:id", authMiddleware, requireSelfUserIdOrAdmin("id"), propertyController.updateKycProperty);
 router.get(
   "/user-properties/:userEmail",
   authMiddleware,
@@ -89,6 +110,6 @@ router.get(
   authMiddleware,
   propertyController.getTiming,
 );
-router.post("/timings", propertyController.timing);
+router.post("/timings", authMiddleware, requireBodyListingHostOrAdmin, propertyController.timing);
 
 module.exports = router;

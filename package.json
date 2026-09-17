@@ -7,7 +7,8 @@
     "start": "nodemon index.js",
     "dev": "nodemon index.js",
     "railway": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test --test-timeout=120000 --test-force-exit \"tests/batch-s/*.test.js\"",
+    "check:js": "node scripts/check-js-identifiers.mjs"
   },
   "keywords": [],
   "author": "",
@@ -41,5 +42,10 @@
     "razorpay": "^2.9.5",
     "sib-api-v3-sdk": "^8.5.0",
     "validator": "^13.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.3",
+    "mongodb-memory-server": "^10.4.3",
+    "typescript": "^7.0.2"
   }
 }

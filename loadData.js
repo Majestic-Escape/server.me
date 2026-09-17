@@ -4,7 +4,7 @@ const data = require("./output.json"); // Ensure data.json is in the same folder
 
 // Replace with your MongoDB connection string and database name
 const dbURI =
-  "mongodb+srv://admin:10VToU0WupyAbo4M@majestic-escape.nk49u.mongodb.net/master-db?retryWrites=true&w=majority&appName=Majestic-Escape&authSource=admin";
+  process.env.DB_URI /* no credentials in source; set DB_URI */;
 
 mongoose
   .connect(dbURI, { useNewUrlParser: true, useUnifiedTopology: true })

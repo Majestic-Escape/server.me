@@ -72,3 +72,83 @@ booking/payment suites.
 * User token with `tokenVersion` mismatch → 401 `TOKEN_INVALIDATED`.
 * Banned user → 403 `USER_BANNED` on every authenticated route (now including create-order/verify-payment).
 * Admin-shaped JWT whose id is not an `Admin` (or is banned) → 401; user token with a forged `admin: 1` claim → not admin (403 on admin routes).
+
+---
+
+# Batch A2 — admin tools + trust-boundary hardening (2026-09-17)
+
+Every row below is exercised by `tests/batch-s/trust-boundary.test.js`,
+`tests/batch-s/admin-tools.test.js` and `tests/batch-s/admin-tools-cost.test.js`
+(24 cases on the replica-set harness with the Spaces and KYC-provider fakes;
+the cost suite asserts operation-count ceilings per action). Same legend as above; **self** = the user
+the request is about (query email / body userId / form owner).
+
+## Profile (`/api/v1/accounts`) — was anonymous
+
+| Action | anon | other user | self | admin | Notes |
+|---|---|---|---|---|---|
+| `GET /?email=` | 401 | 403 | 200 | 200 | email compared case-insensitively |
+| `PUT /?email=` | 401 | 403 | 200 | 200 | closed whitelist: `dob, phoneNumber, profilePicture, address{street,city,state,postalCode,country}, languages, about`. **Never** `firstName/lastName` (admin-managed), `email, role, status, kyc, bank, tokenVersion, _id`. Duplicate phone → 409 `PHONE_IN_USE` |
+
+## Host KYC (`/api/v1/kyc`, `/api/v1/pan-kyc`) — was anonymous
+
+| Action | anon | other user | self | admin | Notes |
+|---|---|---|---|---|---|
+| `POST /kyc/form` | 401 | 403 (body.hostId ≠ own) | 200 | 200 | idempotent (one form per host); `hostId/hostEmail/status/isVerified` from the server, body whitelisted to `personalInfo, acceptedTerms` |
+| `PUT /kyc/update-form/:id` | 401 | 403 | 200 | 200 | whitelist `personalInfo, acceptedTerms, status`; `documentInfo`/`gstInfo`/`hostId`/`hostEmail` stripped; `status:"completed"` needs a server-verified document, else saved as `pending` + 409 `KYC_INCOMPLETE` |
+| `GET /kyc/form/:hostId`, `GET /kyc/user/:hostId` | 401 | 403 | 200 | 200 | |
+| `GET /kyc/form-kyc/:formId` | 401 | 403 | 200 | 200 | |
+| `POST /pan-kyc/verify` | 401 | 403 | 200/422 | 200/422 | validation (≤ 4 MiB, base64, jpeg/png/pdf) → `KYC_FORM_REQUIRED` → **provider guard** (one in flight, cooldown, daily ceiling → 429 `KYC_RATE_LIMITED`) → OCR + status → **server verdict** writes `documentInfo` (`verified` / `needs_review` / `failed` → 422 `DOCUMENT_NOT_VERIFIED`) |
+| `POST /kyc/verify/gst` | 401 | 403 | 200 | 200 | PAN/GSTIN format checked before any provider call; positive verdict writes masked `gstInfo` |
+| `PATCH /kyc/verify-status`, `/kyc/verify-gst-status` | 401 | 403 | 200 / 409 | 200 / 409 | **confirm-only**: body ignored; 409 `VERIFICATION_NOT_FOUND` unless the server already verified |
+| `POST /kyc/generate-url`, `GET /kyc/verify/pan`, `GET /kyc/:transactionId/details` | 401 | 403 | 403 | 200 | Digitap sandbox endpoints, cost credits |
+
+Verdict table (`services/kycVerdict.js`): `http_response_code === 200` and `result.status` active/valid **and** the holder's name matches (PAN: provider `name_match`; voter/passport: local token match against the document name) → `verified`; active but name mismatch, or 200 without validity fields → `needs_review` (unverified until an admin marks it); provider error / no record / inactive → `failed`. A replaced document (new fingerprint) resets verification; a retry of the same bytes keeps it. Guard defaults: `KYC_MAX_ATTEMPTS_PER_DAY=5`, `KYC_ATTEMPT_COOLDOWN_SECONDS=30`, `KYC_INFLIGHT_LEASE_SECONDS=120`.
+
+## Uploads (`/api/v1/uploads`) — was anonymous
+
+| Action | anon | other user | owner | admin | Notes |
+|---|---|---|---|---|---|
+| `POST /` (listing photos) | 401 | 200 | 200 | 200 | keys `listings/<actorId>/<uuid>-<name>` (owner-bound, unique) |
+| `POST /profile?userId=` | 401 | 403 | 200 | 200 | keys `profiles/<userId>/<uuid>-<name>` |
+| `DELETE /delete {url}` | 401 | 403 | 200 | 200 | own upload / own listing photo / own profile picture; foreign reference to the same object → 409 `OBJECT_IN_USE`; legacy unreferenced keys admin-only; non-bucket or path-confusing URLs → 400 `INVALID_KEY` |
+| `POST /generate-presigned-url` | 401 | 403 | 403 | 200 | dead (`SPACE_NAME` unset) |
+
+## Bank details & hosts (`/api/v1/hostData`, `/api/v1/hosts`)
+
+| Action | anon | other user | self | admin |
+|---|---|---|---|---|
+| `PUT/GET /hostData/bank/:hostId` | 401 | 403 | 200 | 200 |
+| `GET /hostData/`, `GET /hostData/review/admin` | 401 | 403 | 403 | 200 |
+| `GET /hosts/`, `/stats`, `/growth`, `/top-performing`, `/activity`, `/distribution`, `/report`, `/export` | 401 | 403 | 403 | 200 |
+| `PUT /hosts/:id` | 401 | 403 | 403 | 200 |
+
+## Users (`/api/v1/guests`)
+
+| Action | anon | other user | admin | Notes |
+|---|---|---|---|---|
+| `GET /` | 401 | 403 | 200 | every non-privileged account (`role:"admin"` and Admin-collection emails hidden), `isHost`/`totalProperties`, search escaped |
+| `GET /kyc?id=` | 401 | 403 | 200 | steps-table fields only |
+| `PATCH /name/:userId` | 401 | 403 | 200 | transactional with the audit row; `expected` names → 409 `NAME_CHANGED` when stale; privileged target → 403; 400 `INVALID_NAME` |
+| `PATCH /ban/:userId` | 401 | 403 | 200 | response `{data:{_id,status}}` (no user dump) |
+| `GET /kyc-documents/:hostId` | 401 | 403 | 200 | never base64 / raw OCR; `hasMore` after 20 |
+| `GET /kyc-documents/:hostId/:logId/file?mode=view` or `download` | 401 | 403 | 200 | audited (`kyc.document.view` / `.download`) before streaming, 503 if the audit cannot be written; jpeg/png/pdf inline, anything else `application/octet-stream` attachment |
+| `PATCH /admin/kyc/:hostId/document-verified {logId}` | 401 | 403 | 200 | only the current `needs_review` upload (409 `NOT_REVIEWABLE`); completes the KYC when terms were accepted |
+| `DELETE /delete/:userId` | 404 | 404 | 404 | route removed (no cascade, no UI) |
+| `GET /info/:userId`, `GET /guest-by-id` | 401 | 200 | 200 | unchanged self-service reads |
+
+## Listings (`/api/v1/properties`, `/api/v1/prop-listing`)
+
+| Action | anon | other user | listing host | admin | Notes |
+|---|---|---|---|---|---|
+| `DELETE /properties/admin/:id` | 401 | 403 | 403 | 200 | only `status:"processing"`; `Booking`/`BookingNight`/`Payment`/`HostPayout`/`Review`/`HostReview` rows block (409 `LISTING_HAS_DEPENDENTS`); `ExternalCalendar`/`BookingInterest` rows are cleanup; one transaction with the audit row; after commit: dependent sweep + Spaces photo removal (objects still referenced anywhere are kept), outcomes on the audit row, `scripts/repair-deleted-listings.js` finishes interrupted work |
+| `POST /prop-listing/` | 401 | 403 | 403 | 200 | |
+| `PUT /prop-listing/:id` | 401 | 403 | 403 | 200 | |
+| `DELETE /prop-listing/:id`, `POST /prop-listing/bulk-action` | 404 | 404 | 404 | 404 | routes removed |
+| `GET /prop-listing/status`, `/:id`, `/admin/:id` | 200 | 200 | 200 | 200 | unchanged reads |
+
+### Listing reference inventory (evidence for the delete design)
+Repo-wide search of `ListingProperty`, `propertyId`, `property:` across models/controllers/services/jobs: `Booking.propertyId`, `BookingNight.propertyId`, `Payment.propertyId`, `HostPayout.propertyId`, `Review.property`, `HostReview.property`, `ExternalCalendar.propertyId`, `BookingInterest.propertyId` (String), `KycHostForm`/`BankDetail` (keyed by host, untouched), `Chat` (by bookingId), legacy `Calendar/Share/Host/Experience` (reference the unused `Property`/`Experience` models). Wishlist lives in the customer site's localStorage; chat conversations live in the separate `majestic-chat` database and already degrade to "Property" when a listing is missing. Writers that can target a pending listing: host calendar blocks and iCal imports — both re-check the listing after inserting and withdraw when it is gone.
+
+## Admin audit trail (`adminauditlogs`)
+`user.rename` (before/after names), `listing.delete` (host id, title, photo keys, cleanup and sweep outcomes), `kyc.document.view`, `kyc.document.download` (log id, host id, mime, bytes), `kyc.document.manual_verify`. Written in the same transaction as the change or before the bytes leave the server; never emails, document bytes or full URLs. Indexes: `{targetId, createdAt}`, `{action, createdAt}` — created by `scripts/ensure-indexes.js` together with `kyclogs {userId, type, createdAt}` (`--explain` proves the IXSCAN).

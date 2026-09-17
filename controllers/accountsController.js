@@ -4,7 +4,7 @@ const User = require("../models/User");
 exports.getProfile = async (req, res) => {
   try {
     // Get email from query parameters
-    const { email } = req.query;
+    const email = String(req.query.email || "").trim().toLowerCase();
     if (!email) {
       return res.status(400).json({ message: "Email is required" });
     }
@@ -39,78 +39,63 @@ exports.getProfile = async (req, res) => {
   }
 };
 
-// POST /api/profile - update/save user profile using email
+// PUT /api/v1/accounts?email= — update the caller's own profile.
+//
+// Closed whitelist (Batch A2): dob, phoneNumber, profilePicture,
+// address{street,city,state,postalCode,country}, languages, about. Names are
+// admin-managed (the site renders them read-only and echoes cached values on
+// every save — accepting them here would silently undo an admin's rename);
+// email, role, status, kyc, bank, tokenVersion and every other field are
+// never touched. firstName/lastName/dob/phoneNumber stay *required* in the
+// body for client compatibility.
+const ADDRESS_FIELDS = ["street", "city", "state", "postalCode", "country"];
+
+function cleanString(v, max = 500) {
+  if (v === undefined || v === null) return undefined;
+  return String(v).trim().slice(0, max);
+}
+
 exports.updateProfile = async (req, res) => {
   try {
-    // Extract email from query parameters
-    const { email } = req.query;
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("Email", email);
-    }
+    const email = String(req.query.email || "").trim().toLowerCase();
     if (!email) {
       return res.status(400).json({ message: "Email is required" });
     }
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const { firstName, lastName, dob, phoneNumber, profilePicture, address, languages, about } = body;
 
-    // Destructure required fields and any optional fields
-    const {
-      firstName,
-      lastName,
-      dob,
-      phoneNumber,
-      profilePicture,
-      address,
-      languages,
-      about,
-      governmentIdType,
-    } = req.body;
-
-    // Validate required fields
     if (!firstName || !lastName || !dob || !phoneNumber) {
       return res.status(400).json({
         message: "firstName, lastName, dob, and phoneNumber are required",
       });
     }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("s1");
-    }
 
-    // Find the existing user by email
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ message: "Profile not found" });
     }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("s2");
-    }
 
-    // Update required fields
-    user.firstName = firstName;
-    user.lastName = lastName;
     user.dob = dob;
-    user.phoneNumber = phoneNumber;
-    user.languages = languages;
-    user.about = about;
-
-    // Update optional fields if provided
-    if (profilePicture !== undefined) {
-      user.profilePicture = profilePicture;
+    user.phoneNumber = cleanString(phoneNumber, 20);
+    if (languages !== undefined) {
+      user.languages = Array.isArray(languages) ? languages.map((l) => cleanString(l, 50)).filter(Boolean).slice(0, 20) : [];
     }
-    if (address !== undefined) {
-      // Merge existing address with new values (if provided)
-      user.address = { ...user.address.toObject(), ...address };
+    if (about !== undefined) user.about = cleanString(about, 2000);
+    if (profilePicture !== undefined) user.profilePicture = cleanString(profilePicture, 1000);
+    if (address !== undefined && address !== null && typeof address === "object") {
+      const current = user.address && typeof user.address.toObject === "function" ? user.address.toObject() : user.address || {};
+      const next = { ...current };
+      for (const field of ADDRESS_FIELDS) {
+        if (address[field] !== undefined) next[field] = cleanString(address[field], 200);
+      }
+      user.address = next;
     }
-    if (governmentIdType !== undefined) {
-      user.governmentIdType = governmentIdType;
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("s3");
-    }
-    // Save the updated user
     await user.save();
 
-    // Return the updated profile data
     res.json({
-      fullName: user.fullName,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      fullName: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
       email: user.email,
       phone: user.phoneNumber,
       avatarUrl: user.profilePicture,
@@ -122,12 +107,15 @@ exports.updateProfile = async (req, res) => {
         postalCode: user.address?.postalCode,
         country: user.address?.country,
       },
-      governmentIdType: user.governmentIdType,
+      governmentIdType: user.kyc?.govDoc?.docType || "",
       languages: user.languages,
       about: user.about,
     });
   } catch (error) {
-    console.error("Error updating profile:", error);
+    if (error && error.code === 11000) {
+      return res.status(409).json({ success: false, code: "PHONE_IN_USE", message: "That phone number is already used by another account", statusCode: 409 });
+    }
+    console.error("Error updating profile:", error && error.message);
     res.status(500).json({ message: "Server error" });
   }
 };

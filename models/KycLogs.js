@@ -23,4 +23,9 @@ const logSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now },
 });
 
+// Admin KYC document reads (Batch A2) query {userId, type} newest-first;
+// without this index each read would COLLSCAN documents that carry multi-MB
+// base64 payloads. Created explicitly (autoIndex is off): scripts/ensure-indexes.js
+logSchema.index({ userId: 1, type: 1, createdAt: -1 });
+
 module.exports = mongoose.model("KycLogs", logSchema);

@@ -47,7 +47,7 @@ const tscJs = join(root, "node_modules", "typescript", "lib", "tsc.js");
 const result = spawnSync(process.execPath, [tscJs, "-p", tsconfig], { encoding: "utf8" });
 const lines = (result.stdout + result.stderr)
   .split(/\r?\n/)
-  .filter((l) => /error TS(2304|2552|2662):/.test(l) && !l.includes("node_modules"));
+  .filter((l) => /error TS(2304|2552|2662|18004):/.test(l) && !l.includes("node_modules"));
 if (lines.length) {
   console.error(`check-js-identifiers: ${lines.length} undefined identifier(s):`);
   for (const l of lines) console.error("  " + l);

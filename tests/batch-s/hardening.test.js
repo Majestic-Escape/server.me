@@ -357,3 +357,34 @@ test("query plans: the hot lookups use indexes (no collection scan)", async () =
     assert.ok(p.ixscan && !p.collscan, `${coll} ${JSON.stringify(filter).slice(0, 80)} → ${p.stages.slice(0, 200)}`);
   }
 });
+
+test("amount chain: server quote = booking = gateway order = fetched payment = invoice figures, in integer paise, at the GST threshold and with decimals", async () => {
+  const { calTax } = require("../../utils/tax");
+  let day = 2500;
+  for (const basePrice of [1500, 7500, 7501, 3333.33, 25000]) {
+    const L = await h.makeListing(HOST, { basePrice });
+    day += 5;
+    const r = await h.api("POST", "/booking/", { token: T, body: h.bookingBody(L, { checkIn: h.day(day), checkOut: h.day(day + 3) }) });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const b = r.body.data;
+    const o = await h.api("POST", "/payment/create-order", { token: T, body: { bookingId: b._id, amount: b.quote.totalPaise } });
+    assert.equal(o.status, 200);
+    const gwOrder = h.razorpay().__mock.orders.get(o.body.data.id);
+    const p = h.razorpay().__registerPayment({ id: `pay_chain_${day}`, order_id: gwOrder.id, amount: gwOrder.amount, currency: "INR", status: "captured", method: "upi" });
+    const v = await h.api("POST", "/payment/verify-payment", { token: T, body: { razorpay_order_id: gwOrder.id, razorpay_payment_id: p.id, razorpay_signature: h.signature(gwOrder.id, p.id) } });
+    assert.equal(v.status, 200);
+    const bk = await Booking().findById(b._id).lean();
+    const pay = await Payment().findOne({ bookingId: b._id }).lean();
+    const fetched = await h.razorpay().payments.fetch(p.id);
+    const expectedPaise = b.quote.totalPaise;
+    assert.equal(Math.round(bk.price * 100), expectedPaise, "booking.price");
+    assert.equal(gwOrder.amount, expectedPaise, "gateway order");
+    assert.equal(pay.amount, expectedPaise, "payment row");
+    assert.equal(fetched.amount, expectedPaise, "fetched gateway payment");
+    // invoice: subTotal + 12 % service fee + GST from the locked quote == total
+    const invoiceTotal = bk.subTotal + Math.round(bk.subTotal * 0.12) + calTax(bk);
+    assert.equal(Math.round(invoiceTotal * 100), expectedPaise, `invoice at ${basePrice}`);
+    assert.equal(calTax(bk), Math.round(bk.quote.gstPaise / 100));
+    assert.equal(bk.quote.gstPaise, basePrice <= 7500 ? Math.round(Math.round(bk.subTotal * 0.05) * 100) : Math.round(Math.round(bk.subTotal * 0.18) * 100), "threshold rule");
+  }
+});

@@ -1,7 +1,9 @@
-// In-process test harness: an isolated MongoDB (mongodb-memory-server), the
-// real Express app from index.js, the mock Razorpay gateway and recorded
-// emails. Nothing here touches any real database or gateway.
-const { MongoMemoryServer } = require("mongodb-memory-server");
+// In-process test harness: an isolated MongoDB (mongodb-memory-server as a
+// single-node replica set, so multi-document transactions run for real), the
+// real Express app from index.js, the mock Razorpay gateway, the in-memory
+// Spaces/KYC-provider fakes and recorded emails. Nothing here touches any real
+// database, bucket or gateway.
+const { MongoMemoryReplSet } = require("mongodb-memory-server");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 
@@ -10,13 +12,15 @@ let started;
 
 async function start() {
   if (started) return started;
-  mongod = await MongoMemoryServer.create();
+  mongod = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: "wiredTiger" } });
   const uri = mongod.getUri("batch_s_test");
   Object.assign(process.env, {
     DB_URI: uri,
     PORT: process.env.E2E_PORT || "0",
     JWT_SECRET: "test-jwt-secret",
     RAZORPAY_MOCK: "1",
+    SPACES_MOCK: "1",
+    KYC_PROVIDER_MOCK: "1",
     RAZORPAY_KEY_ID: "rzp_test_mock",
     RAZORPAY_KEY_SECRET: "mock_secret_key",
     RAZORPAY_WEBHOOK_KEY: "mock_webhook_secret",
@@ -58,6 +62,12 @@ async function start() {
     require("../../models/Payment").syncIndexes(),
     require("../../models/Booking").syncIndexes(),
     require("../../models/HostPayout").syncIndexes(),
+    // Batch A2: the schema's unique email/phone indexes and the admin-tools
+    // indexes (kyclogs, adminauditlogs) exist in production; tests need them
+    // to exercise the same duplicate-key and query paths.
+    require("../../models/User").syncIndexes(),
+    require("../../models/KycLogs").createIndexes(),
+    require("../../models/AdminAuditLog").createIndexes(),
   ]);
   const port = server.address().port;
   started = { app, server, baseUrl: `http://127.0.0.1:${port}/api/v1`, uri };
@@ -74,6 +84,9 @@ async function stop() {
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
+}
+function baseUrl() {
+  return started.baseUrl;
 }
 
 async function api(method, path, { token, body, headers = {} } = {}) {
@@ -190,7 +203,7 @@ function resetEmails() {
 }
 
 module.exports = {
-  start, stop, api, sleep,
+  start, stop, api, sleep, baseUrl,
   makeUser, userToken, makeAdmin, adminToken, makeListing, day, bookingBody,
   razorpay, payoutGateway, signature, sentEmails, resetEmails,
 };

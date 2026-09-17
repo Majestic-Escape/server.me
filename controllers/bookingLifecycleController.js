@@ -278,6 +278,19 @@ exports.createBooking = async (req, res) => {
       }
       throw err;
     }
+    // A host block may target a pending listing, which an admin may be
+    // deleting at this very moment (Batch A2). The delete's blocker check
+    // cannot see an insert that lands after its snapshot, so the block
+    // re-checks the listing and undoes itself if the listing is gone; the
+    // delete's post-commit sweep covers the remaining interleavings.
+    if (isHostBlock) {
+      const stillThere = await ListingProperty.exists({ _id: listing._id });
+      if (!stillThere) {
+        await Booking.deleteOne({ _id: booking._id });
+        await inventory.releaseNights(booking._id);
+        return fail(res, 404, "LISTING_NOT_FOUND", "Listing not found");
+      }
+    }
     return res.status(201).json({ success: true, data: booking });
   } catch (err) {
     return handleError(res, err, "createBooking error");

@@ -1,3 +1,7 @@
+// /api/v1/prop-listing — legacy listing API. Reads are used by the customer
+// site (/status, /:id) and the admin (/admin/:id); writes are admin-only.
+// The anonymous DELETE /:id and POST /bulk-action (deleteMany) routes were
+// removed in Batch A2 — the sanctioned path is DELETE /properties/admin/:id.
 const express = require("express");
 const router = express.Router();
 const {
@@ -5,12 +9,15 @@ const {
   getUserPListingById,
   createPListing,
   updatePListing,
-  deletePListing,
-  bulkActionPListings,
   exportPListings,
   getListingStatus,
   getAdminPListingById,
 } = require("../controllers/PropListingController");
+const authMiddleware = require("../middleware/authMiddleware");
+const { requireAdmin } = require("../middleware/authz");
+const { validateParam } = require("../middleware/validateObjectId");
+
+const admin = [authMiddleware, requireAdmin];
 
 router.get("/", getAllPListings);
 router.get("/status", getListingStatus);
@@ -19,9 +26,7 @@ router.get("/export", exportPListings);
 router.get("/admin/:id", getAdminPListingById);
 router.get("/:id", getUserPListingById);
 
-router.post("/", createPListing);
-router.put("/:id", updatePListing);
-router.delete("/:id", deletePListing);
-router.post("/bulk-action", bulkActionPListings);
+router.post("/", ...admin, createPListing);
+router.put("/:id", ...admin, validateParam("id"), updatePListing);
 
 module.exports = router;

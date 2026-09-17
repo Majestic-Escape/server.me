@@ -42,7 +42,7 @@ async function start() {
     DO_SPACES_BUCKET: "test-bucket",
     REGION: "blr1",
     BREVO_API_KEY: "disabled",
-    ALLOWED_ORIGINS: "http://localhost:3000",
+    ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:3001",
     PUBLIC_HOSTNAME: "http://127.0.0.1",
     MAJESTIC_COMMISSION: "12",
     HOST_COMMISSION_OFFER: "0",

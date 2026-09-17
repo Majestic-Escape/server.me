@@ -12,11 +12,19 @@
 // inserted only where (propertyId, date) is absent; reruns report 0 inserts.
 // Conflicts (two live bookings claiming one night) are REPORTED, never
 // resolved automatically — the index is refused while any remain.
+//
+// Cutover use (docs/batch-s-booking-payment-integrity.md §7): run once
+// before the Batch S deploy (with the old backend live) and once more as the
+// delta reconciliation after the deploy with the booking-write gate on. The
+// second run is safe beside Batch S itself: rows already owned by a *live*
+// Batch S booking or hold are reported as conflicts, rows left by expired
+// holds or closed bookings are replaced.
 require("dotenv").config();
 const mongoose = require("mongoose");
 const Booking = require("../models/Booking");
 const BookingNight = require("../models/BookingNight");
 const Payment = require("../models/Payment");
+const HostPayout = require("../models/HostPayout");
 const { nightsBetween, utcDay } = require("../services/inventory");
 
 const args = new Set(process.argv.slice(2));
@@ -104,19 +112,43 @@ async function main() {
   }
   if (conflicts.length > 50) console.log(`  … ${conflicts.length - 50} more`);
 
-  // Existing rows (idempotency + rows owned by cancelled bookings).
+  // Existing rows (idempotency, delta reconciliation after the cutover).
+  const now = new Date();
   const existing = await BookingNight.find({}).select("propertyId date bookingId expiresAt").lean();
   const existingByKey = new Map(existing.map((r) => [`${r.propertyId}|${new Date(r.date).toISOString().slice(0, 10)}`, r]));
+  const liveIds = new Set(live.map((b) => String(b._id)));
+  const otherOwnerIds = [...new Set(existing.map((r) => String(r.bookingId)))].filter((id) => !liveIds.has(id));
+  const otherOwners = new Map(
+    (await Booking.find({ _id: { $in: otherOwnerIds } }).select("status paymentStatus holdExpiresAt").lean()).map((b) => [String(b._id), b]),
+  );
+  // A row not owned by a live blocking booking is still "live" while it is
+  // an unexpired hold of an open booking (Batch S may finalize it any
+  // moment); it is stale when the hold expired or the owner is closed/absent.
+  const rowIsLive = (row) => {
+    const id = String(row.bookingId);
+    if (liveIds.has(id)) return true;
+    const owner = otherOwners.get(id);
+    if (!owner || ["rejected", "cancelled"].includes(owner.status)) return false;
+    if (row.expiresAt) return new Date(row.expiresAt) > now;
+    return owner.paymentStatus === "paid";
+  };
   let toInsert = [];
+  const toReplace = [];
   let alreadyPresent = 0;
-  let ownedByOther = 0;
+  const ownedByOther = [];
   for (const [key, owners] of wanted) {
     if (owners.length > 1) continue; // conflicts are never auto-resolved
     const row = existingByKey.get(key);
     if (row) {
-      if (String(row.bookingId) === owners[0].bookingId) alreadyPresent += 1;
-      else ownedByOther += 1;
-      continue;
+      if (String(row.bookingId) === owners[0].bookingId) {
+        alreadyPresent += 1;
+        continue;
+      }
+      if (rowIsLive(row)) {
+        ownedByOther.push({ key, wanted: owners[0], row });
+        continue;
+      }
+      toReplace.push(row._id); // stale hold / closed owner: replaced below
     }
     const [propertyId, day] = key.split("|");
     toInsert.push({
@@ -127,11 +159,20 @@ async function main() {
       expiresAt: null,
     });
   }
-  console.log(`[backfill] already present: ${alreadyPresent}, owned by another booking (skipped): ${ownedByOther}, to insert: ${toInsert.length}`);
+  console.log(`[backfill] already present: ${alreadyPresent}, stale rows to replace: ${toReplace.length}, to insert: ${toInsert.length}`);
+  console.log(`[backfill] nights owned by another LIVE booking/hold (conflict, not written): ${ownedByOther.length}`);
+  for (const o of ownedByOther.slice(0, 50)) {
+    console.log(`  CONFLICT ${o.key}: wanted by ${o.wanted.bookingId}(${o.wanted.kind}) but held by ${o.row.bookingId}${o.row.expiresAt ? ` (hold until ${new Date(o.row.expiresAt).toISOString()})` : " (permanent)"}`);
+  }
+  const blocking = conflicts.length + ownedByOther.length;
 
   if (!APPLY) {
     console.log("[backfill] dry run — nothing written. Re-run with --apply to insert.");
     return;
+  }
+  if (toReplace.length) {
+    const r = await BookingNight.deleteMany({ _id: { $in: toReplace } });
+    console.log(`[backfill] stale rows removed: ${r.deletedCount}`);
   }
   let inserted = 0;
   for (let i = 0; i < toInsert.length; i += 500) {
@@ -148,8 +189,14 @@ async function main() {
   console.log(`[backfill] inserted: ${inserted}`);
 
   if (CREATE_INDEX) {
-    if (conflicts.length) {
-      console.log("[backfill] REFUSING to create the unique index while conflicts remain. Resolve them (cancel one side) and re-run.");
+    if (blocking) {
+      console.log("[backfill] REFUSING to create the unique index while conflicts remain. Resolve them (cancel one side, or wait for the hold to expire) and re-run.");
+      process.exitCode = 2;
+      return;
+    }
+    const payoutDups = await HostPayout.aggregate([{ $group: { _id: "$bookingId", n: { $sum: 1 } } }, { $match: { n: { $gt: 1 } } }]);
+    if (payoutDups.length) {
+      console.log(`[backfill] REFUSING: ${payoutDups.length} bookings have more than one hostpayouts row; merge them by hand first.`);
       process.exitCode = 2;
       return;
     }
@@ -157,7 +204,9 @@ async function main() {
     await BookingNight.collection.createIndex({ bookingId: 1 });
     await Payment.collection.createIndex({ bookingId: 1 }, { unique: true, partialFilterExpression: { status: "created" } });
     await Booking.collection.createIndex({ idempotencyKey: 1 }, { unique: true, sparse: true });
-    console.log("[backfill] indexes created: bookingnights (propertyId,date) unique, bookingId; payments one-open-order-per-booking; bookings idempotencyKey");
+    await Booking.collection.createIndex({ needsAttention: 1 }, { partialFilterExpression: { needsAttention: { $type: "string" } } });
+    await HostPayout.collection.createIndex({ bookingId: 1 }, { unique: true });
+    console.log("[backfill] indexes created: bookingnights (propertyId,date) unique, bookingId; payments one-open-order-per-booking; bookings idempotencyKey, needsAttention; hostpayouts one-per-booking");
   }
 }
 

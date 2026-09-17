@@ -103,16 +103,24 @@ const bookingSchema = new mongoose.Schema({
   notifications: {
     paidAt: { type: Date, default: null },
     confirmedAt: { type: Date, default: null },
+    attentionAt: { type: Date, default: null },
   },
-  // Set when a paid booking could not keep its nights (the hold expired and
-  // another booking took them before payment completed). Admin attention.
+  // Operational queue (services/attention.js): set when money was taken but
+  // the booking cannot be honoured as-is — "inventory_conflict" (the hold was
+  // lost before payment completed) or "amount_mismatch" (the captured amount
+  // is not the server quote). Cleared by an admin resolution, never
+  // automatically; nothing is refunded or rebooked without a human.
   needsAttention: { type: String, default: null },
+  attentionDetails: { type: mongoose.Schema.Types.Mixed, default: null },
+  attentionResolvedAt: { type: Date, default: null },
+  attentionResolution: { type: String, default: null },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
 
 bookingSchema.index({ idempotencyKey: 1 }, { unique: true, sparse: true });
 bookingSchema.index({ propertyId: 1, checkIn: 1, checkOut: 1 });
+bookingSchema.index({ needsAttention: 1 }, { partialFilterExpression: { needsAttention: { $type: "string" } } });
 
 const Booking = mongoose.model("Booking", bookingSchema);
 

@@ -10,6 +10,9 @@
 //                                      (payment id, signature) the checkout
 //                                      handler expects from Razorpay
 //   POST /set-price {listingId, basePrice}
+//   POST /gate {enabled}            → booking-write maintenance gate on/off
+//   POST /expire-holds {bookingId}  → ages that booking's hold past expiry
+//   POST /book-as-other {checkIn, checkOut} → another guest takes the nights
 const http = require("http");
 const crypto = require("crypto");
 const h = require("./setup");
@@ -31,7 +34,11 @@ async function main() {
     customRules: [],
     location: { lat: 15.49, long: 73.82 },
   });
+  const ADMIN = await h.makeAdmin({ firstName: "Ops", email: "ops@test.local" });
   const seed = {
+    adminToken: h.adminToken(ADMIN),
+    adminId: String(ADMIN._id),
+    adminUser: { _id: String(ADMIN._id), firstName: ADMIN.firstName, lastName: ADMIN.lastName, email: ADMIN.email },
     guestToken: h.userToken(GUEST),
     guestId: String(GUEST._id),
     guestUser: { _id: String(GUEST._id), firstName: GUEST.firstName, lastName: GUEST.lastName, email: GUEST.email, role: "user" },
@@ -61,6 +68,28 @@ async function main() {
       if (req.url === "/set-price") {
         await ListingProperty.updateOne({ _id: json.listingId }, { $set: { basePrice: json.basePrice } });
         return res.end(JSON.stringify({ ok: true }));
+      }
+      if (req.url === "/gate") {
+        const OpsFlag = require("../../models/OpsFlag");
+        const { FLAG_ID } = require("../../services/maintenance");
+        await OpsFlag.updateOne({ _id: FLAG_ID }, { $set: { enabled: !!json.enabled, updatedAt: new Date() } }, { upsert: true });
+        return res.end(JSON.stringify({ ok: true, enabled: !!json.enabled }));
+      }
+      if (req.url === "/expire-holds") {
+        const BookingNight = require("../../models/BookingNight");
+        const r = await BookingNight.updateMany({ bookingId: json.bookingId, expiresAt: { $ne: null } }, { $set: { expiresAt: new Date(Date.now() - 1000) } });
+        return res.end(JSON.stringify({ ok: true, modified: r.modifiedCount }));
+      }
+      if (req.url === "/book-as-other") {
+        // another guest takes the nights server-side (simulates a concurrent customer)
+        const Booking = require("../../models/Booking");
+        const inventory = require("../../services/inventory");
+        const OTHER = await h.makeUser({ firstName: "Other", email: `other${Date.now()}@test.local` });
+        const nights = inventory.nightsBetween(json.checkIn, json.checkOut);
+        const bookingId = new (require("mongoose").Types.ObjectId)();
+        const r = await inventory.reserveNights({ propertyId: seed.listingId, nights, bookingId });
+        if (r.ok) await Booking.create({ _id: bookingId, userId: OTHER._id, hostId: seed.hostId, propertyId: seed.listingId, action: "user", source: "local", checkIn: new Date(json.checkIn), checkOut: new Date(json.checkOut), nights: nights.length, guests: 1, adults: 1, price: 1, subTotal: 1, status: "pending", paymentStatus: "unpaid", holdExpiresAt: inventory.holdExpiry() });
+        return res.end(JSON.stringify({ ok: r.ok, bookingId: String(bookingId) }));
       }
       if (req.url === "/state") {
         const Booking = require("../../models/Booking");

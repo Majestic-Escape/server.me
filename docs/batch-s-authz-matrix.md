@@ -11,7 +11,7 @@ booking/payment suites.
 
 | Action | anon | other user | guest | host | admin | Notes |
 |---|---|---|---|---|---|---|
-| `POST /` create guest booking | 401 | — | 201 (self) | 201 (as guest) | 403 | identity from token; price/nights/status server-side |
+| `POST /` create guest booking | 401 | — | 201 (self) | 201 (as guest) | 403 | identity from token; price/nights/status server-side; 503 MAINTENANCE while the cutover gate is on |
 | `POST /` host block (`action: "host"`) | 401 | 403 | 403 | 201 (own listing) | 403 | stored as before (confirmed/paid/₹0) |
 | `GET /:bookingId` | 401 | 403 | 200 | 200 | 200 | |
 | `PUT /:bookingId` (whitelisted) | 401 | 403 | 403 | 403 | 200 | adults/children/infants/guestData/flag only |
@@ -22,7 +22,8 @@ booking/payment suites.
 | `PATCH /host/cancel` (reject, refund) | 401 | 403 | 403 | 200 | 200 | refund once; gateway failure → 502, state unchanged |
 | `PATCH /host/terminate` (refund) | 401 | 403 | 403 | 200 | 200 | same |
 | `PATCH /user/terminate` | 401 | 403 | 200 | 403 | 200 | refund only inside policy window |
-| `PATCH /admin/cancel` (refund) | 401 | 403 | 403 | 403 | 200 | |
+| `PATCH /admin/cancel` (refund) | 401 | 403 | 403 | 403 | 200 | also refunds a queued (needsAttention) booking |
+| `GET /admin/attention`, `PATCH /admin/attention/resolve` | 401 | 403 | 403 | 403 | 200 | S.1 operational queue |
 | `POST /admin-modify` | 401 | 403 | 403 | 403 | 200 | date/property moves re-reserve nights (409 on overlap) |
 | `PATCH /modal-close` | 401 | 403 | 200 | 403 | 200 | no-op |
 | `PATCH /update-flag` | 401 | 403 | 403 | 200 | 200 | email goes to the booking host |

@@ -1275,6 +1275,21 @@ exports.checkDates = async (req, res) => {
 
     blockedDates(bookings, datesArray, todayBooking, today);
 
+    // Batch S: nights under an unexpired checkout hold are unavailable too
+    // (createBooking would refuse them), so the calendar never offers a date
+    // the server will reject.
+    const held = await BookingNight.find({
+      propertyId,
+      expiresAt: { $gt: new Date() },
+      date: { $gte: today },
+    })
+      .select("date")
+      .lean();
+    for (const row of held) {
+      const key = new Date(row.date).toISOString().slice(0, 10);
+      if (!datesArray.includes(key)) datesArray.push(key);
+    }
+
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("final output", datesArray);
     }

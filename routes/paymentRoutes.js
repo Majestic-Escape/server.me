@@ -5,6 +5,7 @@ const paymentController = require("../controllers/paymentController");
 const authMiddleware = require("../middleware/authMiddleware");
 const { requireActor, requireAdmin } = require("../middleware/authz");
 const cronAuth = require("../middleware/cronAuth");
+const { rejectWhilePaused } = require("../services/maintenance");
 
 const auth = [authMiddleware, requireActor];
 const admin = [authMiddleware, requireAdmin];
@@ -13,7 +14,9 @@ const admin = [authMiddleware, requireAdmin];
 router.get("/fetch", ...admin, paymentController.fetch);
 
 // Create / reuse the Razorpay order for a booking (booking guest only)
-router.post("/create-order", ...auth, paymentController.createOrder);
+// (503 MAINTENANCE while the cutover gate is on; verify-payment and the
+// webhook stay open — they only record money already taken)
+router.post("/create-order", ...auth, rejectWhilePaused, paymentController.createOrder);
 
 // Verify a payment (booking guest only)
 router.post("/verify-payment", ...auth, paymentController.verifyPayment);

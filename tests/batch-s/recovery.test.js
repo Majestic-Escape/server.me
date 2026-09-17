@@ -159,8 +159,11 @@ test("backfill script: dry-run reports, apply is idempotent, conflicts block the
   assert.equal(num(/inserted: (\d+)/, out.stdout), 0, out.stdout);
   out = run("--apply", "--create-index");
   assert.equal(out.status, 2, "index refused while a conflict exists");
-  // resolve the conflict (cancel one side) → index allowed
+  // resolve the conflict (cancel one side) → index allowed. The flagged
+  // booking from the hold-expiry test above is a live conflict too (paid,
+  // wants nights another guest holds): the operator closes it as well.
   await Booking().updateOne({ _id: c1._id }, { $set: { status: "cancelled" } });
+  await Booking().updateMany({ needsAttention: "inventory_conflict" }, { $set: { status: "cancelled", needsAttention: null } });
   out = run("--apply", "--create-index");
   assert.equal(out.status, 0, out.stdout + out.stderr);
   assert.ok(/indexes created/.test(out.stdout));

@@ -130,6 +130,29 @@ async function releaseNights(bookingId) {
   await BookingNight.deleteMany({ bookingId });
 }
 
+// Re-arms the unpaid hold of a booking that is about to be paid: extends it
+// when every night is still ours, otherwise (the hold expired and was
+// reclaimed, or the booking predates the night index) takes the nights
+// again if they are free. A pending booking is therefore payable for as
+// long as its dates are free — exactly the pre-S behaviour — and refused
+// only when someone else actually holds them.
+async function secureHold({ propertyId, bookingId, nights, now = new Date() }) {
+  if (await extendHold({ bookingId, nights, now })) return { ok: true, extended: true };
+  const reserved = await reserveNights({ propertyId, nights, bookingId, kind: "booking", now });
+  return reserved.ok ? { ok: true, extended: false } : reserved;
+}
+
+// After a payment is confirmed: make our nights permanent, taking any we
+// no longer hold if they are free. Returns { ok } or { ok: false, conflicts }.
+async function securePermanent({ propertyId, bookingId, nights, now = new Date() }) {
+  const kept = await finalizeNights({ bookingId, nights });
+  if (kept === nights.length) return { ok: true };
+  const reserved = await reserveNights({ propertyId, nights, bookingId, kind: "booking", now });
+  if (!reserved.ok) return reserved;
+  await finalizeNights({ bookingId, nights });
+  return { ok: true, reclaimed: true };
+}
+
 module.exports = {
   DAY_MS,
   HOLD_MINUTES,
@@ -141,5 +164,7 @@ module.exports = {
   extendHold,
   finalizeNights,
   releaseNights,
+  secureHold,
+  securePermanent,
   isDuplicateKeyError,
 };

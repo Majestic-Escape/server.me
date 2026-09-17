@@ -8,6 +8,7 @@ const REQUIRED = [
   { collection: "bookingnights", name: "propertyId_1_date_1", unique: true },
   { collection: "payments", name: "bookingId_1", unique: true, partial: true },
   { collection: "bookings", name: "idempotencyKey_1", unique: true },
+  { collection: "hostpayouts", name: "bookingId_1", unique: true },
 ];
 
 async function verifyRequiredIndexes() {

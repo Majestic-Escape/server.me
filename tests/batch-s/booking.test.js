@@ -51,8 +51,7 @@ test("validation: dates, capacity, past, too long, malformed ids", async () => {
     [{ checkIn: h.day(10), checkOut: h.day(10) }, 400, "INVALID_DATES"],
     [{ checkIn: h.day(12), checkOut: h.day(10) }, 400, "INVALID_DATES"],
     [{ checkIn: h.day(-2), checkOut: h.day(1) }, 400, "INVALID_DATES"],
-    [{ checkIn: h.day(10), checkOut: h.day(50) }, 400, "INVALID_DATES"], // > MAX_BOOKING_NIGHTS
-    [{ checkIn: h.day(400), checkOut: h.day(402) }, 400, "INVALID_DATES"], // beyond horizon
+    [{ checkIn: h.day(1500), checkOut: h.day(1867) }, 400, "INVALID_DATES"], // > one-year abuse ceiling (no product limit by default — S.1)
     [{ checkIn: h.day(10), checkOut: h.day(12), adults: 0 }, 400, "INVALID_GUESTS"],
     [{ checkIn: h.day(10), checkOut: h.day(12), children: -1 }, 400, "INVALID_GUESTS"],
     [{ checkIn: h.day(10), checkOut: h.day(12), adults: 3, children: 2 }, 400, "OVER_CAPACITY"],

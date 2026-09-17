@@ -5,6 +5,7 @@ const lifecycle = require("../controllers/bookingLifecycleController");
 const authMiddleware = require("../middleware/authMiddleware");
 const { requireActor, requireAdmin } = require("../middleware/authz");
 const { validateParam } = require("../middleware/validateObjectId");
+const { rejectWhilePaused } = require("../services/maintenance");
 
 // Every authenticated route below also resolves the actor (user / admin) so
 // controllers can enforce ownership; object-level checks live in the
@@ -13,7 +14,8 @@ const auth = [authMiddleware, requireActor];
 const admin = [authMiddleware, requireAdmin];
 
 // Create a booking (guest) or a calendar block (listing host, action: "host")
-router.post("/", ...auth, lifecycle.createBooking);
+// (503 MAINTENANCE while the cutover gate is on — services/maintenance.js)
+router.post("/", ...auth, rejectWhilePaused, lifecycle.createBooking);
 
 // Admin: every local guest booking
 router.get("/", ...admin, bookingController.getAllBookings);
@@ -27,7 +29,7 @@ router.get("/analytics-stats-filter", ...auth, bookingController.getHostFilterBo
 router.get("/revenue-filter", ...auth, bookingController.getRevenueFilter);
 
 router.patch("/modal-close", ...auth, lifecycle.updateCloseModal);
-router.post("/admin-modify", ...admin, bookingController.modifyBooking);
+router.post("/admin-modify", ...admin, rejectWhilePaused, bookingController.modifyBooking);
 router.patch("/update-flag", ...auth, bookingController.updateFlag);
 
 // Host removes a calendar block (listing host or admin)
@@ -54,6 +56,9 @@ router.get("/check-dates/:propertyId", validateParam("propertyId"), bookingContr
 // Lifecycle (ownership enforced in the controller)
 router.patch("/host/cancel", ...auth, lifecycle.cancelBooking);
 router.patch("/admin/cancel", ...admin, lifecycle.cancelAdminBooking);
+// Operational queue: paid bookings that need a human decision
+router.get("/admin/attention", ...admin, lifecycle.listAttention);
+router.patch("/admin/attention/resolve", ...admin, lifecycle.resolveAttention);
 router.patch("/user/terminate", ...auth, lifecycle.terminateUserBooking);
 router.patch("/host/terminate", ...auth, lifecycle.terminateBooking);
 router.patch("/host/confirm", ...auth, lifecycle.confirmBooking);

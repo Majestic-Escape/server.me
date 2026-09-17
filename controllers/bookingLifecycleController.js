@@ -14,11 +14,20 @@ const inventory = require("../services/inventory");
 const { quoteStay, zeroQuote } = require("../services/pricing");
 const { refundBookingPayment, PaymentError } = require("../services/payments");
 const notify = require("../services/bookingNotifications");
+const attention = require("../services/attention");
 const authz = require("../middleware/authz");
 const { isObjectId, rejectInvalidId } = require("../middleware/validateObjectId");
 
-const MAX_BOOKING_NIGHTS = Number(process.env.MAX_BOOKING_NIGHTS) || 30;
-const MAX_BOOKING_HORIZON_DAYS = Number(process.env.MAX_BOOKING_HORIZON_DAYS) || 365;
+// Product limits are OFF unless configured: neither the pre-S backend nor the
+// booking calendar (which only disables past and taken dates) ever limited
+// stay length or how far ahead a stay may start, and introducing such a rule
+// is a business decision, not a hardening step. MAX_BOOKING_NIGHTS /
+// MAX_BOOKING_HORIZON_DAYS enable a limit when set (> 0). What always
+// applies is the abuse ceiling below: one request cannot hold more than a
+// year of nights (the same cap host calendar blocks already have).
+const MAX_BOOKING_NIGHTS = Number(process.env.MAX_BOOKING_NIGHTS) || 0;
+const MAX_BOOKING_HORIZON_DAYS = Number(process.env.MAX_BOOKING_HORIZON_DAYS) || 0;
+const ABUSE_MAX_NIGHTS = 366;
 const MAX_GUEST_ROWS = 50;
 const POPULATE = "userId hostId propertyId payment";
 const TERMINAL = ["rejected", "cancelled"];
@@ -68,15 +77,18 @@ function validateStay(checkIn, checkOut, { forBlock = false } = {}) {
   }
   const nights = inventory.nightsBetween(inDate, outDate);
   if (!nights.length) return { error: "checkIn must be earlier than checkOut" };
+  if (nights.length > ABUSE_MAX_NIGHTS) return { error: "Stays and blocks are limited to one year" };
   if (!forBlock) {
     const today = inventory.utcDay(new Date());
-    if (nights[0] < today) return { error: "checkIn cannot be in the past" };
-    if (nights.length > MAX_BOOKING_NIGHTS) return { error: `Stays are limited to ${MAX_BOOKING_NIGHTS} nights` };
-    if ((nights[0] - today) / inventory.DAY_MS > MAX_BOOKING_HORIZON_DAYS) {
+    // The calendar already refuses past dates; the server allows one day of
+    // grace so a same-day check-in chosen west of UTC is not "yesterday".
+    if (nights[0].getTime() < today.getTime() - inventory.DAY_MS) return { error: "checkIn cannot be in the past" };
+    if (MAX_BOOKING_NIGHTS > 0 && nights.length > MAX_BOOKING_NIGHTS) {
+      return { error: `Stays are limited to ${MAX_BOOKING_NIGHTS} nights` };
+    }
+    if (MAX_BOOKING_HORIZON_DAYS > 0 && (nights[0] - today) / inventory.DAY_MS > MAX_BOOKING_HORIZON_DAYS) {
       return { error: `Bookings can be made up to ${MAX_BOOKING_HORIZON_DAYS} days ahead` };
     }
-  } else if (nights.length > 366) {
-    return { error: "Blocks are limited to one year" };
   }
   return { inDate, outDate, nights };
 }
@@ -283,30 +295,40 @@ exports.markBookingAsPaid = async (req, res) => {
     const booking = await loadBooking(res, req.body.bookingId);
     if (!booking) return;
     if (!(authz.isBookingGuest(actor, booking) || authz.isAdmin(actor))) return authz.forbid(res);
+    if (booking.needsAttention) {
+      return fail(res, 409, "UNDER_REVIEW", "Payment received; the booking is being reviewed by our team", { needsAttention: booking.needsAttention });
+    }
     if (booking.paymentStatus !== "paid") {
       return fail(res, 409, "PAYMENT_NOT_RECORDED", "Payment has not been verified for this booking");
     }
-    const payment = booking.payment || (await Payment.findOne({ bookingId: booking._id, status: { $in: ["paid", "refund initiated", "refunded"] } }));
-    if (!payment) return fail(res, 404, "PAYMENT_NOT_FOUND", "Payment not found");
-
-    const claimed = await Booking.findOneAndUpdate(
-      { _id: booking._id, "notifications.paidAt": null },
-      { $set: { "notifications.paidAt": new Date() } },
-    );
-    if (!claimed) return res.status(200).json({ success: true, data: booking, alreadyNotified: true });
-    const manual = !!(booking.propertyId && booking.propertyId.bookingType && booking.propertyId.bookingType.manual);
-    try {
-      await notify.notifyPaid(booking, payment, { manual });
-    } catch (err) {
-      console.error("notifyPaid failed", err.message);
-      await Booking.updateOne({ _id: booking._id }, { $set: { "notifications.paidAt": null } });
-      return fail(res, 502, "NOTIFY_FAILED", "Booking is paid but notifications could not be sent");
-    }
-    return res.status(200).json({ success: true, data: booking });
+    const sent = await sendPaidNotifications(booking);
+    if (sent.error === "PAYMENT_NOT_FOUND") return fail(res, 404, "PAYMENT_NOT_FOUND", "Payment not found");
+    if (sent.error) return fail(res, 502, "NOTIFY_FAILED", "Booking is paid but notifications could not be sent");
+    return res.status(200).json({ success: true, data: booking, alreadyNotified: !!sent.alreadyNotified });
   } catch (err) {
     return handleError(res, err, "markBookingAsPaid error");
   }
 };
+
+// The post-payment e-mails (host/admins/guest, invoice) exactly once.
+async function sendPaidNotifications(booking) {
+  const payment = booking.payment || (await Payment.findOne({ bookingId: booking._id, status: { $in: ["paid", "refund initiated", "refunded"] } }));
+  if (!payment) return { error: "PAYMENT_NOT_FOUND" };
+  const claimed = await Booking.findOneAndUpdate(
+    { _id: booking._id, "notifications.paidAt": null },
+    { $set: { "notifications.paidAt": new Date() } },
+  );
+  if (!claimed) return { alreadyNotified: true };
+  const manual = !!(booking.propertyId && booking.propertyId.bookingType && booking.propertyId.bookingType.manual);
+  try {
+    await notify.notifyPaid(booking, payment, { manual });
+  } catch (err) {
+    console.error("notifyPaid failed", err.message);
+    await Booking.updateOne({ _id: booking._id }, { $set: { "notifications.paidAt": null } });
+    return { error: "NOTIFY_FAILED" };
+  }
+  return { sent: true };
+}
 
 // PATCH /booking/instant/confirm — legacy client call; confirmation itself
 // happened at payment for instant-book listings. Only schedules reminders once.
@@ -316,6 +338,7 @@ exports.confirmInstantBooking = async (req, res) => {
     const booking = await loadBooking(res, req.body.bookingId);
     if (!booking) return;
     if (!(authz.isBookingGuest(actor, booking) || authz.isAdmin(actor))) return authz.forbid(res);
+    if (booking.needsAttention) return fail(res, 409, "UNDER_REVIEW", "Payment received; the booking is being reviewed by our team", { needsAttention: booking.needsAttention });
     if (booking.paymentStatus !== "paid") return fail(res, 409, "PAYMENT_NOT_RECORDED", "Payment has not been verified for this booking");
     if (booking.status !== "confirmed") return fail(res, 409, "NOT_CONFIRMED", "This booking requires host approval");
     const claimed = await Booking.findOneAndUpdate(
@@ -342,6 +365,7 @@ exports.confirmBooking = async (req, res) => {
     const booking = await loadBooking(res, req.body.bookingId);
     if (!booking) return;
     if (!(authz.isBookingHost(actor, booking) || authz.isAdmin(actor))) return authz.forbid(res);
+    if (booking.needsAttention) return fail(res, 409, "UNDER_REVIEW", "This booking is being reviewed by the Majestic Escape team", { needsAttention: booking.needsAttention });
     if (booking.paymentStatus !== "paid") return fail(res, 409, "PAYMENT_NOT_RECORDED", "Booking is not paid");
     if (booking.status === "confirmed") return res.status(200).json({ success: true, alreadyConfirmed: true });
     const updated = await Booking.findOneAndUpdate(
@@ -381,12 +405,21 @@ async function cancelCore({ req, res, bookingId, allowed, nextStatus, refund, no
   }
   let refundResult = { refunded: false };
   const shouldRefund = typeof refund === "function" ? refund(booking) : !!refund;
-  if (shouldRefund && booking.paymentStatus === "paid") {
+  // The refund is driven by the captured payment row, not by the booking's
+  // paymentStatus: a booking parked in the attention queue (money captured,
+  // booking not marked paid) must still be refundable through admin cancel.
+  if (shouldRefund && (booking.paymentStatus === "paid" || booking.needsAttention)) {
     refundResult = await refundBookingPayment({ booking, reason: label }); // throws PaymentError on gateway failure
+  }
+  const closeSet = { status: nextStatus, holdExpiresAt: null, updatedAt: new Date() };
+  if (booking.needsAttention) {
+    closeSet.needsAttention = null;
+    closeSet.attentionResolvedAt = new Date();
+    closeSet.attentionResolution = `${label} by ${actor.id}`;
   }
   const updated = await Booking.findOneAndUpdate(
     { _id: booking._id, status: { $nin: TERMINAL } },
-    { $set: { status: nextStatus, holdExpiresAt: null, updatedAt: new Date() } },
+    { $set: closeSet },
     { new: true },
   ).populate(POPULATE);
   if (!updated) return fail(res, 409, "ALREADY_CLOSED", "Booking was closed by another request");
@@ -552,6 +585,46 @@ exports.getBookingById = async (req, res) => {
     return res.status(200).json({ success: true, data: booking });
   } catch (err) {
     return handleError(res, err, "getBookingById error");
+  }
+};
+
+// GET /booking/admin/attention — the operational queue (admin only).
+exports.listAttention = async (req, res) => {
+  try {
+    const actor = await authz.resolveActor(req);
+    if (!authz.isAdmin(actor)) return authz.forbid(res, "Admin access required");
+    const items = await attention.list();
+    return res.status(200).json({ success: true, count: items.length, data: items });
+  } catch (err) {
+    return handleError(res, err, "listAttention error");
+  }
+};
+
+// PATCH /booking/admin/attention/resolve { bookingId, resolution: "keep" | "dismiss" }
+// "keep" re-secures the nights and restores the paid status; "dismiss" only
+// clears the flag (the admin acted otherwise, e.g. refunded via admin cancel).
+exports.resolveAttention = async (req, res) => {
+  try {
+    const actor = await authz.resolveActor(req);
+    if (!authz.isAdmin(actor)) return authz.forbid(res, "Admin access required");
+    const booking = await loadBooking(res, req.body.bookingId, "propertyId");
+    if (!booking) return;
+    if (!["keep", "dismiss"].includes(req.body.resolution)) {
+      return fail(res, 400, "VALIDATION", 'resolution must be "keep" or "dismiss"');
+    }
+    const manualListing = !!(booking.propertyId && booking.propertyId.bookingType && booking.propertyId.bookingType.manual);
+    const result = await attention.resolve({ booking, resolution: req.body.resolution, manualListing, actorId: actor.id });
+    if (!result.ok) return fail(res, result.code === "DATES_UNAVAILABLE" ? 409 : 400, result.code, result.code === "DATES_UNAVAILABLE" ? "The nights are still taken by another booking" : "Invalid resolution");
+    const fresh = await Booking.findById(booking._id).populate(POPULATE);
+    if (result.resolution === "keep") {
+      // The booking now stands as a normally paid one: send the post-payment
+      // e-mails it never got (once); the usual instant/host flow then applies.
+      const sent = await sendPaidNotifications(fresh);
+      if (sent.error) console.error("resolveAttention: notifications failed", sent.error);
+    }
+    return res.status(200).json({ success: true, data: fresh, ...result });
+  } catch (err) {
+    return handleError(res, err, "resolveAttention error");
   }
 };
 

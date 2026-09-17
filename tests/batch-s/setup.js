@@ -29,6 +29,7 @@ async function start() {
     EMAIL_DISABLED: "1",
     INVOICE_PDF_DISABLED: "1",
     BOOKING_HOLD_MINUTES: "30",
+    OPS_FLAG_CACHE_MS: "0",
     NEXT_PUBLIC_ENV: "test",
     // Non-secret placeholders the app constructs clients from at import time.
     DO_SPACES_ENDPOINT: "https://blr1.digitaloceanspaces.com",
@@ -54,6 +55,7 @@ async function start() {
     require("../../models/BookingNight").init(),
     require("../../models/Payment").init(),
     require("../../models/Booking").init(),
+    require("../../models/HostPayout").init(),
   ]);
   const port = server.address().port;
   started = { app, server, baseUrl: `http://127.0.0.1:${port}/api/v1`, uri };
@@ -170,6 +172,9 @@ function bookingBody(listing, { checkIn, checkOut, adults = 2, children = 0, inf
 function razorpay() {
   return require("../../services/razorpayClient").getRazorpay();
 }
+function payoutGateway() {
+  return require("../../services/payoutGateway").getPayoutGateway();
+}
 function signature(orderId, paymentId, secret = process.env.RAZORPAY_KEY_SECRET) {
   return require("crypto").createHmac("sha256", secret).update(`${orderId}|${paymentId}`).digest("hex");
 }
@@ -185,5 +190,5 @@ function resetEmails() {
 module.exports = {
   start, stop, api, sleep,
   makeUser, userToken, makeAdmin, adminToken, makeListing, day, bookingBody,
-  razorpay, signature, sentEmails, resetEmails,
+  razorpay, payoutGateway, signature, sentEmails, resetEmails,
 };

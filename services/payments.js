@@ -16,6 +16,7 @@ const ListingProperty = require("../models/ListingProperty");
 const { getRazorpay } = require("./razorpayClient");
 const { quoteStay } = require("./pricing");
 const inventory = require("./inventory");
+const attention = require("./attention");
 
 class PaymentError extends Error {
   constructor(status, code, message, extra = {}) {
@@ -90,13 +91,23 @@ async function createOrderForBooking({ booking, user, clientAmount, clientCurren
       paymentStatus: booking.paymentStatus,
     });
   }
+  if (booking.needsAttention) {
+    // Money was already captured for this booking; an admin is deciding.
+    throw new PaymentError(409, "BOOKING_NOT_PAYABLE", "This booking is under review. Please contact support.", {
+      status: booking.status,
+      paymentStatus: booking.paymentStatus,
+      needsAttention: booking.needsAttention,
+    });
+  }
   if (clientCurrency && clientCurrency !== "INR") {
     throw new PaymentError(400, "UNSUPPORTED_CURRENCY", "Only INR is supported");
   }
   const { nights, quote } = await freshQuoteForBooking(booking);
-  // The hold must still be ours before money changes hands.
-  const held = await inventory.extendHold({ bookingId: booking._id, nights });
-  if (!held) {
+  // The nights must be ours before money changes hands: extend the hold, or
+  // take the nights again if the hold expired (or predates the index) and
+  // they are still free.
+  const held = await inventory.secureHold({ propertyId: booking.propertyId, bookingId: booking._id, nights });
+  if (!held.ok) {
     throw new PaymentError(409, "DATES_UNAVAILABLE", "Sorry, someone has already booked these dates");
   }
   await Booking.updateOne({ _id: booking._id }, { $set: { holdExpiresAt: inventory.holdExpiry() } });
@@ -220,6 +231,7 @@ async function applyPaymentSuccess({ orderId, razorpayPayment, paymentMethod, so
   if (payment.status !== "created") {
     if (payment.status === "paid" && payment.paymentId === rp.id) {
       const booking = await Booking.findById(payment.bookingId);
+      await attention.retryAlert(booking);
       return { payment, booking, alreadyProcessed: true };
     }
     throw new PaymentError(409, "PAYMENT_STATE", `Order is ${payment.status}`);
@@ -243,6 +255,7 @@ async function applyPaymentSuccess({ orderId, razorpayPayment, paymentMethod, so
     const current = await Payment.findById(payment._id);
     if (current && current.status === "paid" && current.paymentId === rp.id) {
       const booking = await Booking.findById(current.bookingId);
+      await attention.retryAlert(booking);
       return { payment: current, booking, alreadyProcessed: true };
     }
     throw new PaymentError(409, "PAYMENT_STATE", `Order is ${current ? current.status : "unknown"}`);
@@ -250,9 +263,36 @@ async function applyPaymentSuccess({ orderId, razorpayPayment, paymentMethod, so
 
   const booking = await Booking.findById(updated.bookingId);
   if (!booking) throw new PaymentError(404, "BOOKING_NOT_FOUND", "Booking not found");
-  const listing = await ListingProperty.findById(booking.propertyId).select("bookingType").lean();
+  const listing = await ListingProperty.findById(booking.propertyId).select("bookingType basePrice").lean();
   const manual = !!(listing && listing.bookingType && listing.bookingType.manual);
   const nextStatus = manual ? "pending" : "confirmed";
+  const nights = inventory.nightsBetween(booking.checkIn, booking.checkOut);
+
+  // The captured amount must be the server's quote for the stay. Orders
+  // opened by this backend always are (create-order enforces it); an order
+  // opened by the pre-S backend carries whatever the client sent, so it is
+  // checked against the booking's locked quote or, failing that, a fresh
+  // one. Money already captured is never refunded here: the booking is
+  // queued for an admin instead of being confirmed.
+  let expectedPaise = booking.quote && booking.quote.totalPaise;
+  if (!Number.isFinite(expectedPaise)) {
+    try {
+      expectedPaise = quoteStay({ basePrice: listing && listing.basePrice, nights: nights.length }).totalPaise;
+    } catch (err) {
+      expectedPaise = null;
+    }
+  }
+  if (expectedPaise === null || updated.amount !== expectedPaise) {
+    await attention.flag(booking._id, "amount_mismatch", {
+      orderId,
+      paymentId: rp.id,
+      capturedPaise: updated.amount,
+      expectedPaise,
+      source,
+    });
+    const flagged = await Booking.findById(booking._id);
+    return { payment: updated, booking: flagged, alreadyProcessed: false, source, needsAttention: "amount_mismatch" };
+  }
 
   await Booking.findOneAndUpdate(
     { _id: booking._id, paymentStatus: "unpaid" },
@@ -267,20 +307,19 @@ async function applyPaymentSuccess({ orderId, razorpayPayment, paymentMethod, so
     },
   );
 
-  const nights = inventory.nightsBetween(booking.checkIn, booking.checkOut);
-  const kept = await inventory.finalizeNights({ bookingId: booking._id, nights });
-  if (kept < nights.length) {
+  const secured = await inventory.securePermanent({ propertyId: booking.propertyId, bookingId: booking._id, nights });
+  if (!secured.ok) {
     // The hold expired and another booking took some nights before this
     // payment completed. Money has been taken; never confirm silently.
     await Booking.updateOne(
       { _id: booking._id },
-      { $set: { status: "pending", needsAttention: "inventory_conflict" } },
+      { $set: { status: "pending" } },
     );
-    console.error("[payments] inventory conflict after payment", {
-      bookingId: String(booking._id),
+    await attention.flag(booking._id, "inventory_conflict", {
       orderId,
       paymentId: rp.id,
       source,
+      takenBy: [...new Set((secured.conflicts || []).map((c) => String(c.bookingId)))],
     });
   }
   const fresh = await Booking.findById(booking._id);

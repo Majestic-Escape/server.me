@@ -155,32 +155,56 @@ checkIn+checkOut`) that the existing overlap/report queries already needed.
 The only intentional extra network call is the pre-payment re-quote inside
 `create-order` (one listing read).
 
-## 7. Rollout (production)
+## 7. Rollout (production) — Batch S.1 cutover, no backfill race
 
-1. Set `CRON_SECRET` on the Vercel project (the payout cron is refused
-   without it) and keep `RAZORPAY_MOCK`, `EMAIL_DISABLED`,
-   `INVOICE_PDF_DISABLED` **unset**.
-2. Deploy the frontend compatibility commit (user.website `compat/listing-auth`):
-   adds `Authorization` headers to listing create/update/kyc/timings and
-   calendar-sync calls. Harmless against the old backend.
-3. Run `node scripts/backfill-booking-nights.js` (dry run) against production
-   with `DB_URI`; review the conflict report; then
-   `--apply --create-index`. Additive: the old backend ignores the new
-   collection and indexes.
-4. Deploy Batch S (`batch-s`). Startup logs `[startup] booking/payment
-   integrity indexes present`; if it logs CRITICAL, re-run step 3.
-5. (Optional) enable `payment.captured` / `order.paid` events on the existing
-   Razorpay webhook; the handler is idempotent with the client callback.
-6. Deploy Batch D (`shriraj-dev`), which understands the new 409 codes.
+Why the earlier sequence had a race: the backfill materialises night rows
+for bookings that exist *when it runs*; the pre-S backend keeps writing
+bookings (and Razorpay orders) until the Batch S deployment takes every
+request, so anything written in between had no night rows. Batch S's
+secondary overlap check protected *creates* against those rows, but two
+unpaid checkouts straddling the switch could both be paid. The sequence
+below closes that: the booking-write gate (`scripts/booking-gate.js`,
+honoured only by Batch S) stops Batch S from taking inventory until a
+delta reconciliation has run *after* the old backend can no longer write.
 
-Rollback: redeploy the previous backend build; `node scripts/backfill-
-booking-nights.js --rollback` drops the additive `bookingnights` collection
-(only needed if the collection should not persist). Payment rows retired as
-`failed` by the backfill were stale unpaid orders and need no reversal.
+| Step | Command / action | Who writes bookings meanwhile |
+|---|---|---|
+| 1 | Set `CRON_SECRET` on Vercel (`server.me`); keep `RAZORPAY_MOCK`, `EMAIL_DISABLED`, `INVOICE_PDF_DISABLED` unset; optionally `OPS_ALERT_EMAIL` (defaults to `ADMIN_EMAIL`). | old backend |
+| 2 | Deploy the frontend compatibility commit (user.website `compat/listing-auth`). | old backend |
+| 3 | `node scripts/backfill-booking-nights.js` (dry run) → review the conflict report → resolve by cancelling one side of each genuine double booking (there are none today: 2 future-blocking rows in production) → `node scripts/backfill-booking-nights.js --apply`. **Not** `--create-index` yet. | old backend |
+| 4 | `node scripts/booking-gate.js --on --reason="Batch S cutover"`. The old backend ignores it. | old backend |
+| 5 | Deploy Batch S. From the moment the alias switches, `POST /booking`, `POST /payment/create-order` and `POST /booking/admin-modify` answer **503 MAINTENANCE** (the checkout shows "Bookings are briefly paused…"); browsing, reads, `verify-payment` and the webhook keep working, so a customer already on the gateway page still completes. | nobody takes new inventory |
+| 6 | Wait for in-flight old-backend invocations to drain (Vercel function max duration; 5 min is generous). | nobody |
+| 7 | Delta reconciliation: `node scripts/backfill-booking-nights.js --apply --create-index`. It inserts night rows for every inventory-blocking booking the old backend wrote after step 3, replaces rows left by expired holds, reports (and refuses the index on) any night owned by a live Batch S booking or hold, retires stale open orders, and creates all indexes (`bookingnights`, `payments` one-open-order, `bookings.idempotencyKey`, `bookings.needsAttention`, `hostpayouts.bookingId`). Re-run until it exits 0. | nobody |
+| 8 | Confirm the running backend logs `[startup] booking/payment integrity indexes present` (redeploy or hit any endpoint after a cold start). | nobody |
+| 9 | `node scripts/booking-gate.js --off`. | Batch S |
+| 10 | (Optional) enable `payment.captured` / `order.paid` on the Razorpay webhook. Deploy Batch D (`shriraj-dev`). | Batch S |
+
+Expected write pause: steps 5–9, ~10 minutes. Reads are never interrupted.
+
+Proof the delta cannot miss a row: (a) after step 6 nothing but Batch S
+writes bookings, and Batch S writes night rows atomically with every
+booking or refuses it; (b) with the gate on, Batch S takes no new inventory
+during step 7, so the set of inventory-blocking bookings the reconciliation
+enumerates is complete and stable except for payments completing on
+already-held or already-enumerated bookings, which are idempotent against
+it (own rows exist → counted as present; pre-S bookings paid through
+`verify-payment` re-secure their nights themselves); (c) the run is
+idempotent and refuses to create the unique index while any night has two
+live claimants, so a genuine straddle (both sides paid) surfaces as a
+conflict for a human, never as a silent double booking. Tested in
+`tests/batch-s/cutover.test.js` against gap rows of every kind (paid guest
+booking, host block, iCal import) overlapping a paid Batch S booking, a
+live hold and an expired hold.
+
+Rollback: `node scripts/booking-gate.js --off` (the old backend ignores it
+anyway), redeploy the previous backend build; the additive collections,
+fields and indexes are ignored by it. `--rollback` drops `bookingnights`
+only if the collection must not persist.
 
 ## 8. Evidence summary (all on isolated in-memory MongoDB + mock gateway)
 
-* `npm test` — 39 integration tests: 20 simultaneous same-night bookings →
+* `npm test` — 65 integration tests (S.1 added cutover/gate, hold semantics per mode, attention queue, payout cycle): 20 simultaneous same-night bookings →
   1×201 / 19×409 / 1 booking / 3 night rows; 20 identical submissions from
   one user → 1 booking; 10 concurrent create-order → 1 gateway order;
   verify ×3 + webhook ×2 racing → one transition, one payment row;
@@ -202,3 +226,80 @@ booking-nights.js --rollback` drops the additive `bookingnights` collection
 * `npm run check:js` — 0 undefined identifiers across 132 backend files
   (4 latent ReferenceErrors fixed, including the payout cron's
   createPayout return path).
+
+## 9. Booking state transitions — pre-S vs Batch S
+
+Legend: **I** instant listing, **M** request-to-book (manual). Inventory
+column = when the nights are blocked for other guests.
+
+| Step | Pre-S (origin/dev) | Batch S / S.1 | Inventory (S) | Difference |
+|---|---|---|---|---|
+| Guest submits checkout | client-supplied row incl. `price`, `nights`, `status`, `paymentStatus`; overlap check against *paid* rows only | server prices, validates, stores `pending/unpaid` with a **30-min hold** | blocked from now (hold) | **intentional**: hold; price/status from server |
+| Double submit / retry | second row | same booking returned (`replayed`) | unchanged | intentional |
+| Pay clicked (create-order) | order for the client amount, new Payment row per click | order for the server quote; hold re-armed 30 min; one open order reused; `PRICE_CHANGED` if repriced | hold extended | intentional |
+| Hold expires (abandoned) | n/a (nothing was blocked) | nights free again; the pending booking stays payable later if still free | released | intentional (matches "pending never blocked" before) |
+| Payment verified | Payment `paid`; booking untouched until the client calls updateStatus | Payment `paid` **and** booking `paid`; **I** → `confirmed`, **M** → `pending`; amount/order/currency/status checked | permanent | intentional: server, not client, flips the state |
+| Client calls `updateStatus` | sets `paid` (unconditionally), e-mails | e-mails once (409 if not paid / under review) | — | same e-mails, now once |
+| Client calls `instant/confirm` (**I**) | sets `confirmed` unconditionally | no-op if already confirmed; 409 for **M** or unpaid | — | same end state |
+| Host confirms (**M**) | sets `confirmed` unconditionally, anyone | `pending/paid → confirmed`, host or admin only; e-mails 10/18/19 once | — | same end state, authorised |
+| Host rejects (**M**) / terminates | status set **before** the refund; refund per call | refund first (once), then `rejected` / `cancelled`; e-mails 11/16/17 or 13/14/15 | released | intentional: no rejected-but-paid rows |
+| Guest cancels | `cancelled`; refund if inside policy window | same rule (moderate = days, flexible = hours), refund once, guest only | released | authorised, once |
+| Admin cancels | `cancelled` + refund, anyone | admin only, refund once | released | authorised |
+| Payment lands but nights lost | impossible to detect (double booking) | booking `pending/paid`, `needsAttention: inventory_conflict`, ops alert once, admin queue; no confirm/notify until resolved | other booking keeps them | **new**: human decision, no auto refund |
+| Pre-S open order paid at a client amount | accepted | Payment `paid`, booking **not** paid, `needsAttention: amount_mismatch`, ops alert; admin cancel refunds | hold as is | **new** |
+| Host block | row `confirmed/paid/₹0` by anyone | same row, listing host only | permanent | authorised |
+| iCal import | rows `confirmed/paid` | same + night rows, best effort on overlap | permanent | same |
+
+## 10. Hold semantics by mode (S.1)
+
+| Mode / event | Blocked from | Released / permanent |
+|---|---|---|
+| Instant: create | create (30 min hold) | permanent at payment; released on guest cancel, host terminate, admin cancel, hold expiry |
+| Request-to-book: create → pay → host decision | create (hold) → permanent at payment, however long the host takes | released on reject / cancel |
+| Pay clicked late (hold expired, nights free) | re-held at Pay for 30 min | as above |
+| Pay clicked late (nights taken) | — | `409 DATES_UNAVAILABLE`, nothing charged |
+| Payment completes after the hold was lost | — | flagged `inventory_conflict`; other booking keeps the nights |
+| Retry / double submit | same hold, extended | — |
+| Abandoned checkout | until expiry (30 min) | expiry — the pending row itself never expires (unchanged) |
+| Host block / iCal | immediately, permanent | unblock / calendar removal |
+
+`/booking/check-dates` now includes live holds, so the calendar never offers
+a night the server would refuse.
+
+## 11. Payout cron audit (S.1)
+
+Findings on origin/dev, all fixed in `services/payouts.js`:
+1. **Duplicate payout on overlapping runs** — no unique key on
+   `hostpayouts.bookingId`; two runs each created a row and each called the
+   gateway. Now: unique index + atomic per-row claim (`lockedAt`).
+2. **Duplicate payout after an ambiguous outcome** — a 5xx/timeout marked
+   the row `failed`; the next day's retry created a second payout under a
+   fresh random idempotency key. Now: ambiguous outcomes stay `pending` with
+   `lastError`; every retry first lists gateway payouts by
+   `reference_id = bookingId` and adopts a live one; idempotency keys are
+   deterministic (`bk_<bookingId>_<attempt>`).
+3. **Paid hosts for refunded stays** — selection was `status: confirmed`
+   only (production has a `confirmed/refunded` row). Now: `confirmed` +
+   `paid` + local guest booking.
+4. **Payout id lost after a DB failure** — now written with one retry and a
+   CRITICAL log.
+5. Latent `ReferenceError` in `createPayout` (fixed in S).
+Unchanged: window (check-in day, retried two days), amount rule
+(`subTotal − MAJESTIC_COMMISSION %`; the hostOffer/KYC-age branch is kept
+verbatim although `User.kyc` is a Boolean so it never fires), IMPS to
+`BankDetail.fundId`, webhooks advancing `initiated/paid/rejected/reversed`.
+Not changed (business decision): a `failed`/`reversed` payout is retried
+only while its check-in is inside the 3-day window; afterwards it stays as
+is (47 of 65 production rows are `pending` with no gateway id from the
+period before bank details existed).
+
+## 12. Decisions that need the owner
+
+* **Stay length / booking horizon**: neither the calendar nor the old
+  backend limits them (production max: 32 nights, 120 days ahead). Batch S
+  no longer does either by default; `MAX_BOOKING_NIGHTS` /
+  `MAX_BOOKING_HORIZON_DAYS` enable a limit if wanted. The only fixed rule
+  is the one-year abuse ceiling per request (blocks already had it).
+* **Hold length**: 30 minutes (`BOOKING_HOLD_MINUTES`).
+* **Attention-queue outcomes** are manual: refund (admin cancel) or keep.
+* **Stuck payouts** older than the 3-day window are not retried.

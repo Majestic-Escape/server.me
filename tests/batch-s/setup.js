@@ -23,7 +23,8 @@ async function start() {
     KYC_PROVIDER_MOCK: "1",
     // Batch P: catalogue notifications are recorded, not sent; the fresh
     // secret exists so the authenticated bypass can be exercised.
-    LISTING_CHANGE_MOCK: "1",
+    // (the e2e server sets LISTING_CHANGE_MOCK=0 + SITE_REVALIDATE_URL to drive the real site route)
+    LISTING_CHANGE_MOCK: process.env.LISTING_CHANGE_MOCK === "0" ? "0" : "1",
     CATALOGUE_FRESH_SECRET: "test-fresh-secret",
     RAZORPAY_KEY_ID: "rzp_test_mock",
     RAZORPAY_KEY_SECRET: "mock_secret_key",

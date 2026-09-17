@@ -43,6 +43,9 @@ Predicate: **notify when the listing was publicly visible before the write or is
 | chat widget embedding writes | raw driver, outside this API | EMBEDDING_ONLY | ✘ |
 | `scripts/*`, `delete.js`, `loadData.js` | operator scripts | manual | run `ensure-indexes`/purge by hand if used |
 
+## How the customer site reaches the API (verified on production)
+The site's browser code calls `https://server.majesticescape.in/api/v1` directly (cross-origin; `NEXT_PUBLIC_API_BASE_URL` in its build), which is why `Vary: Origin` matters: each origin gets its own edge entry with the right `Access-Control-Allow-Origin`. The site's `/api/v1/:path*` rewrite is dead in production (`BACKEND_URL` is unset there, so it points at `localhost` and Vercel answers 404 `DNS_HOSTNAME_RESOLVED_PRIVATE`) — nothing uses it, and the `CDN-Cache-Control` choice keeps working if it ever comes back. The site's server-side fetches (`/stay/[id]`, the home prefetch) use `BACKEND_URL || NEXT_PUBLIC_API_BASE_URL` and therefore also hit the API domain directly.
+
 ## Cold start
 `index.js` no longer requires `aws-sdk` (a dead `s3` object) or `cors`; the S3 client (`config/digitalOcean.config.js`) is built on first use behind a proxy with the same call shape; `puppeteer-core` and `utils/generateInvoicePDF` (`@sparticuz/chromium`) load inside the handlers that render PDFs. `[boot] modules loaded in N ms` is logged at the end of `index.js` for before/after evidence; first-use tests cover the invoice module and the real S3 client's offline URL signing.
 

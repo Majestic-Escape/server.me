@@ -71,6 +71,9 @@ app.use((req, res, next) => {
       "Access-Control-Allow-Headers",
       "Origin, X-Requested-With, Content-Type, Accept, Authorization",
     );
+    // Browsers hide every non-safelisted response header from cross-origin
+    // callers; the admin reads the server-mapped KYC download filename.
+    res.header("Access-Control-Expose-Headers", "Content-Disposition");
   }
   // For OPTIONS requests, short-circuit and respond immediately:
   if (req.method === "OPTIONS") {

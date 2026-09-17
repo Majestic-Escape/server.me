@@ -1,5 +1,6 @@
 const Booking = require("../models/Booking");
-const puppeteer = require("puppeteer-core");
+// Batch P: puppeteer-core / @sparticuz/chromium are loaded by the handlers
+// that need them (see generatePdf / testPdf and utils/generateInvoicePDF).
 const Payment = require("../models/Payment");
 const moment = require("moment-timezone");
 const jwt = require("jsonwebtoken");
@@ -20,7 +21,7 @@ const { changeToUpperCase } = require("../utils/convertToUpperCase");
 const { paramsToObject } = require("../utils/paramsObject");
 const agenda = require("../utils/agenda");
 const generateInvoiceHTML = require("../utils/generateInvoiceHTML");
-const generateInvoicePDF = require("../utils/generateInvoicePDF");
+const generateInvoicePDF = (html) => require("../utils/generateInvoicePDF")(html); // lazy
 const {
   generateBookingGuestListHTML,
 } = require("../utils/generateBookingGuestList");
@@ -846,6 +847,7 @@ exports.generatePdf = async (req, res) => {
       console.log("🧪 Starting Puppeteer...");
     }
 
+    const puppeteer = require("puppeteer-core");
     const browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -1114,6 +1116,7 @@ exports.testPdf = async (req, res) => {
       console.log("🧪 Testing PDF generation...");
     }
 
+    const puppeteer = require("puppeteer-core");
     const browser = await puppeteer.launch({
       headless: "new",
       args: ["--no-sandbox", "--disable-setuid-sandbox"],

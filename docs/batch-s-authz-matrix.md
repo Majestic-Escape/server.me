@@ -145,7 +145,15 @@ Verdict table (`services/kycVerdict.js`): `http_response_code === 200` and `resu
 | `POST /prop-listing/` | 401 | 403 | 403 | 200 | |
 | `PUT /prop-listing/:id` | 401 | 403 | 403 | 200 | |
 | `DELETE /prop-listing/:id`, `POST /prop-listing/bulk-action` | 404 | 404 | 404 | 404 | routes removed |
-| `GET /prop-listing/status`, `/:id`, `/admin/:id` | 200 | 200 | 200 | 200 | unchanged reads |
+| `GET /prop-listing/:id` | 200 | 200 | 200 | 200 | public read; malformed id → 404 (Batch P) |
+| `GET /prop-listing/status?email=` | 401 | 403 | 200 | 200 | Batch P: the caller's own stage (`host` id or legacy `hostEmail`), status-only projection; admins may ask for any host. Used to match every listing in the collection |
+| `GET /prop-listing/admin/:id` | 401 | 403 | 403 | 200 | Batch P: was anonymous (hostEmail, street, registration number); admin compat sends the token |
+| `GET /prop-listing/export` | 401 | 403 | 403 | 200 | Batch P: was anonymous (whole catalogue with hosts); no UI caller |
+| `GET /properties/admin-filter` | 401 | 403 | 403 | 200 | Batch P: was anonymous; the admin already sends the token |
+| `GET /properties/active/filter/:hostId` | 401 | 403 | 403 | 200 | Batch P: was any authenticated user (host contact details); admin host-profile page only |
+
+## Public catalogue (Batch P — `docs/batch-p-catalogue.md`)
+`GET /properties/front/dynamic`, `/properties/dynamic`, `/properties/search-properties` (no dates), `/properties/countstays` are edge-cached under the `listings` tag (`CDN-Cache-Control: public, s-maxage=300, stale-while-revalidate=120`, browsers `max-age=0` + ETag) and serve a card projection; the chat widget's `embedding*` fields never leave the API (model query middleware + sanitiser) and cannot be written through it (undeclared → strict mode drops them). `?fresh=1` + `x-catalogue-fresh: <CATALOGUE_FRESH_SECRET>` bypasses the cache for the site server; without the secret it is a 400.
 
 ### Listing reference inventory (evidence for the delete design)
 Repo-wide search of `ListingProperty`, `propertyId`, `property:` across models/controllers/services/jobs: `Booking.propertyId`, `BookingNight.propertyId`, `Payment.propertyId`, `HostPayout.propertyId`, `Review.property`, `HostReview.property`, `ExternalCalendar.propertyId`, `BookingInterest.propertyId` (String), `KycHostForm`/`BankDetail` (keyed by host, untouched), `Chat` (by bookingId), legacy `Calendar/Share/Host/Experience` (reference the unused `Property`/`Experience` models). Wishlist lives in the customer site's localStorage; chat conversations live in the separate `majestic-chat` database and already degrade to "Property" when a listing is missing. Writers that can target a pending listing: host calendar blocks and iCal imports — both re-check the listing after inserting and withdraw when it is gone.

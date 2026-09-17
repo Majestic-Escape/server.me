@@ -1,6 +1,7 @@
 const Review = require("../models/Review");
 const Booking = require("../models/Booking");
 const ListingProperty = require("../models/ListingProperty");
+const { notifyListingChanged } = require("../services/listingChanged");
 const jwt = require("jsonwebtoken");
 const secret = process.env.JWT_SECRET;
 const mongoose = require("mongoose");
@@ -264,6 +265,8 @@ exports.submitReview = async (req, res) => {
       },
       { new: true }
     );
+    // Batch P: the rating on the public card changed.
+    if (updatedProperty && updatedProperty.status === "active") await notifyListingChanged([booking.propertyId], "review");
 
     const host = await User.findById(booking.hostId, {
       avgPropertyRating: 1,
@@ -517,6 +520,7 @@ exports.updateReview = async (req, res) => {
             reviewCount: newCount,
           }
         );
+        if (property.status === "active") await notifyListingChanged([propertyId], "review-update"); // Batch P
       }
     }
 

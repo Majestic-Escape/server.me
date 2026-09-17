@@ -171,6 +171,10 @@ async function main() {
         const u = await User.findOne({ email }).select("otp").lean();
         return res.end(JSON.stringify({ otp: u && u.otp && u.otp.value }));
       }
+      if (req.url === "/calendars") {
+        const ExternalCalendar = require("../../models/ExternalCalendar");
+        return res.end(JSON.stringify(await ExternalCalendar.find({ propertyId: seed.listingId }).lean()));
+      }
       if (req.url === "/state") {
         const Booking = require("../../models/Booking");
         const Payment = require("../../models/Payment");

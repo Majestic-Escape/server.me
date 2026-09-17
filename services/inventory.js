@@ -19,6 +19,9 @@ const mongoose = require("mongoose");
 const BookingNight = require("../models/BookingNight");
 
 const DAY_MS = 86_400_000;
+// Product behaviour (docs §12): a checkout holds its nights for this long.
+// The 30-minute default is subject to owner approval; a hold cannot be
+// disabled because atomic availability depends on it.
 const HOLD_MINUTES = Number(process.env.BOOKING_HOLD_MINUTES) || 30;
 
 function utcDay(value) {

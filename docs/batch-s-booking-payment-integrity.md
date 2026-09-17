@@ -299,13 +299,13 @@ only while its check-in is inside the 3-day window; afterwards it stays as
 is (47 of 65 production rows are `pending` with no gateway id from the
 period before bank details existed).
 
-## 12. Decisions that need the owner
+## 12. Product behaviours that need the owner's explicit approval
 
-* **Stay length / booking horizon**: neither the calendar nor the old
-  backend limits them (production max: 32 nights, 120 days ahead). Batch S
-  no longer does either by default; `MAX_BOOKING_NIGHTS` /
-  `MAX_BOOKING_HORIZON_DAYS` enable a limit if wanted. The only fixed rule
-  is the one-year abuse ceiling per request (blocks already had it).
-* **Hold length**: 30 minutes (`BOOKING_HOLD_MINUTES`).
-* **Attention-queue outcomes** are manual: refund (admin cancel) or keep.
-* **Stuck payouts** older than the 3-day window are not retried.
+| Behaviour | Where | Status |
+|---|---|---|
+| **Checkout hold: `BOOKING_HOLD_MINUTES=30`.** From the moment a guest submits the checkout, the selected nights are unavailable to everyone else for 30 minutes (re-armed for another 30 minutes when Pay is clicked). Nothing was held before Batch S. A hold is required for atomic availability, so it cannot be turned off — only its length is a choice. | `services/inventory.js`, env `BOOKING_HOLD_MINUTES` | **Requires owner approval of the 30-minute value** (or a different value). |
+| **Stay-length / booking-horizon limits: none.** Neither the calendar nor the pre-S backend limited how many nights or how far ahead a stay may start; Batch S does not either. `MAX_BOOKING_NIGHTS` / `MAX_BOOKING_HORIZON_DAYS` exist only to enable a limit later. | `controllers/bookingLifecycleController.js` | No customer-facing limit introduced; **any limit is an owner decision.** |
+| **One-year-per-request ceiling: `ABUSE_MAX_NIGHTS = 366`.** A single booking or host block cannot claim more than 366 nights. This is an abuse/resource-protection bound (a request cannot hold years of inventory or insert thousands of night rows), the same cap host calendar blocks already had — it is **not** a product "maximum stay" and is not the same as "no limit". | `controllers/bookingLifecycleController.js` (`validateStay`) | Intentional protection; documented, no lower limit added. |
+| Attention-queue outcomes are manual (refund via admin cancel, or keep). | `services/attention.js` | By design. |
+| Failed/reversed payouts are retried only inside the 3-day check-in window; older ones stay as-is. | `services/payouts.js` | Unchanged policy. |
+| Maintenance gate fails closed: a cold instance that cannot read the flag refuses booking writes (`MAINTENANCE_UNKNOWN`). | `services/maintenance.js` | Intentional. |

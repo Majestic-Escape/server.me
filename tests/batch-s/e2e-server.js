@@ -98,7 +98,52 @@ async function main() {
   const priorCancelled = await seedBooking(listing, GUEST, -30, 2, { status: "cancelled", paymentStatus: "refunded" });
   const priorBlock = await seedBooking(listing, HOST, 40, 1, { status: "confirmed", paymentStatus: "paid", action: "host" });
   const priorGuestB = await seedBooking(catalogue[1], GUEST_B, 50, 2, { status: "confirmed", paymentStatus: "paid" });
+  // --- Batch A2 admin-tools fixtures --------------------------------------
+  // A pure guest (no listing), a role:"admin" user (must be hidden from the
+  // Users page), pending listings to delete (one with a review → blocked, one
+  // sharing a photo with an active listing → object kept), and KYC uploads
+  // for the main host (jpeg / png data-URI / pdf / html-looking, the latest
+  // one awaiting manual review) plus a host with 21 uploads.
+  const PENDING_PHOTO = (n) => `https://${process.env.DO_SPACES_BUCKET}.${process.env.REGION}.digitaloceanspaces.com/listings/${HOST._id}/00000000-0000-4000-8000-${String(n).padStart(12, "0")}-photo.jpg`;
+  const PURE_GUEST = await h.makeUser({ firstName: "Pure", lastName: "Guest", email: "pure@test.local", phoneNumber: "9999999990" });
+  const ROLE_ADMIN = await h.makeUser({ firstName: "Role", lastName: "Admin", email: "roleadmin@test.local", phoneNumber: "9999999991", role: "admin" });
+  const pendingA = await h.makeListing(HOST, { title: "QA Pending Villa A", status: "processing", photos: [PENDING_PHOTO(1), PENDING_PHOTO(2), "https://images.pexels.com/photos/1.jpg"], address: { city: "Panaji", state: "Goa", country: "India", district: "North Goa" }, propertyType: "villa", placeType: "entire", basePrice: 5000, guests: 4 });
+  const pendingB = await h.makeListing(HOST_B, { title: "QA Pending Cottage B", status: "processing", photos: [PENDING_PHOTO(3)], address: { city: "Manali", state: "Himachal Pradesh", country: "India", district: "Kullu" }, propertyType: "cottage", placeType: "entire", basePrice: 3000, guests: 2 });
+  const pendingC = await h.makeListing(HOST, { title: "QA Pending Farmhouse C", status: "processing", photos: [PENDING_PHOTO(4)], address: { city: "Lonavala", state: "Maharashtra", country: "India", district: "Pune" }, propertyType: "farmhouse", placeType: "entire", basePrice: 8000, guests: 6 });
+  const pendingShared = await h.makeListing(HOST, { title: "QA Pending Shared Photo", status: "processing", photos: [PHOTO], address: { city: "Panaji", state: "Goa", country: "India", district: "North Goa" }, propertyType: "villa", placeType: "entire", basePrice: 5000, guests: 4 });
+  const pendingReviewed = await h.makeListing(HOST, { title: "QA Pending With Review", status: "processing", photos: [PENDING_PHOTO(5)], address: { city: "Panaji", state: "Goa", country: "India", district: "North Goa" }, propertyType: "villa", placeType: "entire", basePrice: 5000, guests: 4 });
+  await require("../../models/Review").create({ bookingId: new mongoose.Types.ObjectId(), hostId: HOST._id, property: pendingReviewed._id, user: GUEST._id, rating: 5, content: "seeded review" });
+  const qaActive = await h.makeListing(HOST, { title: "QA Active Villa", status: "active", photos: [PHOTO], address: { city: "Panaji", state: "Goa", country: "India", district: "North Goa" }, propertyType: "villa", placeType: "entire", basePrice: 5000, guests: 4 });
+  // The main host's KYC and bank flags are set so the admin Approve dialog offers Confirm.
+  await require("../../models/User").updateOne({ _id: HOST._id }, { $set: { kyc: true, bank: true } });
+  const KycLogs = require("../../models/KycLogs");
+  const KycHostData = require("../../models/KycHostForm");
+  const JPEG = Buffer.from("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/yQALCAABAAEBAREA/8wABgAQEAX/2gAIAQEAAD8A0s8g/9k=", "base64");
+  const PNG = Buffer.from("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c636000010000050001a5f645400000000049454e44ae426082", "hex");
+  const PDF = Buffer.from("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 100]>>endobj\nxref\n0 4\n0000000000 65535 f \n0000000009 00000 n \n0000000052 00000 n \n0000000101 00000 n \ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n168\n%%EOF\n");
+  const HTMLISH = Buffer.from("<html><script>alert(1)</script></html>");
+  async function seedOcr(user, buf, { doc, dataUri = false, minutesAgo = 0, status = "success", name = "HOSTY PERSON", number = "ABCDE1234F" }) {
+    const image = dataUri ? `data:image/png;base64,${buf.toString("base64")}` : buf.toString("base64");
+    const details = doc === "pan" ? { name: { value: name }, pan_no: { value: number } } : doc === "voterId" ? { name: { value: name }, voterid: { value: number } } : { name: { value: name }, passport_num: { value: number } };
+    return KycLogs.create({ userId: user._id, email: user.email, type: "OCR", status, requestData: { imageUrl: image, clientRefId: "seed", doc }, responseData: { status: "success", result: [{ type: doc, details }] }, createdAt: new Date(Date.now() - minutesAgo * 60000) });
+  }
+  const docJpeg = await seedOcr(HOST, JPEG, { doc: "pan", minutesAgo: 60 });
+  const docPng = await seedOcr(HOST, PNG, { doc: "voterId", dataUri: true, minutesAgo: 45, number: "XYZ9876543" });
+  const docPdf = await seedOcr(HOST, PDF, { doc: "passport", minutesAgo: 30, number: "N1234567" });
+  const docHtml = await seedOcr(HOST, HTMLISH, { doc: "pan", minutesAgo: 20, status: "failed" });
+  const docReview = await seedOcr(HOST, JPEG, { doc: "pan", minutesAgo: 5, name: "SOMEBODY ELSE" });
+  await KycHostData.create({ hostId: HOST._id, hostEmail: HOST.email, status: "pending", personalInfo: { fatherName: "Father", dob: "1990-01-01", address: { line1: "1 St", city: "Panaji", state: "Goa", pincode: "403001", country: "India" } }, acceptedTerms: { general: true }, documentInfo: { documentType: "pan", isVerified: false, reviewStatus: "needs_review", reviewReason: "NAME_MISMATCH", verifiedLogId: docReview._id, fingerprint: "seed" }, gstInfo: { isVerified: true, gstNumber: "******F1Z5", panNumber: "******234F" } });
+  const MANY_HOST = await h.makeUser({ role: "host", firstName: "Many", lastName: "Uploads", email: "many@test.local", phoneNumber: "9999999992" });
+  for (let i = 0; i < 21; i++) await seedOcr(MANY_HOST, JPEG, { doc: "pan", minutesAgo: 1000 + i });
   const seed = {
+    adminTools: {
+      pureGuestId: String(PURE_GUEST._id),
+      roleAdminId: String(ROLE_ADMIN._id),
+      pending: { a: String(pendingA._id), b: String(pendingB._id), c: String(pendingC._id), shared: String(pendingShared._id), reviewed: String(pendingReviewed._id) },
+      qaActiveId: String(qaActive._id),
+      docs: { jpeg: String(docJpeg._id), png: String(docPng._id), pdf: String(docPdf._id), html: String(docHtml._id), review: String(docReview._id) },
+      manyHostId: String(MANY_HOST._id),
+    },
     guestBToken: h.userToken(GUEST_B),
     guestBId: String(GUEST_B._id),
     guestBUser: { _id: String(GUEST_B._id), firstName: GUEST_B.firstName, lastName: GUEST_B.lastName, email: GUEST_B.email, role: "user" },
@@ -170,6 +215,23 @@ async function main() {
         const email = decodeURIComponent(req.url.split("email=")[1] || "");
         const u = await User.findOne({ email }).select("otp").lean();
         return res.end(JSON.stringify({ otp: u && u.otp && u.otp.value }));
+      }
+      if (req.url === "/spaces") {
+        // Control/inspect the Spaces fake: { failMode: "all"|"partial"|null }
+        const storage = require("../../services/storage");
+        if (json.failMode !== undefined) storage.setMockFailure(json.failMode);
+        if (json.reset) storage.resetMock();
+        return res.end(JSON.stringify({ deleted: storage.__mock.deleted, calls: storage.__mock.calls, failMode: storage.__mock.failMode }));
+      }
+      if (req.url === "/audit") {
+        const AdminAuditLog = require("../../models/AdminAuditLog");
+        return res.end(JSON.stringify(await AdminAuditLog.find({}).sort({ createdAt: -1 }).limit(50).lean()));
+      }
+      if (req.url === "/rename-server-side") {
+        // Another admin renames the user behind the page's back (stale-page test)
+        const User = require("../../models/User");
+        await User.updateOne({ _id: json.userId }, { $set: { firstName: json.firstName, lastName: json.lastName } });
+        return res.end(JSON.stringify({ ok: true }));
       }
       if (req.url === "/calendars") {
         const ExternalCalendar = require("../../models/ExternalCalendar");

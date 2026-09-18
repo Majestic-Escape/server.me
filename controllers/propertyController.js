@@ -782,32 +782,25 @@ exports.getAllStaticProperties = async (req, res) => {
 };
 
 // controllers/propertyController.js
+// Public, anonymous list. Used to return every listing regardless of status
+// (drafts, pending, delisted — with host ids and rules) and filtered on a
+// field the schema does not have. Batch P: active listings only, as cards,
+// same envelope; `type` means propertyType like the other public lists.
 exports.getAllProperties = async (req, res) => {
-  if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("getAllProperties");
-  }
   try {
-    // Get pagination parameters from query with radix specified
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 30;
-    const skip = (page - 1) * limit;
-
-    // Get filter parameters
+    if (!catalogueCache(req, res)) return;
+    const { page, limit, skip } = pageParams(req.query, 30);
     const { type } = req.query;
+    const query = { status: "active" };
+    if (type) query.propertyType = type;
 
-    // Build query object
-    const query = {};
-    if (type) {
-      query.type = type;
-    }
-
-    // Execute queries in parallel for better performance
     const [properties, totalProperties] = await Promise.all([
       ListingProperty.find(query)
-        .sort({ createdAt: -1 }) // Sort by newest first
+        .select(CARD_PROJECTION)
+        .sort({ createdAt: -1, _id: -1 })
         .skip(skip)
         .limit(limit)
-        .lean(), // Use lean() for better performance
+        .lean(),
       ListingProperty.countDocuments(query),
     ]);
 

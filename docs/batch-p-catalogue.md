@@ -9,7 +9,7 @@ On 2026-09-18 the home page's listing request (`GET /properties/front/dynamic`) 
 - **Date searches use the night ledger** (`bookingnights`: held = `expiresAt` null or in the future; kinds booking/block/ical). Cancelled bookings and expired holds no longer hide listings.
 - **Edge cache** (`utils/httpCache.js`) only on the three pure-public reads, only on 200:
   `Cache-Control: public, max-age=0, must-revalidate` (browsers revalidate; Express ETags → 304), `CDN-Cache-Control: public, s-maxage=300, stale-while-revalidate=120` (Vercel's edge for the API domain **and** the customer site's edge, which proxies `/api/v1/*` through an external rewrite), `Vercel-Cache-Tag: listings`, `Vary: Origin`. Date-filtered searches, `/properties/:id`, every host/admin read and every error stay `no-store`.
-  Kill switch: `CATALOGUE_CACHE_DISABLED=1`.
+  Kill switch: `CATALOGUE_CACHE_DISABLED=1` — on Vercel an env change applies to the **next deployment**, so it is "set → redeploy/promote", not instantaneous; for an emergency before that, promote the previous known-good deployment.
 - **Fresh bypass for the site server**: `?fresh=1` + `x-catalogue-fresh: <CATALOGUE_FRESH_SECRET>` → `no-store` (used when the site regenerates a page after a purge, so a stale edge copy can never refill its Data Cache). Without a valid secret the answer is **400** — never a cacheable status, so the parameter can neither prime a stale entry nor bypass the cache for anyone else. Any CDN can still be made to miss with unknown query strings; that is no worse than the previous fully uncached state and each miss is now a ~10 KB indexed read.
 
 ## Change notifications (`services/listingChanged.js`)
@@ -52,5 +52,8 @@ The site's browser code calls `https://server.majesticescape.in/api/v1` directly
 ## Indexes (create-only, `scripts/ensure-indexes.js`)
 `listingproperties`: `{status:1, createdAt:-1, _id:-1}`, `{host:1}`, `{hostEmail:1}` — plus the Batch A2 `kyclogs` / `adminauditlogs` indexes. `--explain` asserts the home query plan is `IXSCAN … SORT_MERGE` (no blocking `SORT`).
 
+## Closed with the release
+`GET /properties/` (bare, no live consumer) returns active listings only, as cards; `POST /review/` requires the booking's guest, `POST /review/guest` the booking's host, `PATCH /review/update` an admin (its only caller is the admin Reviews page).
+
 ## Flagged, not changed here
-`GET /properties/` (bare) returns non-active listings publicly; `submitReview` does not check that the caller owns the booking; `getCustomSearch` `guests` filter uses `$gte` on the listing's `guests`; agenda opens a second Mongo connection per instance; `updatedAt` is never maintained; `bookingnights` has no date-first index (the date search scans the `{propertyId,date}` index — fine at current volume, re-measure with `explain` as bookings grow).
+`getCustomSearch` `guests` filter uses `$gte` on the listing's `guests`; agenda opens a second Mongo connection per instance; `updatedAt` is never maintained; `bookingnights` has no date-first index (the date search scans the `{propertyId,date}` index — fine at current volume, re-measure with `explain` as bookings grow).

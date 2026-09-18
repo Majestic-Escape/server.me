@@ -546,3 +546,54 @@ test("cost: front/dynamic ≤ 2 ops, search ≤ 3, countstays ≤ 1, detail ≤ 
   assert.match(signed, /^https:\/\/.*test-bucket.*listings\/x\.jpg\?/);
   assert.equal(loaded("aws-sdk"), true);
 });
+
+// ---------------------------------------------------------------------------
+test("closure: reviews are the booking's guest / host only, moderation is admin-only; GET /properties/ (bare) is active-only cards", async () => {
+  await ListingProperty().deleteMany({ host: { $in: [H._id, O._id] } });
+  const User = require("../../models/User");
+  HT = h.userToken(await User.findById(H._id));
+  OT = h.userToken(await User.findById(O._id));
+  const L = await h.makeListing(H, { title: "Review Villa" });
+  const B = await Booking().create({ userId: G._id, hostId: H._id, propertyId: L._id, checkIn: new Date(h.day(-9)), checkOut: new Date(h.day(-7)), price: 1, subTotal: 1, nights: 2, adults: 1, status: "confirmed", paymentStatus: "paid" });
+  const body = { bookingId: String(B._id), rating: 4, content: "Nice" };
+  // guest review: anonymous / another user / the host / an admin → refused; the booking's guest → accepted once
+  assert.equal((await raw("/review/", { method: "POST", body })).status, 401);
+  assert.equal((await raw("/review/", { token: OT, method: "POST", body })).status, 403, "another user cannot review this booking");
+  assert.equal((await raw("/review/", { token: HT, method: "POST", body })).status, 403, "the host cannot review as the guest");
+  assert.equal((await raw("/review/", { token: AT, method: "POST", body })).status, 403, "reviews are personal, even for admins");
+  assert.equal((await ListingProperty().findById(L._id).select("reviewCount").lean()).reviewCount, 0, "refused reviews change nothing");
+  const ok = await raw("/review/", { token: GT, method: "POST", body });
+  assert.ok([200, 201].includes(ok.status), ok.text);
+  assert.equal((await ListingProperty().findById(L._id).select("reviewCount").lean()).reviewCount, 1);
+  // host review of the guest: another host / the guest → refused; the booking's host → accepted
+  const hb = { bookingId: String(B._id), rating: 5, content: "Great guest" };
+  assert.equal((await raw("/review/guest", { method: "POST", body: hb })).status, 401);
+  assert.equal((await raw("/review/guest", { token: OT, method: "POST", body: hb })).status, 403);
+  assert.equal((await raw("/review/guest", { token: GT, method: "POST", body: hb })).status, 403);
+  const hok = await raw("/review/guest", { token: HT, method: "POST", body: hb });
+  assert.ok([200, 201].includes(hok.status), hok.text);
+  // moderation: admin only, ids validated
+  const upd = `/review/update?bookingId=${B._id}&status=accept&propertyId=${L._id}&rating=4`;
+  assert.equal((await raw(upd, { method: "PATCH" })).status, 401);
+  assert.equal((await raw(upd, { token: GT, method: "PATCH" })).status, 403);
+  assert.equal((await raw(upd, { token: HT, method: "PATCH" })).status, 403);
+  assert.equal((await raw(`/review/update?bookingId=nope&status=accept&propertyId=${L._id}&rating=4`, { token: AT, method: "PATCH" })).status, 400, "malformed id no longer a CastError");
+  const mod = await raw(upd, { token: AT, method: "PATCH" });
+  assert.equal(mod.status, 200, mod.text);
+  assert.equal((await ListingProperty().findById(L._id).select("reviewCount").lean()).reviewCount, 0, "hidden review removed from the rating");
+
+  // GET /properties/ (bare): only active listings, as cards, cacheable, envelope unchanged
+  await h.makeListing(H, { title: "Bare Draft", status: "incomplete" });
+  await h.makeListing(H, { title: "Bare Pending", status: "processing" });
+  await h.makeListing(H, { title: "Bare Delisted", status: "inactive" });
+  const bare = await raw("/properties/?limit=50");
+  assert.equal(bare.status, 200);
+  assert.deepEqual(Object.keys(bare.json).sort(), ["currentPage", "hasMore", "properties", "resultsPerPage", "totalPages", "totalProperties"]);
+  const titles = bare.json.properties.map((p) => p.title);
+  assert.ok(titles.includes("Review Villa"));
+  for (const t of ["Bare Draft", "Bare Pending", "Bare Delisted"]) assert.ok(!titles.includes(t), `${t} must not be public`);
+  assert.ok(!("hostEmail" in bare.json.properties[0]) && !("host" in bare.json.properties[0]) && !("embedding" in bare.json.properties[0]));
+  assert.equal(bare.headers["vercel-cache-tag"], "listings");
+  assert.equal(bare.json.resultsPerPage, 50);
+  assert.equal((await raw("/properties/?limit=999999")).json.resultsPerPage, 50, "capped");
+});

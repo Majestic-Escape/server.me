@@ -151,6 +151,10 @@ Verdict table (`services/kycVerdict.js`): `http_response_code === 200` and `resu
 | `GET /prop-listing/export` | 401 | 403 | 403 | 200 | Batch P: was anonymous (whole catalogue with hosts); no UI caller |
 | `GET /properties/admin-filter` | 401 | 403 | 403 | 200 | Batch P: was anonymous; the admin already sends the token |
 | `GET /properties/active/filter/:hostId` | 401 | 403 | 403 | 200 | Batch P: was any authenticated user (host contact details); admin host-profile page only |
+| `GET /properties/` (bare) | 200 | 200 | 200 | 200 | Batch P: active listings only, card projection (was every status incl. drafts, no consumer) |
+| `POST /review/` | 401 | 403 | 201 (booking's guest) | 403 | Batch P: only the guest who made the booking; a review changes the public rating and purges the catalogue |
+| `POST /review/guest` | 401 | 403 | 200 (booking's host) | 403 | Batch P: only the booking's host |
+| `PATCH /review/update` | 401 | 403 | 403 | 200 | Batch P: review moderation is admin-only (admin Reviews page); ids validated |
 
 ## Public catalogue (Batch P — `docs/batch-p-catalogue.md`)
 `GET /properties/front/dynamic`, `/properties/dynamic`, `/properties/search-properties` (no dates), `/properties/countstays` are edge-cached under the `listings` tag (`CDN-Cache-Control: public, s-maxage=300, stale-while-revalidate=120`, browsers `max-age=0` + ETag) and serve a card projection; the chat widget's `embedding*` fields never leave the API (model query middleware + sanitiser) and cannot be written through it (undeclared → strict mode drops them). `?fresh=1` + `x-catalogue-fresh: <CATALOGUE_FRESH_SECRET>` bypasses the cache for the site server; without the secret it is a 400.

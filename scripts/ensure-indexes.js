@@ -11,6 +11,14 @@
 //                                             both winning plans use their
 //                                             index without a blocking sort
 //   node scripts/ensure-indexes.js --dry-run  list only, create nothing
+//   --confirm-db=<name>                       abort unless the connection's
+//                                             database is <name> (guards a
+//                                             wrong DB_URI); recommended for
+//                                             production runs
+//
+// Prefer `DB_URI` from the environment over --uri= so the credential does
+// not land in the shell history, e.g. (PowerShell)
+//   $env:DB_URI = (Get-Content .\prod-uri.txt); node scripts/ensure-indexes.js --explain --confirm-db=<name>; Remove-Item .\prod-uri.txt
 //
 // Uses DB_URI (or --uri=...). Read-only apart from index creation. Runs in
 // seconds on the small kyclogs / adminauditlogs collections (M0 included).
@@ -50,7 +58,8 @@ async function ensureIndexes({ dryRun = false, explain = false, log = console.lo
     log(`[indexes] createIndexes() done in ${report.createMs} ms`);
   }
   for (const Model of [KycLogs, AdminAuditLog, ListingProperty]) {
-    const names = (await Model.collection.indexes()).map((i) => `${i.name} ${JSON.stringify(i.key)}`);
+    // a collection that has never been written has no indexes to list (dry runs on a fresh DB)
+    const names = (await Model.collection.indexes().catch((err) => (/ns does not exist/.test(err.message) ? [] : Promise.reject(err)))).map((i) => `${i.name} ${JSON.stringify(i.key)}`);
     report.indexes[Model.collection.collectionName] = names;
     log(`[indexes] ${Model.collection.collectionName}: ${names.join(" | ")}`);
   }
@@ -101,7 +110,12 @@ async function main() {
   const uri = opt("uri") || process.env.DB_URI;
   if (!uri) throw new Error("DB_URI (or --uri) is required");
   await mongoose.connect(uri, { serverSelectionTimeoutMS: 20000 });
-  console.log(`[indexes] database: ${mongoose.connection.db.databaseName}`);
+  const dbName = mongoose.connection.db.databaseName;
+  console.log(`[indexes] database: ${dbName} (host: ${mongoose.connection.host})`);
+  const expected = opt("confirm-db");
+  if (expected && expected !== dbName) {
+    throw new Error(`connected to "${dbName}" but --confirm-db expects "${expected}" — nothing created`);
+  }
   await ensureIndexes({ dryRun: has("--dry-run"), explain: has("--explain") });
 }
 

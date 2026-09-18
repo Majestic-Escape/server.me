@@ -9,7 +9,7 @@ const { sendEmail } = require("../utils/sendEmail");
 const { changeToUpperCase } = require("../utils/convertToUpperCase");
 const { paramsToObject } = require("../utils/paramsObject");
 const generateInvoiceHTML = require("../utils/generateInvoiceHTML");
-const generateInvoicePDF = require("../utils/generateInvoicePDF");
+const generateInvoicePDF = (html) => require("../utils/generateInvoicePDF")(html); // Batch P: lazy (puppeteer + chromium)
 const { generateBookingGuestListHTML } = require("../utils/generateBookingGuestList");
 const { calTax } = require("../utils/tax");
 

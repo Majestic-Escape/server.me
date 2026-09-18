@@ -133,8 +133,11 @@ test("bank details, hosts analytics, hostData listings, prop-listing writes and 
   assert.equal((await h.api("DELETE", `/prop-listing/${LH._id}`, { token: AT })).status, 404, "anonymous delete route removed");
   assert.equal((await h.api("POST", "/prop-listing/bulk-action", { token: AT, body: { propertyIds: [String(LH._id)], action: "delete" } })).status, 404, "bulk-action route removed");
   assert.ok(await ListingProperty().exists({ _id: LH._id }));
-  // reads used by the customer site stay public
-  assert.equal((await h.api("GET", `/prop-listing/status?email=${encodeURIComponent(H.email)}`)).status, 200);
+  // Batch P: the stage read is the host's own (the site sends the session token) or an admin's
+  assert.equal((await h.api("GET", `/prop-listing/status?email=${encodeURIComponent(H.email)}`)).status, 401);
+  assert.equal((await h.api("GET", `/prop-listing/status?email=${encodeURIComponent(H.email)}`, { token: OT })).status, 403);
+  assert.equal((await h.api("GET", `/prop-listing/status?email=${encodeURIComponent(H.email)}`, { token: HT })).status, 200);
+  assert.equal((await h.api("GET", `/prop-listing/status?email=${encodeURIComponent(H.email)}`, { token: AT })).status, 200);
 });
 
 // ---------------------------------------------------------------------------

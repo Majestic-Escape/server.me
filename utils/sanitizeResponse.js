@@ -26,7 +26,11 @@ const SAFE_HOST_FIELDS = [
 const SENSITIVE_PROPERTY_FIELDS = [
   'hostEmail',
   'validRegistrationNo',
-  'bankDetails'
+  'bankDetails',
+  // Chat-widget vector fields: excluded at the model, stripped again here.
+  'embedding',
+  'embeddingUpdatedAt',
+  'embeddingVersion'
 ];
 
 // Sensitive fields to remove from property address - keep city/state for display, remove exact location

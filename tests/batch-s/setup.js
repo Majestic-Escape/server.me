@@ -21,6 +21,11 @@ async function start() {
     RAZORPAY_MOCK: "1",
     SPACES_MOCK: "1",
     KYC_PROVIDER_MOCK: "1",
+    // Batch P: catalogue notifications are recorded, not sent; the fresh
+    // secret exists so the authenticated bypass can be exercised.
+    // (the e2e server sets LISTING_CHANGE_MOCK=0 + SITE_REVALIDATE_URL to drive the real site route)
+    LISTING_CHANGE_MOCK: process.env.LISTING_CHANGE_MOCK === "0" ? "0" : "1",
+    CATALOGUE_FRESH_SECRET: "test-fresh-secret",
     RAZORPAY_KEY_ID: "rzp_test_mock",
     RAZORPAY_KEY_SECRET: "mock_secret_key",
     RAZORPAY_WEBHOOK_KEY: "mock_webhook_secret",
@@ -42,7 +47,7 @@ async function start() {
     DO_SPACES_BUCKET: "test-bucket",
     REGION: "blr1",
     BREVO_API_KEY: "disabled",
-    ALLOWED_ORIGINS: "http://localhost:3000",
+    ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:3001",
     PUBLIC_HOSTNAME: "http://127.0.0.1",
     MAJESTIC_COMMISSION: "12",
     HOST_COMMISSION_OFFER: "0",
@@ -68,6 +73,7 @@ async function start() {
     require("../../models/User").syncIndexes(),
     require("../../models/KycLogs").createIndexes(),
     require("../../models/AdminAuditLog").createIndexes(),
+    require("../../models/ListingProperty").createIndexes(), // Batch P
   ]);
   const port = server.address().port;
   started = { app, server, baseUrl: `http://127.0.0.1:${port}/api/v1`, uri };

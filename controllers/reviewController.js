@@ -1,6 +1,9 @@
 const Review = require("../models/Review");
 const Booking = require("../models/Booking");
 const ListingProperty = require("../models/ListingProperty");
+const { notifyListingChanged } = require("../services/listingChanged");
+const authz = require("../middleware/authz");
+const { rejectInvalidId } = require("../middleware/validateObjectId");
 const jwt = require("jsonwebtoken");
 const secret = process.env.JWT_SECRET;
 const mongoose = require("mongoose");
@@ -221,6 +224,11 @@ exports.submitReview = async (req, res) => {
         message: "Booking not found or already reviewed",
       });
     }
+    // Only the guest who made the booking may review it: a review changes
+    // the listing's public rating (and, since Batch P, purges the cached
+    // catalogue), so it must not be writable by any other signed-in user.
+    const actor = await authz.resolveActor(req);
+    if (!actor || String(booking.userId) !== actor.id) return authz.forbid(res);
 
     // 2️⃣ Create review
     await Review.create({
@@ -264,6 +272,8 @@ exports.submitReview = async (req, res) => {
       },
       { new: true }
     );
+    // Batch P: the rating on the public card changed.
+    if (updatedProperty && updatedProperty.status === "active") await notifyListingChanged([booking.propertyId], "review");
 
     const host = await User.findById(booking.hostId, {
       avgPropertyRating: 1,
@@ -330,6 +340,10 @@ exports.submitHostReview = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
+    // Only the host of the booking may review its guest.
+    const actor = await authz.resolveActor(req);
+    const hostId = booking.hostId && (booking.hostId._id || booking.hostId);
+    if (!actor || String(hostId) !== actor.id) return authz.forbid(res);
 
     // Optional: prevent duplicate review for same booking
     const existing = await HostReview.findOne({ bookingId: booking._id });
@@ -489,6 +503,7 @@ exports.checkReview = async (req, res) => {
 exports.updateReview = async (req, res) => {
   try {
     const { propertyId, bookingId, rating, status } = req.query;
+    if (rejectInvalidId(res, propertyId, "propertyId") || rejectInvalidId(res, bookingId, "bookingId")) return;
 
     // Find the property first
     const property = await ListingProperty.findById(
@@ -517,6 +532,7 @@ exports.updateReview = async (req, res) => {
             reviewCount: newCount,
           }
         );
+        if (property.status === "active") await notifyListingChanged([propertyId], "review-update"); // Batch P
       }
     }
 

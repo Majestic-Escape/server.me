@@ -19,6 +19,16 @@ const {
   sanitizeProperties,
   SAFE_HOST_SELECT,
 } = require("../utils/sanitizeResponse");
+// Batch P — public catalogue: card projection, edge-cache policy, change
+// notifications and the authoritative night ledger for date searches.
+const BookingNight = require("../models/BookingNight");
+const { utcDay } = require("../services/inventory");
+const { catalogueCache } = require("../utils/httpCache");
+const { CARD_PROJECTION, pageParams, escapeRegex } = require("../utils/listingProjection");
+const { notifyListingChanged } = require("../services/listingChanged");
+// Host fields the approve / delist / update handlers read for their emails
+// and responses — never the whole user document.
+const HOST_CONTACT_SELECT = "firstName lastName phoneNumber kyc bank";
 // exports.getCustomSearch = async (req, res) => {
 //   try {
 //     const { location, from, to, guests, propertyType } = req.query;
@@ -105,11 +115,11 @@ exports.getCustomSearch = async (req, res) => {
       bookingType,
       pets,
       amenities,
-      page = 1,
-      limit = 16,
     } = req.query;
 
-    const skip = (Number(page) - 1) * Number(limit);
+    // Cacheable at the edge unless dates are involved: availability moves
+    // with bookings, which the listing tags do not cover.
+    if (!catalogueCache(req, res, { cacheable: !(from && to) })) return;
     // Build the base filter with status always active
     let filter = { status: "active" };
 
@@ -174,17 +184,20 @@ exports.getCustomSearch = async (req, res) => {
         });
       }
 
-      const bookings = await Booking.find({
-        $or: [
-          {
-            checkIn: { $lte: checkout },
-            checkOut: { $gte: checkin },
-          }, // overlapping condition
-        ],
-      }).select("propertyId");
-
-      bookedPropertyIds = bookings.map((b) => b.propertyId);
-      filter._id = { $nin: bookedPropertyIds };
+      // Authoritative availability (Batch S night ledger): a listing is
+      // unavailable when any of the requested nights is held — by a paid or
+      // still-valid unpaid booking, a host block or an iCal import. Expired
+      // holds and cancelled bookings hold no nights, so they no longer hide
+      // listings the way the old overlapping-Booking scan did.
+      const nightFrom = utcDay(checkin);
+      const nightTo = utcDay(checkout);
+      if (nightFrom && nightTo && nightTo > nightFrom) {
+        bookedPropertyIds = await BookingNight.distinct("propertyId", {
+          date: { $gte: nightFrom, $lt: nightTo },
+          $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+        });
+        filter._id = { $nin: bookedPropertyIds };
+      }
     }
 
     // 2. Handle guest capacity filtering (if provided)
@@ -199,7 +212,7 @@ exports.getCustomSearch = async (req, res) => {
       propertyType !== "undefined"
     ) {
       filter.propertyType = {
-        $regex: new RegExp(propertyType, "i"),
+        $regex: new RegExp(escapeRegex(propertyType), "i"),
       };
     }
     // const totalCount = await ListingProperty.countDocuments(filter);
@@ -245,17 +258,23 @@ exports.getCustomSearch = async (req, res) => {
     //   });
     // }
     if (location && location !== "null" && location !== "undefined") {
+      const loc = escapeRegex(location);
       filter.$or = [
-        { "address.district": { $regex: location, $options: "i" } },
-        { "address.city": { $regex: location, $options: "i" } },
-        { "address.state": { $regex: location, $options: "i" } },
+        { "address.district": { $regex: loc, $options: "i" } },
+        { "address.city": { $regex: loc, $options: "i" } },
+        { "address.state": { $regex: loc, $options: "i" } },
       ];
     }
-    const totalCount = await ListingProperty.countDocuments(filter);
-
-    const availableProperties = await ListingProperty.find(filter)
-      .skip(skip)
-      .limit(limit);
+    const paging = pageParams(req.query, 16);
+    const [totalCount, availableProperties] = await Promise.all([
+      ListingProperty.countDocuments(filter),
+      ListingProperty.find(filter)
+        .select(CARD_PROJECTION)
+        .sort({ createdAt: -1, _id: -1 }) // newest first, deterministic pages
+        .skip(paging.skip)
+        .limit(paging.limit)
+        .lean(),
+    ]);
 
     // Sanitize properties to remove hostEmail and other sensitive data
     const sanitizedProperties = sanitizeProperties(availableProperties);
@@ -264,7 +283,7 @@ exports.getCustomSearch = async (req, res) => {
       data: sanitizedProperties,
       pagination: {
         totalCount,
-        totalPages: Math.ceil(totalCount / limit),
+        totalPages: Math.ceil(totalCount / paging.limit),
       },
     });
 
@@ -330,22 +349,23 @@ exports.getCustomSearch = async (req, res) => {
 exports.getPropertyCount = async (req, res) => {
   try {
     const { city } = req.query;
-    const cities = city.split(",");
-    if (!Array.isArray(cities) || cities.length === 0) {
+    const cities = typeof city === "string" ? city.split(",").filter((c) => c.trim()) : [];
+    if (cities.length === 0) {
       return res.status(400).json({
         success: false,
         message: "cities must be a non-empty array",
       });
     }
-    console.log("stage", cities);
+    if (!catalogueCache(req, res)) return;
     const normalizedCities = cities.map((city) => city.trim().toLowerCase());
-    console.log("stage", normalizedCities);
     const counts = await ListingProperty.aggregate([
       {
         $match: {
           status: "active",
         },
       },
+      // Only the city travels through the pipeline, not whole listings.
+      { $project: { "address.city": 1 } },
       {
         $addFields: {
           cityLower: { $toLower: "$address.city" },
@@ -363,7 +383,6 @@ exports.getPropertyCount = async (req, res) => {
         },
       },
     ]);
-    console.log("stage", counts);
     const result = normalizedCities.map((city) => {
       const found = counts.find((c) => c._id === city);
       return {
@@ -407,6 +426,7 @@ exports.getAdminFilter = async (req, res) => {
                 },
               },
             },
+            { $project: { _id: 1 } }, // counted, never read
           ],
           as: "allProperties",
         },
@@ -426,6 +446,7 @@ exports.getAdminFilter = async (req, res) => {
                 },
               },
             },
+            { $project: { _id: 1 } },
           ],
           as: "activeProperties",
         },
@@ -445,6 +466,7 @@ exports.getAdminFilter = async (req, res) => {
                 },
               },
             },
+            { $project: { _id: 1 } },
           ],
           as: "inactiveProperties",
         },
@@ -599,6 +621,7 @@ exports.timing = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Property not found" });
     }
+    if (property.status === "active") await notifyListingChanged([propertyId], "timing"); // shown on the stay page
     res.status(200).json({ success: true, data: property });
   } catch (error) {
     res.status(400).json({ success: false, error: error.message });
@@ -642,43 +665,31 @@ exports.getTiming = async (req, res) => {
     });
   }
 };
-exports.getFrontPageAllStays = async (req, res) => {
+// Home page grid (and its legacy twin /properties/dynamic): newest active
+// listings as cards. Edge-cached under the `listings` tag; a listing write
+// purges it (services/listingChanged.js).
+async function listActiveCards(req, res) {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 16;
-    const skip = (page - 1) * limit;
-
-    // Get filter parameters
+    if (!catalogueCache(req, res)) return;
+    const { page, limit, skip } = pageParams(req.query, 16);
     const { type } = req.query;
+    const query = { status: { $in: ["active", "completed"] } };
+    if (type) query.propertyType = type;
 
-    // Build query object
-    let query = {};
-    if (type) {
-      query.propertyType = type;
-    }
-    // Only include documents with status 'processing' or 'completed'
-    query.status = { $in: ["active", "completed"] };
-
-    // Execute queries in parallel for better performance
     const [properties, totalProperties] = await Promise.all([
       ListingProperty.find(query)
-        .sort({ createdAt: -1 }) // Sort by newest first
+        .select(CARD_PROJECTION)
+        .sort({ createdAt: -1, _id: -1 })
         .skip(skip)
         .limit(limit)
-        .lean(), // Use lean() for better performance
+        .lean(),
       ListingProperty.countDocuments(query),
     ]);
 
-    // Calculate pagination metadata
     const totalPages = Math.ceil(totalProperties / limit);
     const hasMore = page * limit < totalProperties;
-
-    // Sanitize properties to remove hostEmail and other sensitive data
-    const sanitizedProperties = sanitizeProperties(properties);
-
-    // Send response
     res.status(200).json({
-      properties: sanitizedProperties,
+      properties: sanitizeProperties(properties),
       currentPage: page,
       totalPages,
       totalProperties,
@@ -692,58 +703,9 @@ exports.getFrontPageAllStays = async (req, res) => {
       error: error.message,
     });
   }
-};
-exports.getAllStays = async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 16;
-    const skip = (page - 1) * limit;
-
-    // Get filter parameters
-    const { type } = req.query;
-
-    // Build query object
-    let query = {};
-    if (type) {
-      query.propertyType = type;
-    }
-    // Only include documents with status 'processing' or 'completed'
-    query.status = { $in: ["active", "completed"] };
-
-    // Execute queries in parallel for better performance
-    const [properties, totalProperties] = await Promise.all([
-      ListingProperty.find(query)
-        .sort({ createdAt: -1 }) // Sort by newest first
-        .skip(skip)
-        .limit(limit)
-        .lean(), // Use lean() for better performance
-      ListingProperty.countDocuments(query),
-    ]);
-
-    // Calculate pagination metadata
-    const totalPages = Math.ceil(totalProperties / limit);
-    const hasMore = page * limit < totalProperties;
-
-    // Sanitize properties to remove hostEmail and other sensitive data
-    const sanitizedProperties = sanitizeProperties(properties);
-
-    // Send response
-    res.status(200).json({
-      properties: sanitizedProperties,
-      currentPage: page,
-      totalPages,
-      totalProperties,
-      hasMore,
-      resultsPerPage: limit,
-    });
-  } catch (error) {
-    console.error("Error fetching properties:", error);
-    res.status(500).json({
-      message: "Failed to fetch properties",
-      error: error.message,
-    });
-  }
-};
+}
+exports.getFrontPageAllStays = listActiveCards;
+exports.getAllStays = listActiveCards;
 exports.getIdandName = async (req, res) => {
   try {
     const hostId = req.params.id;
@@ -820,32 +782,25 @@ exports.getAllStaticProperties = async (req, res) => {
 };
 
 // controllers/propertyController.js
+// Public, anonymous list. Used to return every listing regardless of status
+// (drafts, pending, delisted — with host ids and rules) and filtered on a
+// field the schema does not have. Batch P: active listings only, as cards,
+// same envelope; `type` means propertyType like the other public lists.
 exports.getAllProperties = async (req, res) => {
-  if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("getAllProperties");
-  }
   try {
-    // Get pagination parameters from query with radix specified
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 30;
-    const skip = (page - 1) * limit;
-
-    // Get filter parameters
+    if (!catalogueCache(req, res)) return;
+    const { page, limit, skip } = pageParams(req.query, 30);
     const { type } = req.query;
+    const query = { status: "active" };
+    if (type) query.propertyType = type;
 
-    // Build query object
-    const query = {};
-    if (type) {
-      query.type = type;
-    }
-
-    // Execute queries in parallel for better performance
     const [properties, totalProperties] = await Promise.all([
       ListingProperty.find(query)
-        .sort({ createdAt: -1 }) // Sort by newest first
+        .select(CARD_PROJECTION)
+        .sort({ createdAt: -1, _id: -1 })
         .skip(skip)
         .limit(limit)
-        .lean(), // Use lean() for better performance
+        .lean(),
       ListingProperty.countDocuments(query),
     ]);
 
@@ -1062,6 +1017,18 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
             { $sort: { updatedAt: -1 } },
             { $skip: skip },
             { $limit: limit },
+            // Aggregations bypass the model's embedding exclusion, and the
+            // joined user document must not carry credentials to the admin UI.
+            {
+              $project: {
+                ...ListingProperty.EMBEDDING_PROJECTION,
+                "host.password": 0,
+                "host.otp": 0,
+                "host.otpRetries": 0,
+                "host.lockUntil": 0,
+                "host.tokenVersion": 0,
+              },
+            },
           ],
 
           /* ---------- PAGINATION COUNT (FILTERED) ---------- */
@@ -1150,10 +1117,11 @@ exports.approveListing = async (req, res) => {
       id,
       { status: "active" },
       { new: true },
-    ).populate("host");
+    ).populate({ path: "host", select: HOST_CONTACT_SELECT });
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
     }
+    await notifyListingChanged([id], "approve"); // PUBLIC_CHANGE: processing → active
     const hostName =
       updatedListing.host.firstName + " " + updatedListing.host.lastName;
     const params = {
@@ -1203,7 +1171,7 @@ exports.reactivate = async (req, res) => {
 
     // const property = await ListingProperty.findById(id);
     // const host = await User.findById(property?.host);
-    let updatedListing = await ListingProperty.findById(id).populate("host");
+    let updatedListing = await ListingProperty.findById(id).populate({ path: "host", select: HOST_CONTACT_SELECT });
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
     }
@@ -1213,6 +1181,10 @@ exports.reactivate = async (req, res) => {
         listing: "adminDelist",
       });
     }
+    // Used to set the field on the loaded document only and report success
+    // without saving — the listing stayed inactive.
+    await ListingProperty.updateOne({ _id: id }, { $set: { status: "active" } });
+    await notifyListingChanged([id], "reactivate"); // PUBLIC_CHANGE: inactive → active
     // const updatedListing = await ListingProperty.findByIdAndUpdate(
     //   id,
     //   { status: "active", delist: "host" },
@@ -1261,10 +1233,11 @@ exports.deListing = async (req, res) => {
         id,
         { status: "inactive" },
         { new: true },
-      ).populate("host");
+      ).populate({ path: "host", select: HOST_CONTACT_SELECT });
       if (!updatedListing) {
         return res.status(404).json({ message: "Listing not found" });
       }
+      await notifyListingChanged([id], "delist"); // PUBLIC_CHANGE: active → inactive
 
       const hostName =
         updatedListing.host.firstName + " " + updatedListing.host.lastName;
@@ -1293,10 +1266,11 @@ exports.deListing = async (req, res) => {
         id,
         { status: "inactive", delist: "admin" },
         { new: true },
-      ).populate("host");
+      ).populate({ path: "host", select: HOST_CONTACT_SELECT });
       if (!updatedListing) {
         return res.status(404).json({ message: "Listing not found" });
       }
+      await notifyListingChanged([id], "admin-delist"); // PUBLIC_CHANGE: active → inactive
 
       const hostName =
         updatedListing.host.firstName + " " + updatedListing.host.lastName;
@@ -1508,7 +1482,7 @@ exports.getFilterActivePropertyById = async (req, res) => {
             .skip(skip)
             .populate({
               path: "host",
-              select: "-password",
+              select: "-password -otp -otpRetries -lockUntil -tokenVersion",
             })
             .lean();
         })(),
@@ -1695,20 +1669,23 @@ exports.createListingProperty = async (req, res) => {
 };
 exports.adminUpdateListingProperty = async (req, res) => {
   try {
-    console.log("Entered the admin");
     const { id } = req.params;
     const { submit, status } = req.query;
 
+    const before = await ListingProperty.findById(id).select("status").lean();
     const property = await ListingProperty.findOneAndUpdate(
       { _id: id },
       { $set: req.body },
       { new: true, runValidators: true },
-    ).populate("host");
-    console.log("Updated");
+    ).populate({ path: "host", select: HOST_CONTACT_SELECT });
     if (!property) {
       return res
         .status(404)
         .json({ message: "Property not found or unauthorized to update" });
+    }
+    // PUBLIC_CHANGE only when the listing was or is publicly visible.
+    if ((before && before.status === "active") || property.status === "active") {
+      await notifyListingChanged([id], "admin-update");
     }
     // if (property.host.kyc === true) {
     //   property.kycStatus = "completed";
@@ -1749,16 +1726,22 @@ exports.updateListingProperty = async (req, res) => {
     //   console.log("jjj", req.body._id);
     // }
 
+    const before = await ListingProperty.findById(id).select("status").lean();
     const property = await ListingProperty.findOneAndUpdate(
       { _id: id },
       { $set: req.body },
       { new: true, runValidators: true },
-    ).populate("host");
+    ).populate({ path: "host", select: HOST_CONTACT_SELECT });
 
     if (!property) {
       return res
         .status(404)
         .json({ message: "Property not found or unauthorized to update" });
+    }
+    // The wizard PUTs on every step of a draft; only a listing that was or
+    // is publicly visible purges the catalogue caches.
+    if ((before && before.status === "active") || property.status === "active") {
+      await notifyListingChanged([id], "host-update");
     }
     if (property.host.kyc === true) {
       property.kycStatus = "completed";

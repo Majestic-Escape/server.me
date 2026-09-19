@@ -1,6 +1,6 @@
 // GENERATED FILE — do not edit by hand.
 // Contact-information detector, emitted from majestic-chat
-// packages/shared/src/moderation/patterns.ts (commit cab4827) by
+// packages/shared/src/moderation/patterns.ts (commit 0d4e60c) by
 // packages/shared/scripts/emit-contact-moderation-cjs.js. The TypeScript
 // source is the only implementation; tests/batch-s/contact-moderation.test.js
 // asserts the shared golden corpus (tests/batch-s/fixtures/contact-vectors.json)

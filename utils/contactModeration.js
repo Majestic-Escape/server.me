@@ -204,13 +204,14 @@ function rewriteTokens(pieces) {
         if (t !== 'at' && t !== 'dot')
             continue;
         const bracketed = isBracketed(pieces, tokens[k]);
+        // A joiner only replaces separators: the gap on both sides must be
+        // whitespace / punctuation, so "rahul@" + "dot com" stays two fragments
+        // (no domain in sight) instead of collapsing into "rahul.com".
+        const gapsClean = gapIsSmall(pieces, tokens[k - 1], tokens[k], 3) && gapIsSmall(pieces, tokens[k], tokens[k + 1], 3);
+        if (!gapsClean)
+            continue;
         if (t === 'dot') {
-            if (bracketed || gapIsSmall(pieces, tokens[k - 1], tokens[k], 1) || gapIsSmall(pieces, tokens[k], tokens[k + 1], 1)) {
-                joiner.set(k, '.');
-            }
-            else if (looksLikeDomainSuffix(tokens, k + 1) && gapIsSmall(pieces, tokens[k - 1], tokens[k], 3)) {
-                joiner.set(k, '.');
-            }
+            joiner.set(k, '.');
         }
         else if (t === 'at') {
             const next = tokens[k + 1]?.text || '';
@@ -279,10 +280,6 @@ function isBracketed(pieces, t) {
 }
 function hasDotAfter(pieces, t) {
     return t.end < pieces.length && pieces[t.end].s === '.' && t.end + 1 < pieces.length && WORD_CHAR.test(pieces[t.end + 1].s);
-}
-function looksLikeDomainSuffix(tokens, k) {
-    const t = tokens[k]?.text;
-    return !!t && isValidTld(t);
 }
 function normalizeForModeration(original) {
     const pieces = rewriteTokens(foldCharacters(original));

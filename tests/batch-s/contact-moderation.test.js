@@ -12,10 +12,12 @@ const path = require("path");
 const crypto = require("crypto");
 const m = require("../../utils/contactModeration");
 
-const CONTACT_VECTORS_SHA256 = "17bcca5570ccba248be77dc95e32c3a3b5c6dfb8746d15743638626181f25df8";
+const CONTACT_VECTORS_SHA256 = "08baefec1d0162ca8410333e28dff6c2641c5dac51579cd867031bfe3cfdbdc3";
 
-const raw = fs.readFileSync(path.join(__dirname, "fixtures", "contact-vectors.json"));
-const corpus = JSON.parse(raw.toString("utf8"));
+// Hashed with normalised line endings so a checkout under core.autocrlf=true
+// (CRLF working copy) pins the same corpus as the LF one in the index.
+const raw = fs.readFileSync(path.join(__dirname, "fixtures", "contact-vectors.json")).toString("utf8").replace(/\r\n/g, "\n");
+const corpus = JSON.parse(raw);
 
 test("the corpus is the pinned one (edit it in majestic-chat, regenerate the mirror, re-pin both)", () => {
   assert.equal(crypto.createHash("sha256").update(raw).digest("hex"), CONTACT_VECTORS_SHA256);

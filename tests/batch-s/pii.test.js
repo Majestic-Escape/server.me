@@ -202,7 +202,10 @@ test("exact street and coordinates: confirmed+paid guest yes; pending / cancelle
   const pendingRead = await h.api("GET", `/booking/${pending._id}`, { token: GT });
   assert.equal(pendingRead.body.data.status, "pending");
   assert.equal(pendingRead.body.data.propertyId.address.street, undefined);
-  assert.notEqual(pendingRead.body.data.propertyId.address.latitude, TRUE_LAT);
+  // the point is 150–350 m away; with an axis-aligned bearing one coordinate
+  // can round back to the true value, so compare the distance, not a coordinate
+  const pendingDist = haversine(TRUE_LAT, TRUE_LNG, pendingRead.body.data.propertyId.address.latitude, pendingRead.body.data.propertyId.address.longitude);
+  assert.ok(pendingDist > 140 && pendingDist < 360, `pending booking: approximate point (${Math.round(pendingDist)} m)`);
   const list = await h.api("GET", "/booking/data", { token: GT });
   assert.equal(list.status, 200, JSON.stringify(list.body).slice(0, 300));
   const rows = list.body.data;
@@ -247,6 +250,18 @@ test("voucher data in emails only for the confirmed lifecycle; counterpart first
 // ---------------------------------------------------------------------------
 // Write-time policy
 // ---------------------------------------------------------------------------
+test("traveller names at checkout follow the name policy (they reach the host's guest list)", async () => {
+  const listing = await h.makeListing(H);
+  const bad = await h.api("POST", "/booking/", { token: GT, body: h.bookingBody(listing, { checkIn: h.day(800), checkOut: h.day(802), guestData: { adults: [{ name: "Rahul 9876543210", age: 30 }], children: [] } }) });
+  assert.equal(bad.status, 422, JSON.stringify(bad.body));
+  assert.equal(bad.body.code, "CONTACT_INFO_NOT_ALLOWED");
+  // split across two traveller rows: still one phone number
+  const split = await h.api("POST", "/booking/", { token: GT, body: h.bookingBody(listing, { checkIn: h.day(800), checkOut: h.day(802), guestData: { adults: [{ name: "Rahul 98765", age: 30 }, { name: "Priya 43210", age: 28 }], children: [] } }) });
+  assert.equal(split.status, 422, JSON.stringify(split.body));
+  const ok = await h.api("POST", "/booking/", { token: GT, body: h.bookingBody(listing, { checkIn: h.day(800), checkOut: h.day(802), guestData: { adults: [{ name: "Mary Jane O'Brien", age: 30 }, { name: "Guest 2", age: 40 }], children: [{ name: "José (2 yrs)", age: 8 }] } }) });
+  assert.equal(ok.status, 201, JSON.stringify(ok.body));
+});
+
 test("names: registration, become-host and the admin rename refuse contact-bearing names; ordinary names pass", async () => {
   const bad = ["Rahul9876543210", "9876543210", "rahul@gmail.com", "@rahul123", "rahulvilla.in", "WhatsApp Rahul"];
   for (const name of bad) {

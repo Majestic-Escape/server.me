@@ -11,9 +11,17 @@ const User = require("../models/User");
 const ListingProperty = require("../models/ListingProperty");
 const authz = require("../middleware/authz");
 const storage = require("../services/storage");
+const { sanitizeImage, outputName, ImageRejected } = require("../services/imageSanitizer");
 
 function fail(res, status, code, message) {
   return res.status(status).json({ success: false, code, message, error: message, statusCode: status });
+}
+
+// Contact lock-down: every public image is re-encoded without metadata (EXIF
+// GPS would reveal the exact location) and refused when it carries a QR code.
+async function safeImage(file) {
+  const clean = await sanitizeImage(file.buffer, file.mimetype);
+  return { buffer: clean.buffer, mimetype: clean.mimetype, name: outputName(file.originalname, clean.extension) };
 }
 
 exports.uploadImages = async (req, res) => {
@@ -24,11 +32,13 @@ exports.uploadImages = async (req, res) => {
     if (!files || files.length === 0) {
       return res.status(400).json({ error: "No files uploaded" });
     }
+    const cleaned = await Promise.all(files.map(safeImage));
     const urls = await Promise.all(
-      files.map((file) => storage.putObject(storage.makeUploadKey("listings", actor.id, file.originalname), file.buffer, file.mimetype)),
+      cleaned.map((file) => storage.putObject(storage.makeUploadKey("listings", actor.id, file.name), file.buffer, file.mimetype)),
     );
     res.json({ urls });
   } catch (error) {
+    if (error instanceof ImageRejected) return fail(res, error.status, error.code, error.message);
     console.error("Upload error:", error && error.message);
     if (error.name === "MulterError") {
       return res.status(400).json({ error: error.message });
@@ -48,10 +58,12 @@ exports.profileImage = async (req, res) => {
     if (!exists) {
       return res.status(404).json({ message: "Profile not found" });
     }
-    const url = await storage.putObject(storage.makeUploadKey("profiles", userId, file.originalname), file.buffer, file.mimetype);
+    const clean = await safeImage(file);
+    const url = await storage.putObject(storage.makeUploadKey("profiles", userId, clean.name), clean.buffer, clean.mimetype);
     await User.updateOne({ _id: userId }, { $set: { profilePicture: url } });
     return res.json({ url });
   } catch (error) {
+    if (error instanceof ImageRejected) return fail(res, error.status, error.code, error.message);
     console.error("Upload error:", error && error.message);
     if (error.name === "MulterError") {
       return res.status(400).json({ error: error.message });

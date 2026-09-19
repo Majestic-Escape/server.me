@@ -1,13 +1,15 @@
 const Booking = require("../models/BookingInterest");
 const User = require("../models/User");
+const authz = require("../middleware/authz");
 
 exports.createBooking = async (req, res) => {
   try {
-    const { userId, propertyId, dateFrom, dateTo, guests, specialOffers } =
-      req.body;
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("this is id", userId);
-    }
+    const { propertyId, dateFrom, dateTo, guests, specialOffers } = req.body;
+    // Contact lock-down: the enquiry belongs to the caller (the body's userId
+    // used to resolve — and echo — any user's email).
+    const actor = await authz.resolveActor(req);
+    const userId = actor && actor.kind === "user" ? actor.id : null;
+    if (!userId) return res.status(403).json({ success: false, code: "FORBIDDEN", message: "Not allowed" });
     const userData = await User.findById(userId);
 
     const email = await userData.email;
@@ -25,10 +27,12 @@ exports.createBooking = async (req, res) => {
     });
 
     const savedBooking = await newBooking.save();
+    const data = savedBooking.toObject();
+    delete data.email;
 
     res.status(201).json({
       success: true,
-      data: savedBooking,
+      data,
       message: "Booking created successfully",
     });
   } catch (error) {

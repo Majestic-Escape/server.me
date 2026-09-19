@@ -1,0 +1,1779 @@
+{
+  "version": 1,
+  "generatedBy": "majestic-chat/packages/shared moderation",
+  "vectors": [
+    {
+      "id": "phone-plain",
+      "text": "call me on 9876543210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE",
+        "CONTACT_INTENT"
+      ],
+      "masked": "call me on •••"
+    },
+    {
+      "id": "phone-spaced-5-5",
+      "text": "my number is 98765 43210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "my number is •••"
+    },
+    {
+      "id": "phone-dashed-pairs",
+      "text": "98-76-54-32-10",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-4-3-3",
+      "text": "9876 543 210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-dots",
+      "text": "9.8.7.6.5.4.3.2.1.0",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-spaced-digits",
+      "text": "9 8 7 6 5 4 3 2 1 0",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-words-en",
+      "text": "nine eight seven six five four three two one zero",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-words-hi",
+      "text": "nau aath saat chhe paanch char teen do ek shunya",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-words-mixed",
+      "text": "98765 four three two one zero",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-glued-word",
+      "text": "98765four3210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-zero-width",
+      "text": "9​8​7​6​5​4​3​2​1​0",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-plus91",
+      "text": "+91 98765 43210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-0091",
+      "text": "0091 9876543210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-leading-0",
+      "text": "09876543210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-devanagari",
+      "text": "९८७६५४३२१०",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-fullwidth",
+      "text": "９８７６５４３２１０",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-keycaps",
+      "text": "9⃣8⃣7⃣6⃣5⃣4⃣3⃣2⃣1⃣0⃣",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-lookalikes",
+      "text": "98765 4321O",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-lookalikes-2",
+      "text": "9876543210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-lookalike-l",
+      "text": "987654321l",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-in-word",
+      "text": "abc9876543210xyz",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "abc•••xyz"
+    },
+    {
+      "id": "phone-split-then",
+      "text": "98765 then 43210",
+      "expected": "blocked",
+      "kinds": [
+        "SPLIT_PHONE"
+      ],
+      "masked": "••• then •••"
+    },
+    {
+      "id": "phone-split-words",
+      "text": "98765 is the first part and it ends with 43210",
+      "expected": "blocked",
+      "kinds": [
+        "SPLIT_PHONE"
+      ],
+      "masked": "••• is the first part and it ends with •••"
+    },
+    {
+      "id": "phone-split-3",
+      "text": "987 654 and 3210",
+      "expected": "blocked",
+      "kinds": [
+        "SPLIT_PHONE"
+      ],
+      "masked": "••• ••• and •••"
+    },
+    {
+      "id": "phone-intl",
+      "text": "+44 7911 123456",
+      "expected": "blocked",
+      "kinds": [
+        "INTL_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-intl-us",
+      "text": "+1 (415) 555-0132",
+      "expected": "blocked",
+      "kinds": [
+        "INTL_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-11-digits",
+      "text": "98765432101",
+      "expected": "blocked",
+      "kinds": [
+        "SPLIT_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-pipes",
+      "text": "9876|543|210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-stars",
+      "text": "98765*43210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-not-indian-start",
+      "text": "1234567890",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "1234567890"
+    },
+    {
+      "id": "phone-five-only",
+      "text": "first five 98765",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "first five 98765"
+    },
+    {
+      "id": "phone-nine-digits",
+      "text": "987654321",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "987654321"
+    },
+    {
+      "id": "email-plain",
+      "text": "rahul@gmail.com",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "email-subdomain",
+      "text": "mail me at first.last+tag@sub.example.co.in",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL"
+      ],
+      "masked": "mail •••+•••"
+    },
+    {
+      "id": "email-obf-at-dot",
+      "text": "rahul (at) gmail (dot) com",
+      "expected": "blocked",
+      "kinds": [
+        "OBFUSCATED_EMAIL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "email-obf-words",
+      "text": "rahul at gmail dot com",
+      "expected": "blocked",
+      "kinds": [
+        "OBFUSCATED_EMAIL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "email-obf-at-only",
+      "text": "rahul (at) gmail.com",
+      "expected": "blocked",
+      "kinds": [
+        "OBFUSCATED_EMAIL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "email-obf-brackets",
+      "text": "rahul [at] gmail [dot] com",
+      "expected": "blocked",
+      "kinds": [
+        "OBFUSCATED_EMAIL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "email-provider-only",
+      "text": "rahul gmail com",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL_PROVIDER"
+      ],
+      "masked": "rahul ••• com"
+    },
+    {
+      "id": "email-provider-word",
+      "text": "my gmail is rahul123",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL_PROVIDER"
+      ],
+      "masked": "my ••• is rahul123"
+    },
+    {
+      "id": "email-yahoo",
+      "text": "yahoo id rahul_sharma",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL_PROVIDER"
+      ],
+      "masked": "••• id rahul_sharma"
+    },
+    {
+      "id": "email-own-domain",
+      "text": "someone@majesticescape.in",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "email-uppercase",
+      "text": "RAHUL.SHARMA@OUTLOOK.COM",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "email-fullwidth-at",
+      "text": "rahul＠gmail.com",
+      "expected": "blocked",
+      "kinds": [
+        "OBFUSCATED_EMAIL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "upi-id",
+      "text": "my upi is rahul@ybl",
+      "expected": "blocked",
+      "kinds": [
+        "UPI"
+      ],
+      "masked": "my ••• is •••"
+    },
+    {
+      "id": "upi-oksbi",
+      "text": "send to 9876543210@oksbi",
+      "expected": "blocked",
+      "kinds": [
+        "UPI"
+      ],
+      "masked": "send to •••"
+    },
+    {
+      "id": "pay-gpay",
+      "text": "pay via gpay",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "pay via •••"
+    },
+    {
+      "id": "pay-phonepe",
+      "text": "phonepe works too",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "••• works too"
+    },
+    {
+      "id": "pay-cash",
+      "text": "pay cash on arrival, skip the site",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "••• on arrival, •••"
+    },
+    {
+      "id": "pay-bank",
+      "text": "bank transfer to my account number",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "••• to my •••"
+    },
+    {
+      "id": "book-direct",
+      "text": "book directly with me and save 12%",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "••• with me and save 12%"
+    },
+    {
+      "id": "book-outside",
+      "text": "lets do this outside the platform",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "lets do this •••"
+    },
+    {
+      "id": "book-commission",
+      "text": "skip the commission and pay me directly",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "••• and •••"
+    },
+    {
+      "id": "url-www",
+      "text": "visit www.rahulvilla.com",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "visit •••"
+    },
+    {
+      "id": "url-https",
+      "text": "https://rahulvilla.in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-bare",
+      "text": "rahulvilla.in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-dot-word",
+      "text": "rahulvilla dot in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-dot-brackets",
+      "text": "rahulvilla (dot) co (dot) in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-co-in",
+      "text": "rahulvilla.co.in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-travel-tld",
+      "text": "rahulvilla.travel",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-club",
+      "text": "join rahulvilla.club",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "join •••"
+    },
+    {
+      "id": "url-dev",
+      "text": "rahulvilla.dev",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-shortener",
+      "text": "bit.ly/xyz",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••/xyz"
+    },
+    {
+      "id": "url-ip",
+      "text": "192.168.1.1",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-punycode",
+      "text": "xn--rhulvilla-9za.in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-fullwidth-dot",
+      "text": "rahulvilla．in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-evil-suffix",
+      "text": "majesticescape.in.evil.com",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-evil-prefix",
+      "text": "evilmajesticescape.in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-own-domain",
+      "text": "majesticescape.in/stay/123",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "majesticescape.in/stay/123"
+    },
+    {
+      "id": "url-own-www",
+      "text": "https://www.majesticescape.in/help",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "https://www.majesticescape.in/help"
+    },
+    {
+      "id": "url-own-sub",
+      "text": "help.majesticescape.in",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "help.majesticescape.in"
+    },
+    {
+      "id": "social-whatsapp",
+      "text": "whatsapp me",
+      "expected": "blocked",
+      "kinds": [
+        "WHATSAPP"
+      ],
+      "masked": "••• me"
+    },
+    {
+      "id": "social-whatsapp-q",
+      "text": "do you have whatsapp?",
+      "expected": "blocked",
+      "kinds": [
+        "WHATSAPP"
+      ],
+      "masked": "do you have •••?"
+    },
+    {
+      "id": "social-whatsapp-negated",
+      "text": "no need for whatsapp, this chat is fine",
+      "expected": "blocked",
+      "kinds": [
+        "WHATSAPP"
+      ],
+      "masked": "no need for •••, this chat is fine"
+    },
+    {
+      "id": "social-watsap",
+      "text": "watsap number pls",
+      "expected": "blocked",
+      "kinds": [
+        "WHATSAPP"
+      ],
+      "masked": "••• number pls"
+    },
+    {
+      "id": "social-wa-me",
+      "text": "wa.me/919876543210",
+      "expected": "blocked",
+      "kinds": [
+        "WHATSAPP"
+      ],
+      "masked": "•••/•••"
+    },
+    {
+      "id": "social-telegram",
+      "text": "telegram @rahul_123",
+      "expected": "blocked",
+      "kinds": [
+        "TELEGRAM"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-handle",
+      "text": "@rahul_123",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-insta",
+      "text": "insta rahul_123",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-instagram",
+      "text": "instagram: rahul.123",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-ig",
+      "text": "My IG: rahul_villa",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "My •••"
+    },
+    {
+      "id": "social-facebook",
+      "text": "find me on facebook Rahul Sharma",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "find me on ••• Rahul Sharma"
+    },
+    {
+      "id": "social-snapchat",
+      "text": "snapchat rahul123",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-signal",
+      "text": "signal app is better",
+      "expected": "blocked",
+      "kinds": [
+        "SIGNAL"
+      ],
+      "masked": "••• is better"
+    },
+    {
+      "id": "social-skype",
+      "text": "skype call?",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "••• call?"
+    },
+    {
+      "id": "social-linkedin",
+      "text": "connect on linkedin",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "connect on •••"
+    },
+    {
+      "id": "social-imo-app",
+      "text": "imo app number",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "••• number"
+    },
+    {
+      "id": "intent-call",
+      "text": "call me",
+      "expected": "flagged",
+      "kinds": [
+        "CONTACT_INTENT"
+      ],
+      "masked": "call me"
+    },
+    {
+      "id": "intent-text",
+      "text": "text me on",
+      "expected": "flagged",
+      "kinds": [
+        "CONTACT_INTENT"
+      ],
+      "masked": "text me on"
+    },
+    {
+      "id": "intent-ping-wa",
+      "text": "ping me on wa",
+      "expected": "flagged",
+      "kinds": [
+        "CONTACT_INTENT"
+      ],
+      "masked": "ping me on wa"
+    },
+    {
+      "id": "fp-dates",
+      "text": "Hi, is it available for 2 adults on 12/10?",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Hi, is it available for 2 adults on 12/10?"
+    },
+    {
+      "id": "fp-price-nights",
+      "text": "Total ₹15000 for 3 nights, check-in 15 Oct, 2 pm",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Total ₹15000 for 3 nights, check-in 15 Oct, 2 pm"
+    },
+    {
+      "id": "fp-objectid",
+      "text": "booking id 68a1f2b3c4d5e6f7a8b9c0d1",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "booking id 68a1f2b3c4d5e6f7a8b9c0d1"
+    },
+    {
+      "id": "fp-counts",
+      "text": "we are 4, 2 kids, arriving 6 pm, staying 3 nights, budget 15000-20000",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "we are 4, 2 kids, arriving 6 pm, staying 3 nights, budget 15000-20000"
+    },
+    {
+      "id": "fp-room-pin-age",
+      "text": "room 204, floor 2, pin 403516, my age 35, 2 cars",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "room 204, floor 2, pin 403516, my age 35, 2 cars"
+    },
+    {
+      "id": "fp-abbrev",
+      "text": "St. Xavier church is 2 km away, e.g. approx. 10 min by car, Rs. 500",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "St. Xavier church is 2 km away, e.g. approx. 10 min by car, Rs. 500"
+    },
+    {
+      "id": "fp-time-dot",
+      "text": "meet at 5.30 pm at the cafe",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "meet at 5.30 pm at the cafe"
+    },
+    {
+      "id": "fp-rates-list",
+      "text": "Rates: 6500 weekdays, 7500 weekends, 8000 holidays, 9000 new year",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Rates: 6500 weekdays, 7500 weekends, 8000 holidays, 9000 new year"
+    },
+    {
+      "id": "fp-enquiry",
+      "text": "Hi! Is the villa available from 12 Dec to 15 Dec for 6 adults and 2 kids? Our budget is around 25000 per night.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Hi! Is the villa available from 12 Dec to 15 Dec for 6 adults and 2 kids? Our budget is around 25000 per night."
+    },
+    {
+      "id": "fp-distances",
+      "text": "Check-in is at 2 pm and check-out at 11 am. The property is 1.5 km from Baga beach, 45 km from the airport.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Check-in is at 2 pm and check-out at 11 am. The property is 1.5 km from Baga beach, 45 km from the airport."
+    },
+    {
+      "id": "fp-amenities",
+      "text": "We have 3 bedrooms, 2 bathrooms, AC in all rooms, 24x7 water and power backup, 100 mbps wifi.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "We have 3 bedrooms, 2 bathrooms, AC in all rooms, 24x7 water and power backup, 100 mbps wifi."
+    },
+    {
+      "id": "fp-gst",
+      "text": "Booking confirmed for 3 nights, total 45000 including 12% fee and 5% GST. Advance 10000 paid.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Booking confirmed for 3 nights, total 45000 including 12% fee and 5% GST. Advance 10000 paid."
+    },
+    {
+      "id": "fp-pincode-year",
+      "text": "Pin code is 403516 and the property was built in 2019, renovated 2024.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Pin code is 403516 and the property was built in 2019, renovated 2024."
+    },
+    {
+      "id": "fp-kochi",
+      "text": "Kochi 682001 has great food; we arrive at 7:30 pm on 21/11 and leave on 24/11.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Kochi 682001 has great food; we arrive at 7:30 pm on 21/11 and leave on 24/11."
+    },
+    {
+      "id": "fp-flight",
+      "text": "My flight lands at 21:45, gate 12, terminal 2. Can someone meet us at the gate?",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "My flight lands at 21:45, gate 12, terminal 2. Can someone meet us at the gate?"
+    },
+    {
+      "id": "fp-review",
+      "text": "We loved the stay! 5 stars. The host was very kind and the pool was 25 m long.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "We loved the stay! 5 stars. The host was very kind and the pool was 25 m long."
+    },
+    {
+      "id": "fp-gstin",
+      "text": "Can I get an invoice with GST? Our company reg no is 27AAAAA0000A1Z5.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Can I get an invoice with GST? Our company reg no is 27AAAAA0000A1Z5."
+    },
+    {
+      "id": "fp-degrees",
+      "text": "the temperature is 32 degrees, humidity 80 percent, so please keep the ac on",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "the temperature is 32 degrees, humidity 80 percent, so please keep the ac on"
+    },
+    {
+      "id": "fp-ref",
+      "text": "I paid 65000 through the site, booking id 68a1f2b3c4d5e6f7a8b9c0d1, ref MJ-2026-0912",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "I paid 65000 through the site, booking id 68a1f2b3c4d5e6f7a8b9c0d1, ref MJ-2026-0912"
+    },
+    {
+      "id": "fp-rooms",
+      "text": "Room 101 and room 102 are adjoining; floor 3; gate no 7; house no 72",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Room 101 and room 102 are adjoining; floor 3; gate no 7; house no 72"
+    },
+    {
+      "id": "fp-number-words",
+      "text": "one more thing, do you have a crib? we have a two year old and a three year old",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "one more thing, do you have a crib? we have a two year old and a three year old"
+    },
+    {
+      "id": "fp-counts-9-8",
+      "text": "9 kids and 8 adults coming, total 17 people. 7 rooms needed, 6 with ac.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "9 kids and 8 adults coming, total 17 people. 7 rooms needed, 6 with ac."
+    },
+    {
+      "id": "fp-signal",
+      "text": "I have poor signal here",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "I have poor signal here"
+    },
+    {
+      "id": "fp-imo",
+      "text": "imo it is fine",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "imo it is fine"
+    },
+    {
+      "id": "fp-hike",
+      "text": "lets hike to the fort",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "lets hike to the fort"
+    },
+    {
+      "id": "fp-usa",
+      "text": "u.s.a. and a.m.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "u.s.a. and a.m."
+    },
+    {
+      "id": "fp-sqft",
+      "text": "sq.ft is 2000",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "sq.ft is 2000"
+    },
+    {
+      "id": "fp-polka",
+      "text": "polka dot dress",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "polka dot dress"
+    },
+    {
+      "id": "fp-count-words",
+      "text": "one two three four five six seven eight nine zero",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "one two three four five six seven eight nine zero"
+    },
+    {
+      "id": "fp-units",
+      "text": "the villa is 500 m from the beach and 15 km from the airport",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "the villa is 500 m from the beach and 15 km from the airport"
+    },
+    {
+      "id": "fp-checkin",
+      "text": "check in 3 pm check out 11 am, 2 bhk, 6 guests max",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "check in 3 pm check out 11 am, 2 bhk, 6 guests max"
+    },
+    {
+      "id": "fp-snap-photo",
+      "text": "let me snap a photo of the pool",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "let me snap a photo of the pool"
+    },
+    {
+      "id": "fp-line",
+      "text": "the line was long at the airport",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "the line was long at the airport"
+    },
+    {
+      "id": "fp-at-time",
+      "text": "we will be at the villa at 6",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "we will be at the villa at 6"
+    },
+    {
+      "id": "fp-decimal",
+      "text": "1.5 ton ac in each room, 2.5 km to market",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "1.5 ton ac in each room, 2.5 km to market"
+    },
+    {
+      "id": "fp-empty",
+      "text": "",
+      "expected": "clean",
+      "kinds": [],
+      "masked": ""
+    },
+    {
+      "id": "fp-emoji",
+      "text": "see you soon 😊🏖️",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "see you soon 😊🏖️"
+    },
+    {
+      "id": "fp-hindi",
+      "text": "नमस्ते, क्या विला उपलब्ध है?",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "नमस्ते, क्या विला उपलब्ध है?"
+    }
+  ],
+  "sequences": [
+    {
+      "id": "seq-phone-halves",
+      "messages": [
+        "first five 98765",
+        "last five 43210"
+      ],
+      "blockedAt": [
+        1
+      ],
+      "statuses": [
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "first five •••",
+        "last five •••"
+      ]
+    },
+    {
+      "id": "seq-phone-per-digit",
+      "messages": [
+        "9",
+        "8",
+        "7",
+        "6",
+        "5",
+        "4",
+        "3",
+        "2",
+        "1",
+        "0"
+      ],
+      "blockedAt": [
+        9
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-phone-words",
+      "messages": [
+        "nine eight seven",
+        "six five four",
+        "three two one zero"
+      ],
+      "blockedAt": [
+        2
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "•••",
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-email-provider",
+      "messages": [
+        "rahul@",
+        "gmail",
+        "dot com"
+      ],
+      "blockedAt": [
+        1,
+        2
+      ],
+      "statuses": [
+        "clean",
+        "blocked",
+        "blocked"
+      ],
+      "masked": [
+        "rahul@",
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-email-typo-provider",
+      "messages": [
+        "rahul@",
+        "gmaill",
+        "dot com"
+      ],
+      "blockedAt": [
+        2
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "rahul@",
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-email-words",
+      "messages": [
+        "my id is rahul",
+        "at gmail",
+        "dot com"
+      ],
+      "blockedAt": [
+        1,
+        2
+      ],
+      "statuses": [
+        "clean",
+        "blocked",
+        "blocked"
+      ],
+      "masked": [
+        "my id is •••",
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-email-piecewise",
+      "messages": [
+        "rahul",
+        "dot",
+        "sharma",
+        "at",
+        "yahoo",
+        "dot",
+        "com"
+      ],
+      "blockedAt": [
+        4,
+        6
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "blocked",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-insta",
+      "messages": [
+        "insta",
+        "rahul_123"
+      ],
+      "blockedAt": [
+        0
+      ],
+      "statuses": [
+        "blocked",
+        "clean"
+      ],
+      "masked": [
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-domain",
+      "messages": [
+        "rahulvilla",
+        "dot in"
+      ],
+      "blockedAt": [
+        1
+      ],
+      "statuses": [
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-upi",
+      "messages": [
+        "my id is rahul",
+        "@ybl"
+      ],
+      "blockedAt": [
+        1
+      ],
+      "statuses": [
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "my id is •••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-phone-far",
+      "messages": [
+        "98765 is the first part",
+        "and it ends with 43210"
+      ],
+      "blockedAt": [
+        1
+      ],
+      "statuses": [
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "••• is the first part",
+        "and it ends with •••"
+      ]
+    },
+    {
+      "id": "seq-burst-labelled",
+      "messages": [
+        "burst 0",
+        "burst 2",
+        "burst 1",
+        "burst 3",
+        "burst 6",
+        "burst 4",
+        "burst 7",
+        "burst 8",
+        "burst 9",
+        "burst 11",
+        "burst 5",
+        "burst 12",
+        "burst 14",
+        "burst 15",
+        "burst 10",
+        "burst 13",
+        "burst 17",
+        "burst 16",
+        "burst 19",
+        "burst 18"
+      ],
+      "blockedAt": [],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean"
+      ],
+      "masked": [
+        "burst 0",
+        "burst 2",
+        "burst 1",
+        "burst 3",
+        "burst 6",
+        "burst 4",
+        "burst 7",
+        "burst 8",
+        "burst 9",
+        "burst 11",
+        "burst 5",
+        "burst 12",
+        "burst 14",
+        "burst 15",
+        "burst 10",
+        "burst 13",
+        "burst 17",
+        "burst 16",
+        "burst 19",
+        "burst 18"
+      ]
+    },
+    {
+      "id": "seq-day-labels",
+      "messages": [
+        "day 1: pool, beach, sunset",
+        "day 2: pool, beach, sunset",
+        "day 3: pool, beach, sunset",
+        "day 4: pool, beach, sunset",
+        "day 5: pool, beach, sunset",
+        "day 6: pool, beach, sunset",
+        "day 7: pool, beach, sunset",
+        "day 8: pool, beach, sunset",
+        "day 9: pool, beach, sunset",
+        "day 10: pool, beach, sunset",
+        "day 11: pool, beach, sunset",
+        "day 12: pool, beach, sunset"
+      ],
+      "blockedAt": [],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean"
+      ],
+      "masked": [
+        "day 1: pool, beach, sunset",
+        "day 2: pool, beach, sunset",
+        "day 3: pool, beach, sunset",
+        "day 4: pool, beach, sunset",
+        "day 5: pool, beach, sunset",
+        "day 6: pool, beach, sunset",
+        "day 7: pool, beach, sunset",
+        "day 8: pool, beach, sunset",
+        "day 9: pool, beach, sunset",
+        "day 10: pool, beach, sunset",
+        "day 11: pool, beach, sunset",
+        "day 12: pool, beach, sunset"
+      ]
+    },
+    {
+      "id": "seq-bare-pairs",
+      "messages": [
+        "98",
+        "76",
+        "54",
+        "32",
+        "10"
+      ],
+      "blockedAt": [
+        4
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-chunk-then-bare",
+      "messages": [
+        "98765",
+        "4",
+        "3",
+        "2",
+        "1",
+        "0"
+      ],
+      "blockedAt": [
+        5
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-legit-long",
+      "messages": [
+        "we are 4",
+        "2 kids",
+        "arriving 6 pm",
+        "3 nights",
+        "budget 15000",
+        "room 204",
+        "age 35",
+        "see you at 6",
+        "gate 12",
+        "floor 3"
+      ],
+      "blockedAt": [],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean"
+      ],
+      "masked": [
+        "we are 4",
+        "2 kids",
+        "arriving 6 pm",
+        "3 nights",
+        "budget 15000",
+        "room 204",
+        "age 35",
+        "see you at 6",
+        "gate 12",
+        "floor 3"
+      ]
+    }
+  ],
+  "fields": [
+    {
+      "id": "fields-title-desc",
+      "fields": {
+        "title": "Rahul Villa 98765",
+        "description": "Call 43210"
+      },
+      "expected": "blocked",
+      "masked": {
+        "title": "Rahul Villa •••",
+        "description": "Call •••"
+      }
+    },
+    {
+      "id": "fields-about-languages",
+      "fields": {
+        "about": "reach me on rahul",
+        "languages": "at gmail dot com"
+      },
+      "expected": "blocked",
+      "masked": {
+        "about": "reach me on •••",
+        "languages": "•••"
+      }
+    },
+    {
+      "id": "fields-clean",
+      "fields": {
+        "title": "Beach villa",
+        "description": "3 bedrooms, 2 km from Baga"
+      },
+      "expected": "clean",
+      "masked": {
+        "title": "Beach villa",
+        "description": "3 bedrooms, 2 km from Baga"
+      }
+    }
+  ],
+  "addresses": [
+    {
+      "address": {
+        "street": "House No 72, Holiday Street, Near Baga Beach",
+        "line1": "Plot 12/B",
+        "city": "Calangute",
+        "district": "North Goa",
+        "state": "Goa"
+      },
+      "tokens": {
+        "numbers": [
+          "72",
+          "12/b"
+        ],
+        "grams": [
+          "holiday street"
+        ]
+      },
+      "cases": [
+        {
+          "id": "addr-house-street",
+          "text": "My villa is at House 72, Holiday Street",
+          "expected": "blocked",
+          "masked": "My villa is at House •••, •••"
+        },
+        {
+          "id": "addr-street-plot",
+          "text": "we are on holiday street, plot 12/b",
+          "expected": "blocked",
+          "masked": "we are on •••, plot •••"
+        },
+        {
+          "id": "addr-locality",
+          "text": "near Calangute beach, north goa",
+          "expected": "clean",
+          "masked": "near Calangute beach, north goa"
+        },
+        {
+          "id": "addr-street-only",
+          "text": "holiday street is quiet",
+          "expected": "clean",
+          "masked": "holiday street is quiet"
+        },
+        {
+          "id": "addr-number-only",
+          "text": "72 is my lucky number",
+          "expected": "clean",
+          "masked": "72 is my lucky number"
+        },
+        {
+          "id": "addr-landmark",
+          "text": "villa 72 near baga beach",
+          "expected": "clean",
+          "masked": "villa 72 near baga beach"
+        }
+      ]
+    },
+    {
+      "address": {
+        "street": "House 9, Palm Lane",
+        "city": "Anjuna",
+        "state": "Goa"
+      },
+      "tokens": {
+        "numbers": [
+          "house 9"
+        ],
+        "grams": [
+          "palm lane"
+        ]
+      },
+      "cases": [
+        {
+          "id": "addr1-house-digit",
+          "text": "We are at House 9, Palm Lane, come straight in",
+          "expected": "blocked",
+          "masked": "We are at •••, •••, come straight in"
+        },
+        {
+          "id": "addr1-digit-elsewhere",
+          "text": "we are on palm lane, arriving at 9",
+          "expected": "clean",
+          "masked": "we are on palm lane, arriving at 9"
+        },
+        {
+          "id": "addr1-no-street",
+          "text": "house 9 is ours",
+          "expected": "clean",
+          "masked": "house 9 is ours"
+        },
+        {
+          "id": "addr1-locality",
+          "text": "a quiet lane in Anjuna, 5 minutes from the beach",
+          "expected": "clean",
+          "masked": "a quiet lane in Anjuna, 5 minutes from the beach"
+        }
+      ]
+    },
+    {
+      "address": {
+        "street": "Main Road",
+        "line1": "Sunshinevilla",
+        "city": "Vagator",
+        "state": "Goa"
+      },
+      "tokens": {
+        "numbers": [],
+        "grams": [
+          "sunshinevilla"
+        ]
+      },
+      "cases": [
+        {
+          "id": "addr2-generic-street",
+          "text": "we are on the main road",
+          "expected": "clean",
+          "masked": "we are on the main road"
+        },
+        {
+          "id": "addr2-distinct-word",
+          "text": "look for sunshinevilla and house 3",
+          "expected": "clean",
+          "masked": "look for sunshinevilla and house 3"
+        },
+        {
+          "id": "addr2-distinct-word-twice",
+          "text": "sunshinevilla on main road, ask for sunshinevilla",
+          "expected": "blocked",
+          "masked": "••• on main road, ask for •••"
+        }
+      ]
+    }
+  ],
+  "names": [
+    {
+      "name": "Rahul",
+      "ok": true
+    },
+    {
+      "name": "Mary Jane",
+      "ok": true
+    },
+    {
+      "name": "José",
+      "ok": true
+    },
+    {
+      "name": "राहुल",
+      "ok": true
+    },
+    {
+      "name": "O'Brien",
+      "ok": true
+    },
+    {
+      "name": "Anne-Marie",
+      "ok": true
+    },
+    {
+      "name": "Dr. Rao",
+      "ok": true
+    },
+    {
+      "name": "Rahul9876543210",
+      "ok": false
+    },
+    {
+      "name": "9876543210",
+      "ok": false
+    },
+    {
+      "name": "rahul@gmail.com",
+      "ok": false
+    },
+    {
+      "name": "@rahul123",
+      "ok": false
+    },
+    {
+      "name": "rahulvilla.in",
+      "ok": false
+    },
+    {
+      "name": "WhatsApp Rahul",
+      "ok": false
+    },
+    {
+      "name": "Rahul gmail",
+      "ok": false
+    },
+    {
+      "name": "",
+      "ok": false
+    },
+    {
+      "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ok": false
+    },
+    {
+      "name": "Rahul <script>",
+      "ok": false
+    }
+  ]
+}

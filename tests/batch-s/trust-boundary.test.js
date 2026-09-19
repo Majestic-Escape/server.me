@@ -16,8 +16,11 @@ const storage = () => require("../../services/storage");
 const provider = () => require("../../services/kycProvider");
 
 // Minimal files that sniff as jpeg / png / pdf.
-const JPEG = Buffer.concat([Buffer.from("ffd8ffe000104a464946", "hex"), Buffer.alloc(64, 1)]);
-const PNG = Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.alloc(64, 2)]);
+let JPEG; // a real JPEG (see PNG below)
+// A real image: uploads are decoded and re-encoded since the contact lock-down
+// (metadata stripped, QR codes refused), so a bag of bytes with a PNG header
+// is refused as INVALID_IMAGE.
+let PNG;
 const PDF = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(64, 3)]);
 const b64 = (buf) => buf.toString("base64");
 const BUCKET = () => `https://${process.env.DO_SPACES_BUCKET}.${process.env.REGION}.digitaloceanspaces.com/`;
@@ -41,6 +44,8 @@ async function upload(token, files, { path = "/uploads/", field = "images" } = {
 }
 
 test.before(async () => {
+  PNG = await require("sharp")({ create: { width: 8, height: 8, channels: 3, background: "#336699" } }).png().toBuffer();
+  JPEG = await require("sharp")({ create: { width: 8, height: 8, channels: 3, background: "#996633" } }).jpeg().toBuffer();
   await h.start();
   G = await h.makeUser({ firstName: "Guest", lastName: "One" });
   GT = h.userToken(G);
@@ -476,7 +481,7 @@ test("uploads: authenticated, owner-bound keys, profile picture only on own acco
   assert.equal(up.status, 200, JSON.stringify(up.body));
   assert.equal(up.body.urls.length, 2);
   const key0 = storage().keyFromUrl(up.body.urls[0]);
-  assert.match(key0, new RegExp(`^listings/${H._id}/[0-9a-f-]{36}-My-Photo-1-.JPG$`));
+  assert.match(key0, new RegExp(`^listings/${H._id}/[0-9a-f-]{36}-My-Photo-1-.jpg$`)); // re-encoded (contact lock-down): the extension follows the output format
   assert.equal(storage().ownerFromKey(key0), String(H._id));
   const key1 = storage().keyFromUrl(up.body.urls[1]);
 

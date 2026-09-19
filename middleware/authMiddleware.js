@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
 const User = require("../models/User");
+const authz = require("./authz");
 
 const authMiddleware = async (req, res, next) => {
   try {
@@ -73,9 +74,19 @@ const authMiddleware = async (req, res, next) => {
         console.log("Enter banning4");
       }
       req.user = user;
+      // The response PII filter keys on req.actor; for a user token it is
+      // the loaded document (no extra query).
+      await authz.resolveActor(req);
       next();
     } else {
       req.user = decoded;
+      // Admin-shaped tokens (no `admin` claim: admin login, registration)
+      // resolve to a DB-verified Admin or User record; a token that is
+      // neither has no business here. One Admin.findById per admin request.
+      const actor = await authz.resolveActor(req);
+      if (!actor) {
+        return res.status(401).json({ success: false, code: "AUTH_REQUIRED", message: "Authentication required", statusCode: 401 });
+      }
       next();
     }
   } catch (error) {

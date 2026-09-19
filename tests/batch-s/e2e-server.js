@@ -173,7 +173,8 @@ async function main() {
       let body = "";
       for await (const c of req) body += c;
       const json = body ? JSON.parse(body) : {};
-      if (req.url === "/seed") return res.end(JSON.stringify(seed));
+      // tokens are re-minted per request so long-running browser sessions never hit the 1 h expiry
+      if (req.url === "/seed") return res.end(JSON.stringify({ ...seed, guestToken: h.userToken(GUEST), hostToken: h.userToken(HOST), guestBToken: h.userToken(GUEST_B), hostBToken: h.userToken(HOST_B), adminToken: h.adminToken(ADMIN) }));
       if (req.url === "/register-payment") {
         const order = h.razorpay().__mock.orders.get(json.orderId);
         if (!order) { res.statusCode = 404; return res.end(JSON.stringify({ error: "unknown order" })); }

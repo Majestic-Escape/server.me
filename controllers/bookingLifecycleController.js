@@ -17,6 +17,7 @@ const notify = require("../services/bookingNotifications");
 const attention = require("../services/attention");
 const authz = require("../middleware/authz");
 const { isObjectId, rejectInvalidId } = require("../middleware/validateObjectId");
+const { bookingForActor } = require("../utils/bookingView");
 
 // Product limits are OFF unless configured: neither the pre-S backend nor the
 // booking calendar (which only disables past and taken dates) ever limited
@@ -317,7 +318,7 @@ exports.markBookingAsPaid = async (req, res) => {
     const sent = await sendPaidNotifications(booking);
     if (sent.error === "PAYMENT_NOT_FOUND") return fail(res, 404, "PAYMENT_NOT_FOUND", "Payment not found");
     if (sent.error) return fail(res, 502, "NOTIFY_FAILED", "Booking is paid but notifications could not be sent");
-    return res.status(200).json({ success: true, data: booking, alreadyNotified: !!sent.alreadyNotified });
+    return res.status(200).json({ success: true, data: bookingForActor(booking, actor), alreadyNotified: !!sent.alreadyNotified });
   } catch (err) {
     return handleError(res, err, "markBookingAsPaid error");
   }
@@ -446,7 +447,7 @@ async function cancelCore({ req, res, bookingId, allowed, nextStatus, refund, no
     success: true,
     message: refundResult.refunded ? "Refund issued and booking terminated" : "Booking cancelled without refund",
     refunded: !!refundResult.refunded,
-    data: updated,
+    data: bookingForActor(updated, actor),
   });
 }
 
@@ -580,7 +581,7 @@ exports.updateCloseModal = async (req, res) => {
     const booking = await loadBooking(res, req.body.bookingId, "");
     if (!booking) return;
     if (!(authz.isBookingGuest(actor, booking) || authz.isAdmin(actor))) return authz.forbid(res);
-    return res.json({ success: true, data: booking });
+    return res.json({ success: true, data: bookingForActor(booking, actor) });
   } catch (err) {
     return handleError(res, err, "updateCloseModal error");
   }
@@ -595,7 +596,7 @@ exports.getBookingById = async (req, res) => {
     if (!(authz.isBookingGuest(actor, booking) || authz.isBookingHost(actor, booking) || authz.isAdmin(actor))) {
       return authz.forbid(res);
     }
-    return res.status(200).json({ success: true, data: booking });
+    return res.status(200).json({ success: true, data: bookingForActor(booking, actor) });
   } catch (err) {
     return handleError(res, err, "getBookingById error");
   }

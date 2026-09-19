@@ -1,5 +1,6 @@
 // controllers/hostProfileController.js
 const User = require('../models/User');
+const { nameProblem, CONTACT_INFO_NOT_ALLOWED } = require('../utils/publicTextPolicy');
 const generateOTP = require('../utils/sendOtpUtils'); // Utility function to generate OTP
 
 exports.sendOtp = async (req, res) => {
@@ -62,6 +63,12 @@ exports.verifyOtp = async (req, res) => {
     user.otp = null;
     user.otpRetries = 0;
     user.lockUntil = null;
+
+    // Contact lock-down: names are shown to the other party
+    const nameError = nameProblem(firstName, "First name") || nameProblem(lastName, "Last name");
+    if (nameError) {
+      return res.status(422).json({ success: false, code: CONTACT_INFO_NOT_ALLOWED, message: nameError, statusCode: 422, fields: [nameProblem(firstName, "First name") ? "firstName" : "lastName"] });
+    }
 
     // Update user role and additional fields
     user.role = 'host'; // Update role to host

@@ -27,6 +27,20 @@ const {
 } = require("../utils/generateBookingGuestList");
 const { calTax } = require("../utils/tax");
 const authz = require("../middleware/authz");
+const { bookingForActor, bookingsForActor } = require("../utils/bookingView");
+const { PUBLIC_USER_SELECT, SELF_USER_SELECT, toPublicUser } = require("../utils/sanitizeResponse");
+
+// Populate for a list the caller reads as guest or host: the counterpart is
+// fetched with the public projection, the caller's own record without
+// secrets; an admin gets the documents unchanged (contact lock-down).
+function populateFor(actor, role) {
+  if (authz.isAdmin(actor)) return "userId propertyId hostId";
+  return [
+    { path: "userId", select: role === "guest" ? SELF_USER_SELECT : PUBLIC_USER_SELECT },
+    { path: "hostId", select: role === "host" ? SELF_USER_SELECT : PUBLIC_USER_SELECT },
+    { path: "propertyId" },
+  ];
+}
 const inventory = require("../services/inventory");
 const BookingNight = require("../models/BookingNight");
 
@@ -149,8 +163,8 @@ exports.getAnalyticsFilterBookings = async (req, res) => {
       source: "local",
       action: "user",
       ...scope,
-    }).populate("userId propertyId hostId");
-    res.status(200).json({ success: true, data: bookings });
+    }).populate(populateFor(actor, "host"));
+    res.status(200).json({ success: true, data: bookingsForActor(bookings, actor) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -322,7 +336,7 @@ exports.getHostFilterBookingStats = async (req, res) => {
 
     // Fetch bookings first
     let bookings = await Booking.find(filter)
-      .populate("userId propertyId hostId")
+      .populate(populateFor(await authz.resolveActor(req), "host"))
       .sort({ checkIn: 1 })
       .lean();
 
@@ -356,7 +370,7 @@ exports.getHostFilterBookingStats = async (req, res) => {
       );
     }
 
-    res.json({ success: true, data: bookings });
+    res.json({ success: true, data: bookingsForActor(bookings, await authz.resolveActor(req)) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -435,6 +449,29 @@ exports.getHostFilterBookings = async (req, res) => {
       },
       { $unwind: "$hostId" },
     ];
+    // Contact lock-down: the guest is the counterpart of this list — only the
+    // public user fields leave Mongo; the host's own record loses its secrets.
+    const actor = await authz.resolveActor(req);
+    if (!authz.isAdmin(actor)) {
+      pipeline.push({
+        $addFields: {
+          userId: {
+            _id: "$userId._id",
+            firstName: "$userId.firstName",
+            lastName: "$userId.lastName", // needed by the text filter below, removed from the response
+            profilePicture: "$userId.profilePicture",
+            about: "$userId.about",
+            languages: "$userId.languages",
+            averageRating: "$userId.averageRating",
+            reviewCount: "$userId.reviewCount",
+            avgPropertyRating: "$userId.avgPropertyRating",
+            propertyReviewCount: "$userId.propertyReviewCount",
+            createdAt: "$userId.createdAt",
+          },
+        },
+      });
+      pipeline.push({ $unset: ["hostId.otp", "hostId.otpRetries", "hostId.lockUntil", "hostId.tokenVersion", "hostId.password"] });
+    }
 
     /** ---------------- TEXT FILTERS ---------------- */
     const textFilters = [];
@@ -496,7 +533,7 @@ exports.getHostFilterBookings = async (req, res) => {
 
     res.json({
       success: true,
-      data: bookings,
+      data: bookingsForActor(bookings, actor),
       total,
       limit,
       skip,
@@ -589,6 +626,12 @@ exports.getRevenueFilter = async (req, res) => {
       );
     }
 
+    const revenueActor = await authz.resolveActor(req);
+    if (!authz.isAdmin(revenueActor)) {
+      for (const b of bookings) {
+        if (b.bookingId && b.bookingId.userId && typeof b.bookingId.userId === "object") b.bookingId.userId = toPublicUser(b.bookingId.userId, { fallbackName: "Guest" });
+      }
+    }
     res.json({ success: true, data: bookings });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -702,7 +745,8 @@ exports.updateFlag = async (req, res) => {
     // Recipient is the booking's host (was a client-supplied address); the
     // names used to be undefined identifiers (ReferenceError → 500).
     const email = data.hostId?.email;
-    const userName = `${data.userId?.firstName || ""} ${data.userId?.lastName || ""}`.trim();
+    // Contact lock-down: the host reads the guest's first name only.
+    const userName = (data.userId?.firstName || "").trim() || "your guest";
     const lastName = `${data.hostId?.firstName || ""} ${data.hostId?.lastName || ""}`.trim();
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log(email);
@@ -727,7 +771,7 @@ exports.updateFlag = async (req, res) => {
     //   paymentId: data.payment.paymentId,
     // };
     await sendEmail(email, 39, params);
-    res.status(200).json({ success: true, data: data });
+    res.status(200).json({ success: true, data: bookingForActor(data, await authz.resolveActor(req)) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -749,7 +793,7 @@ exports.getActiveBookings = async (req, res) => {
       checkIn: { $lte: endOfDay },
       checkOut: { $gte: startOfDay },
       ...scope,
-    }).populate("userId propertyId hostId");
+    }).populate(populateFor(actor, "host"));
 
     const bookingData = bookings.filter((item) => {
       if (!item.propertyId?.checkinTime || !item.propertyId?.checkoutTime) {
@@ -767,7 +811,7 @@ exports.getActiveBookings = async (req, res) => {
       return now >= checkinDateTime && now <= checkoutDateTime;
     });
 
-    res.json({ success: true, data: bookingData });
+    res.json({ success: true, data: bookingsForActor(bookingData, actor) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -789,13 +833,14 @@ exports.getAllUserBookings = async (req, res) => {
   try {
     const userId = await scopedId(req, req.query.userId);
     if (!userId) return res.status(403).json({ success: false, code: "FORBIDDEN" });
+    const actor = await authz.resolveActor(req);
     const bookings = await Booking.find({
       userId: userId,
       source: "local",
       action: "user",
       paymentStatus: "paid",
     })
-      .populate("userId propertyId hostId")
+      .populate(populateFor(actor, "guest"))
       .sort({ createdAt: -1 })
       .lean();
     if (!bookings) {
@@ -803,7 +848,7 @@ exports.getAllUserBookings = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
-    res.status(200).json({ success: true, data: bookings });
+    res.status(200).json({ success: true, data: bookingsForActor(bookings, actor) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -818,8 +863,8 @@ exports.getBookingsByUser = async (req, res) => {
       userId: req.params.userId,
       source: "local",
       action: "user",
-    }).populate("propertyId hostId");
-    res.status(200).json({ success: true, data: bookings });
+    }).populate(authz.isAdmin(actor) ? "propertyId hostId" : [{ path: "propertyId" }, { path: "hostId", select: PUBLIC_USER_SELECT }]);
+    res.status(200).json({ success: true, data: bookingsForActor(bookings, actor) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -834,8 +879,8 @@ exports.getBookingsByHost = async (req, res) => {
       hostId: req.params.hostId,
       source: "local",
       action: "user",
-    }).populate("userId propertyId");
-    res.status(200).json({ success: true, data: bookings });
+    }).populate(authz.isAdmin(actor) ? "userId propertyId" : [{ path: "propertyId" }, { path: "userId", select: PUBLIC_USER_SELECT }]);
+    res.status(200).json({ success: true, data: bookingsForActor(bookings, actor) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }

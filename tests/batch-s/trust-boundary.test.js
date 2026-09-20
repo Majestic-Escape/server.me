@@ -503,15 +503,15 @@ test("uploads: authenticated, owner-bound keys, profile picture only on own acco
   // unreferenced in-progress upload: only its owner (upload→attach race: another user gets 403)
   assert.equal((await del(undefined, up.body.urls[0])).status, 401);
   assert.equal((await del(OT, up.body.urls[0])).status, 403);
-  assert.deepEqual(storage().__mock.deleted, []);
+  assert.deepEqual(storage().__mock.photosDeleted, []);
   assert.equal((await del(HT, up.body.urls[0])).status, 200);
-  assert.deepEqual(storage().__mock.deleted, [key0]);
+  assert.deepEqual(storage().__mock.photosDeleted, [key0]);
 
   // attach the second upload to the host's listing → another user still cannot, the host can, admin can
   await ListingProperty().updateOne({ _id: LH._id }, { $set: { photos: [up.body.urls[1]] } });
   assert.equal((await del(OT, up.body.urls[1])).status, 403);
   assert.equal((await del(HT, up.body.urls[1].replace(".digitaloceanspaces.com/", ".cdn.digitaloceanspaces.com/"))).status, 200, "CDN form of the same object");
-  assert.ok(storage().__mock.deleted.includes(key1));
+  assert.ok(storage().__mock.photosDeleted.includes(key1));
 
   // own profile picture
   assert.equal((await del(OT, prof.body.url)).status, 403);
@@ -526,7 +526,7 @@ test("uploads: authenticated, owner-bound keys, profile picture only on own acco
   assert.equal(conflict.status, 409, JSON.stringify(conflict.body));
   assert.equal(conflict.body.code, "OBJECT_IN_USE");
   assert.equal((await del(OT, legacy)).status, 409);
-  assert.deepEqual(storage().__mock.deleted, []);
+  assert.deepEqual(storage().__mock.photosDeleted, []);
   assert.equal((await del(AT, legacy)).status, 200);
   await ListingProperty().deleteOne({ _id: L2._id });
   // legacy unreferenced key: admin-only
@@ -551,9 +551,9 @@ test("uploads: authenticated, owner-bound keys, profile picture only on own acco
     const r = await del(HT, url);
     assert.ok(r.status === 400 || r.status === 403, `${url} → ${r.status}`);
   }
-  assert.deepEqual(storage().__mock.deleted, []);
+  assert.deepEqual(storage().__mock.photosDeleted, []);
   assert.equal((await del(HT, `${BUCKET()}listings/${H._id}%2Fmine.jpg`)).status, 200, "%2F is the same object as / and the owner segment still matches");
-  assert.deepEqual(storage().__mock.deleted, [`listings/${H._id}/mine.jpg`]);
+  assert.deepEqual(storage().__mock.photosDeleted, [`listings/${H._id}/mine.jpg`]);
   assert.equal((await h.api("POST", "/uploads/generate-presigned-url", { token: HT, body: { fileName: "x", fileType: "image/png" } })).status, 403);
   // the raw direct-to-bucket path is retired for admins too: every public image goes through the sanitiser
   const presigned = await h.api("POST", "/uploads/generate-presigned-url", { token: AT, body: { fileName: "x", fileType: "image/png" } });

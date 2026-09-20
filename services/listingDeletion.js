@@ -155,7 +155,8 @@ async function cleanupPhotos(photoKeys) {
   const inUse = await keysInUse();
   const candidates = photoKeys.filter((k) => !inUse.has(k));
   const skipped = photoKeys.filter((k) => inUse.has(k));
-  const result = candidates.length ? await storage.deleteObjects(candidates) : { deleted: [], failed: [] };
+  // deleteImages: a master and every display variant under it go together.
+  const result = candidates.length ? await storage.deleteImages(candidates) : { deleted: [], failed: [] };
   return { removed: result.deleted, skipped, failed: result.failed.map((f) => ({ key: f.key, code: f.code || "", message: String(f.message || "").slice(0, 200) })) };
 }
 

@@ -1,0 +1,249 @@
+{
+ "version": 1,
+ "set": "v1",
+ "widths": [
+  160,
+  320,
+  640,
+  960,
+  1280,
+  1600,
+  1920,
+  2560,
+  3840
+ ],
+ "bucket": "test-bucket",
+ "region": "blr1",
+ "vectors": [
+  {
+   "src": "https://test-bucket.blr1.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg",
+   "master": "listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg",
+   "master": "listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png",
+   "master": "profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png",
+   "master": "profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/profiles/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-me.png/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.digitaloceanspaces.com/1769315746961-villa%20(front).jpg",
+   "master": "1769315746961-villa (front).jpg",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg",
+   "master": "1769315746961-villa (front).jpg",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-villa%20(front).jpg/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg",
+   "master": "1742666768717-pexels-frans-van-heerden-201846-1438834.jpg",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg",
+   "master": "1742666768717-pexels-frans-van-heerden-201846-1438834.jpg",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1742666768717-pexels-frans-van-heerden-201846-1438834.jpg/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp",
+   "master": "1769315746961-café photo+1.webp",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp",
+   "master": "1769315746961-café photo+1.webp",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-caf%C3%A9%20photo%2B1.webp/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.digitaloceanspaces.com/1769315746961-100%25.jpg",
+   "master": "1769315746961-100%.jpg",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg",
+   "master": "1769315746961-100%.jpg",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/1769315746961-100%25.jpg/v1/w3840.webp"
+   }
+  },
+  {
+   "src": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w960.webp",
+   "master": "listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg",
+   "byWidth": {
+    "1": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w160.webp",
+    "160": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w160.webp",
+    "161": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w320.webp",
+    "700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w960.webp",
+    "960": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w960.webp",
+    "1100": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w1280.webp",
+    "1700": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w1920.webp",
+    "2200": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w2560.webp",
+    "2561": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w3840.webp",
+    "3840": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w3840.webp",
+    "5000": "https://test-bucket.blr1.cdn.digitaloceanspaces.com/listings/64f1c2a3b4c5d6e7f8a9b0c1/0b1e0c1a-1111-4222-8333-444455556666-Villa-Front.jpg/v1/w3840.webp"
+   }
+  }
+ ],
+ "notOurs": [
+  "https://images.unsplash.com/photo-1.jpg",
+  "https://evil.example/listings/x.jpg",
+  "/placeholder.svg",
+  "https://majestic-escape-host-properties.blr1.digitaloceanspaces.com.evil.com/x.jpg",
+  "http://majestic-escape-host-properties.blr1.digitaloceanspaces.com/x.jpg",
+  "blob:https://majesticescape.in/1234",
+  "data:image/png;base64,AAAA"
+ ]
+}

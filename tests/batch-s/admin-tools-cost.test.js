@@ -66,7 +66,9 @@ test("cost: pending listing delete ≤ 16 operations, one Spaces call, no pollin
   console.log(`[cost] delete: ${delOps.length} ops → ${delOps.join(", ")}`);
   assert.ok(delOps.length <= 20, `delete issued ${delOps.length}: ${delOps.join(", ")}`);
   assert.equal(storage().__mock.calls, 1, "exactly one deleteObjects call");
-  assert.equal(storage().__mock.deleted.length, 2);
+  assert.equal(storage().__mock.photosDeleted.length, 2);
+  assert.equal(storage().__mock.deleted.length, 2 * (1 + storage().VARIANT_WIDTHS.length), "each photo's master and every display variant, in that one call");
+  assert.equal(storage().__mock.listCalls, 2, "one variant listing per photo");
 });
 
 test("cost: KYC document list ≤ 4 round trips and < 5 KB with a 4 MiB upload on file; file endpoint ≤ 3 operations", async () => {

@@ -177,6 +177,18 @@ async function main() {
       const json = body ? JSON.parse(body) : {};
       // tokens are re-minted per request so long-running browser sessions never hit the 1 h expiry
       if (req.url === "/seed") return res.end(JSON.stringify({ ...seed, guestToken: h.userToken(GUEST), hostToken: h.userToken(HOST), guestBToken: h.userToken(GUEST_B), hostBToken: h.userToken(HOST_B), adminToken: h.adminToken(ADMIN) }));
+      // GET /mock-object?key=<bucket key> → the bytes an upload stored in the
+      // in-memory Spaces fake (headers as the real bucket sends them), 404 when
+      // absent — a browser suite routes *.digitaloceanspaces.com here so photos
+      // uploaded through the wizard render like they do from the real CDN.
+      if (req.url.startsWith("/mock-object?")) {
+        const key = decodeURIComponent(new URL(req.url, "http://x").searchParams.get("key") || "");
+        const o = require("../../services/storage").__mock.objects.get(key);
+        if (!o) { res.statusCode = 404; return res.end("not found"); }
+        res.setHeader("content-type", o.contentType || "application/octet-stream");
+        if (o.cacheControl) res.setHeader("cache-control", o.cacheControl);
+        return res.end(o.body);
+      }
       if (req.url === "/register-payment") {
         const order = h.razorpay().__mock.orders.get(json.orderId);
         if (!order) { res.statusCode = 404; return res.end(JSON.stringify({ error: "unknown order" })); }
@@ -221,6 +233,12 @@ async function main() {
         const owner = json.owner === "hostB" ? HOST_B : HOST;
         const l = await h.makeListing(owner, { title: json.title ?? "", status: json.status || "incomplete", photos: json.photos || [PHOTO], address: json.address || { city: "Panaji", state: "Goa", country: "India", district: "North Goa" }, ...(json.fields || {}) });
         return res.end(JSON.stringify({ id: String(l._id), status: l.status, title: l.title }));
+      }
+      // POST /set-profile-picture { url } → the seeded host's profile picture ("" clears it)
+      if (req.url === "/set-profile-picture") {
+        const User = require("../../models/User");
+        await User.updateOne({ _id: HOST._id }, json.url ? { $set: { profilePicture: json.url } } : { $unset: { profilePicture: 1 } });
+        return res.end(JSON.stringify({ ok: true }));
       }
       // POST /set-kyc { status: "completed" | "pending" } → the seeded host's KYC form
       // (the verified summary page vs the wizard); "completed" mirrors what the

@@ -185,6 +185,26 @@ async function main() {
         const signature = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(`${order.id}|${id}`).digest("hex");
         return res.end(JSON.stringify({ razorpay_payment_id: id, razorpay_order_id: order.id, razorpay_signature: signature, amount: order.amount }));
       }
+      // /seed-admin-lists?n=30 — extra guests / listings / bookings / payments /
+      // reviews so the admin tables cross page boundaries (idempotent: rows are
+      // tagged "QA List"; a second call adds nothing).
+      if (req.url.startsWith("/seed-admin-lists")) {
+        const n = Math.min(Math.max(parseInt(new URL(req.url, "http://x").searchParams.get("n") || "30", 10) || 30, 1), 200);
+        const User = require("../../models/User");
+        const Review = require("../../models/Review");
+        const existing = await ListingProperty.countDocuments({ title: /^QA List Villa/ });
+        if (!existing) {
+          for (let i = 0; i < n; i++) {
+            const tag = String(i).padStart(2, "0");
+            const g = await h.makeUser({ firstName: `Lister${tag}`, lastName: "Guest", email: `lister${tag}@test.local`, phoneNumber: `98${String(10000000 + i)}`, createdAt: new Date(Date.UTC(2026, 0, 1 + (i % 28))) });
+            const l = await h.makeListing(i % 4 === 0 ? HOST_B : HOST, { title: `QA List Villa ${tag}`, basePrice: 1500 + i * 50, guests: 2 + (i % 6), status: i % 5 === 0 ? "processing" : "active", address: { city: ["Panaji", "Manali", "Lonavala", "Alibaug"][i % 4], state: "Goa", country: "India", district: "North Goa" } });
+            const b = await Booking.create({ userId: g._id, hostId: l.host, propertyId: l._id, action: "user", source: "local", checkIn: new Date(Date.UTC(2027, 2, 1 + (i % 27))), checkOut: new Date(Date.UTC(2027, 2, 3 + (i % 27))), nights: 2, guests: 2, adults: 2, children: 0, infants: 0, price: 6000 + i * 25, subTotal: 5500 + i * 25, status: i % 3 === 0 ? "pending" : "confirmed", paymentStatus: i % 3 === 0 ? "unpaid" : "paid", reviewed: i % 2 === 0 });
+            await Payment.create({ orderId: `order_list_${tag}`, paymentId: `pay_list_${tag}`, amount: (6000 + i * 25) * 100, currency: "INR", bookingId: b._id, propertyId: l._id, status: i % 3 === 0 ? "created" : "paid", paymentType: i % 7 === 0 ? "refunded" : "pay-in", customerDetails: { name: `Lister${tag} Guest`, email: `lister${tag}@test.local`, contact: `98${String(10000000 + i)}` }, createdAt: new Date(Date.UTC(2026, 4, 1 + (i % 28))) });
+            await Review.create({ user: g._id, property: l._id, bookingId: b._id, hostId: l.host, rating: 1 + (i % 5), content: `QA List review ${tag} — a pleasant stay`, hideStatus: i % 6 === 0 ? "pending" : "accept", createdAt: new Date(Date.UTC(2026, 5, 1 + (i % 28))) });
+          }
+        }
+        return res.end(JSON.stringify({ ok: true, added: existing ? 0 : n }));
+      }
       if (req.url === "/set-price") {
         await ListingProperty.updateOne({ _id: json.listingId }, { $set: { basePrice: json.basePrice } });
         return res.end(JSON.stringify({ ok: true }));

@@ -225,6 +225,21 @@ existing + patch, against the listing's own address); review text. Refusal:
 `422 CONTACT_INFO_NOT_ALLOWED { kinds, fields }`. On read, the same detector
 masks legacy public text (`•••`), listing text as one resource.
 
+**Traveller names at checkout** (`guestData.adults[].name`, `children[].name`)
+reach the host's check-in register and guest-list PDF, so the names of one
+booking are judged together by the detector (a phone number split across rows
+is still one identifier) — `422 CONTACT_INFO_NOT_ALLOWED { fields: ["guestData"] }`.
+Unlike account names they stay free text otherwise ("Guest 2", "Aarav (2 yrs)").
+
+**One detector, one corpus.** `tests/batch-s/fixtures/contact-vectors.json` is a
+byte-identical copy of the chat repo's corpus; `contact-moderation.test.js` pins
+its sha256 (over normalised line endings) and the release harness
+(`tests/pw-final/corpus-parity.mjs`) fails when the two files differ. To change a
+rule: edit `majestic-chat/packages/shared/src/moderation/patterns.ts`, regenerate
+the corpus, copy it here, re-pin both suites, and re-emit the mirror with
+`node packages/shared/scripts/emit-contact-moderation-cjs.js <this repo>/utils/contactModeration.js`.
+Never hand-edit `utils/contactModeration.js`.
+
 ## Images
 `services/imageSanitizer.js`: uploads are decoded, re-encoded without metadata
 (EXIF GPS!), orientation baked, QR codes refused (`422 IMAGE_NOT_ALLOWED`),
@@ -237,3 +252,24 @@ is not OCR'd — the admin's listing approval remains the manual control.
 (read-only) and `node scripts/strip-image-metadata.js --uri=<prod DB_URI>`
 before promotion; `--apply` on both is the owner's call (read-time masking
 already keeps legacy content off the wire). Probe: `node tests/batch-s/pii-probe.mjs`.
+
+Dev-cluster run (2026-09-20, read-only): 187 listings — 2 carry a WhatsApp
+mention in their rules (masked on read; the hosts can rephrase), 0 false
+positives after two detector refinements found by this very scan (sentence
+boundaries between fields, numbered list items); 32 hosts, 14 reviews clean;
+chat: 0 stored last names, 13 legacy messages, none contact-bearing. Images:
+215 scanned, 33 with EXIF/XMP, 0 with GPS, 1 with a QR code. Evidence under
+`tests/pw-final/evidence/pii-shadow-scan-dev.txt` / `pii-strip-images-dev-dry.txt`.
+
+## Compatibility notes (verified with real builds)
+- The production site (`cdrx/user/phase-1`) against this backend: every page
+  renders, messaging / cancel / confirm / profile / listing writes work; the
+  counterpart shows by first name because `lastName` is simply absent; a 422
+  from the text policy is shown through the site's generic error toast.
+- This backend never reads `userEmail / hostEmail / userName / hostName` from
+  lifecycle request bodies (nor did the previous one) — the new site sends
+  `{ bookingId }` only.
+- admin.site builds its date filters with `toLocaleDateString()` while the admin
+  booking / transaction endpoints parse `M/D/YYYY`: in a D/M/YYYY browser locale
+  the admin lists are empty. Pre-existing, unrelated to this change; the fix is
+  `format(date, "M/d/yyyy")` as done for the host pages in user.website.

@@ -1,6 +1,6 @@
 // GENERATED FILE — do not edit by hand.
 // Contact-information detector, emitted from majestic-chat
-// packages/shared/src/moderation/patterns.ts (commit ba7e4cf) by
+// packages/shared/src/moderation/patterns.ts (commit 17816bb) by
 // packages/shared/scripts/emit-contact-moderation-cjs.js. The TypeScript
 // source is the only implementation; tests/batch-s/contact-moderation.test.js
 // asserts the shared golden corpus (tests/batch-s/fixtures/contact-vectors.json)
@@ -86,7 +86,13 @@ exports.MASK = '•••';
 /** Hostnames (and their subdomains) that may appear as URLs. Never applies to emails. */
 exports.ALLOWED_URL_DOMAINS = ['majesticescape.in', 'majesticescape.com'];
 // Characters that carry no visible content and are used to split identifiers.
-const STRIP_RE = /[\u200B-\u200F\u2060-\u2064\uFEFF\uFE00-\uFE0F\u20E3\u034F\u180E\u00AD\u2028\u2029\u0301-\u036F]/u;
+// Invisible to the reader: zero-width and every other format control (bidi
+// controls, tag characters, soft hyphens…), keycap and variation selectors,
+// combining accents.
+const STRIP_RE = /[\u200B-\u200F\u2060-\u2064\uFEFF\uFE00-\uFE0F\u20E3\u034F\u180E\u00AD\u2028\u2029\u0301-\u036F]|\p{Cf}/u;
+// Pictographs, emoji, dingbats, arrows… are never part of an identifier: the
+// reader sees them as separators ("9😀8😀7…", "☎ 98765"), so does the detector.
+const SYMBOL_RE = /\p{So}/u;
 const ND_RE = /\p{Nd}/u;
 // Dot look-alikes used to disguise a domain: ideographic / halfwidth full stops,
 // katakana middle dot, one-dot leader, middle dot, hyphenation point, dot operator, bullet operator.
@@ -126,7 +132,7 @@ function foldCharacters(original) {
             for (const ch of folded) {
                 if (STRIP_RE.test(ch))
                     continue;
-                out.push({ s: ND_RE.test(ch) ? digitValue(ch) : DOT_LIKE_RE.test(ch) ? '.' : ch, from: i, to: i + len });
+                out.push({ s: ND_RE.test(ch) ? digitValue(ch) : DOT_LIKE_RE.test(ch) ? '.' : SYMBOL_RE.test(ch) ? ' ' : ch, from: i, to: i + len });
             }
         }
         i += len;
@@ -729,6 +735,29 @@ function runRegex(norm, re, pattern, out, accept) {
         out.push(toOriginalHit(norm, pattern, m.index, m.index + m[0].length));
     }
 }
+// A right-to-left override (U+202E) shows the reader the characters that
+// follow it in reverse order until the next pop (U+202C) or the end of the
+// text: "‮0123456789" reads as 9876543210. Every overridden segment is
+// judged as the reader sees it; a disclosure makes the whole segment one hit
+// (the reversed run cannot be mapped character by character).
+const RLO_RE = /\u202E/;
+const RLO_SEGMENT_RE = /\u202E([^\u202C]*)\u202C?/g;
+function detectOverriddenSegments(original, options) {
+    const hits = [];
+    RLO_SEGMENT_RE.lastIndex = 0;
+    let m;
+    while ((m = RLO_SEGMENT_RE.exec(original))) {
+        if (!m[1])
+            continue;
+        const visual = [...m[1].replace(/[\u202D\u202E]/g, '')].reverse().join('');
+        const res = detectContact(visual, { address: options.address });
+        for (const kind of res.kinds) {
+            if (exports.BLOCKING_PATTERNS.has(kind))
+                hits.push({ pattern: kind, start: m.index, end: m.index + m[0].length, match: visual });
+        }
+    }
+    return hits;
+}
 /** Detect contact information in one text. */
 function detectContact(original, options = {}) {
     const norm = normalizeForModeration(original);
@@ -764,6 +793,8 @@ function detectContact(original, options = {}) {
     runRegex(norm, CONTACT_INTENT_RE, PatternType.CONTACT_INTENT, hits);
     if (options.address)
         hits.push(...detectAddress(norm, options.address));
+    if (RLO_RE.test(original))
+        hits.push(...detectOverriddenSegments(original, options));
     // Legacy kind names for the WhatsApp/Telegram/Signal words (logs and older tests).
     for (const h of hits) {
         if (h.pattern !== PatternType.SOCIAL)

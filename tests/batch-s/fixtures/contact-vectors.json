@@ -307,7 +307,7 @@
       "kinds": [
         "SPLIT_PHONE"
       ],
-      "masked": "call ••• 😀 •••"
+      "masked": "call •••"
     },
     {
       "id": "emoji-zwj-domain",
@@ -356,6 +356,111 @@
       "expected": "clean",
       "kinds": [],
       "masked": "thanks a lot 👍🏽"
+    },
+    {
+      "id": "emoji-between-every-digit",
+      "text": "9😀8😀7😀6😀5😀4😀3😀2😀1😀0",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "symbol-telephone-then-phone",
+      "text": "☎ 9876543210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "☎ •••"
+    },
+    {
+      "id": "emoji-inside-email",
+      "text": "rahul😀@gmail.com",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL_PROVIDER"
+      ],
+      "masked": "rahul😀•••"
+    },
+    {
+      "id": "rlo-reversed-phone",
+      "text": "‮0123456789",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "rlo-reversed-email",
+      "text": "mail ‮moc.liamg@luhar‬ ok",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL"
+      ],
+      "masked": "mail ••• ok"
+    },
+    {
+      "id": "rlm-inside-number",
+      "text": "98765‏43210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "insta-emoji-handle",
+      "text": "insta 😀rahul_123",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "symbol-stars-clean",
+      "text": "great stay ⭐⭐⭐⭐⭐ 5 stars",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "great stay ⭐⭐⭐⭐⭐ 5 stars"
+    },
+    {
+      "id": "emoji-counts-clean",
+      "text": "2 adults 🙂 3 kids",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "2 adults 🙂 3 kids"
+    },
+    {
+      "id": "symbol-arrow-rooms-clean",
+      "text": "room 101 ➡ 102",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "room 101 ➡ 102"
+    },
+    {
+      "id": "emoji-times-clean",
+      "text": "⏰ 6 pm check-in, 🛏 2 bedrooms",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "⏰ 6 pm check-in, 🛏 2 bedrooms"
+    },
+    {
+      "id": "squared-letter-clean",
+      "text": "🄰wesome villa",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "🄰wesome villa"
+    },
+    {
+      "id": "rlo-clean",
+      "text": "‮olleh",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "‮olleh"
     },
     {
       "id": "phone-11-digits",
@@ -2525,6 +2630,24 @@
       "masked": [
         "call me on ••• 😀",
         "hello there, nice place"
+      ]
+    },
+    {
+      "id": "seq-emoji-separated-digits-across-rows",
+      "messages": [
+        "9😀8😀7😀6😀5",
+        "4😀3😀2😀1😀0"
+      ],
+      "blockedAt": [
+        1
+      ],
+      "statuses": [
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "•••",
+        "•••"
       ]
     },
     {

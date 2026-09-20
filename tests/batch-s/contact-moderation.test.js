@@ -12,7 +12,7 @@ const path = require("path");
 const crypto = require("crypto");
 const m = require("../../utils/contactModeration");
 
-const CONTACT_VECTORS_SHA256 = "ea852932f0acfaef866e2ae1e38766e76990e6c97cd7d7fe6d1cc23d256bf4df";
+const CONTACT_VECTORS_SHA256 = "601e1135af1be87f886892db492602407911dbf54cac5e3636f63a00183963e0";
 
 // Hashed with normalised line endings so a checkout under core.autocrlf=true
 // (CRLF working copy) pins the same corpus as the LF one in the index.

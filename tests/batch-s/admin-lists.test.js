@@ -118,6 +118,19 @@ test("users admin list: page + legacy skip, sort by name/createdAt/isHost, searc
   const hosts = await h.api("GET", "/guests/?page=1&limit=3&sort=isHost:desc", { token: AT });
   assert.equal(hosts.body.data[0].isHost, true, "hosts first when sorting by isHost desc");
   assert.deepEqual(secretKeys(p1.body), []);
+  // booking stats + threshold filters (paid, guest-made bookings only)
+  const spenders = await h.api("GET", "/guests/?page=1&limit=100&sort=totalSpent:desc&minBookings=1", { token: AT });
+  assert.equal(spenders.body.total, 20, "20 guests have a paid booking");
+  assert.equal(spenders.body.data[0].firstName, "Guest26");
+  assert.equal(spenders.body.data[0].totalSpent, 5260);
+  assert.equal(spenders.body.data[0].totalBookings, 1);
+  assert.ok(spenders.body.data[0].lastBookingAt, "last booking date present");
+  const rich = await h.api("GET", "/guests/?page=1&limit=100&minSpent=5200", { token: AT });
+  assert.ok(rich.body.total >= 1 && rich.body.data.every((u) => u.totalSpent >= 5200), JSON.stringify(rich.body.data.map((u) => u.totalSpent)));
+  const onlyHosts = await h.api("GET", "/guests/?page=1&limit=100&isHost=true", { token: AT });
+  assert.ok(onlyHosts.body.total >= 1 && onlyHosts.body.data.every((u) => u.isHost === true));
+  const none = await h.api("GET", "/guests/?page=1&limit=100&minRating=4.9", { token: AT });
+  assert.equal(none.body.total, 0);
 });
 
 test("bookings admin list: filtered total (was the global paid count), status/date/search filters, sort by checkIn/price/guest", async () => {

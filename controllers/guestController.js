@@ -47,6 +47,9 @@ const ADMIN_USER_SORT = {
   totalProperties: "totalProperties",
   totalReviews: "totalReviews",
   averageRating: "averageRating",
+  totalBookings: "totalBookings",
+  totalSpent: "totalSpent",
+  lastBookingAt: "lastBookingAt",
 };
 
 exports.getGuests = async (req, res) => {
@@ -69,6 +72,17 @@ exports.getGuests = async (req, res) => {
       ];
     }
 
+    // ?minSpent= ?minBookings= ?minRating= ?isHost=true|false narrow the list after the stats are known
+    const statFilters = [];
+    const num = (v) => (v === undefined || v === "" ? null : Number(v));
+    const minSpent = num(req.query.minSpent);
+    const minBookings = num(req.query.minBookings);
+    const minRating = num(req.query.minRating);
+    if (Number.isFinite(minSpent) && minSpent > 0) statFilters.push({ $match: { totalSpent: { $gte: minSpent } } });
+    if (Number.isFinite(minBookings) && minBookings > 0) statFilters.push({ $match: { totalBookings: { $gte: minBookings } } });
+    if (Number.isFinite(minRating) && minRating > 0) statFilters.push({ $match: { averageRating: { $gte: minRating } } });
+    if (req.query.isHost === "true" || req.query.isHost === "false") statFilters.push({ $match: { isHost: req.query.isHost === "true" } });
+    if (req.query.status === "active" || req.query.status === "banned") statFilters.push({ $match: { "status.active": req.query.status === "active" } });
     const pipeline = [
       { $match: matchStage },
       { $lookup: { from: "listingproperties", localField: "_id", foreignField: "host", as: "properties" } },
@@ -81,7 +95,27 @@ exports.getGuests = async (req, res) => {
           averageRating: { $cond: [{ $gt: [{ $size: "$reviews" }, 0] }, { $avg: "$reviews.rating" }, 0] },
         },
       },
-      { $project: { password: 0, properties: 0, reviews: 0, otp: 0, otpRetries: 0, lockUntil: 0, tokenVersion: 0 } },
+      // booking stats (paid, guest-made) for the Total spent / Bookings / Last booking columns and their filters
+      {
+        $lookup: {
+          from: "bookings",
+          let: { uid: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$uid"] }, { $eq: ["$action", "user"] }, { $eq: ["$paymentStatus", "paid"] }] } } },
+            { $group: { _id: null, n: { $sum: 1 }, spent: { $sum: "$price" }, last: { $max: "$checkIn" } } },
+          ],
+          as: "bookingStats",
+        },
+      },
+      {
+        $addFields: {
+          totalBookings: { $ifNull: [{ $arrayElemAt: ["$bookingStats.n", 0] }, 0] },
+          totalSpent: { $ifNull: [{ $arrayElemAt: ["$bookingStats.spent", 0] }, 0] },
+          lastBookingAt: { $arrayElemAt: ["$bookingStats.last", 0] },
+        },
+      },
+      ...statFilters,
+      { $project: { password: 0, properties: 0, reviews: 0, bookingStats: 0, otp: 0, otpRetries: 0, lockUntil: 0, tokenVersion: 0 } },
       { $sort: sort },
       { $facet: { data: pageStages({ skip, limit }), totalCount: [{ $count: "count" }] } },
     ];

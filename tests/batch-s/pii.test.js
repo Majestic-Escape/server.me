@@ -250,6 +250,62 @@ test("voucher data in emails only for the confirmed lifecycle; counterpart first
 // ---------------------------------------------------------------------------
 // Write-time policy
 // ---------------------------------------------------------------------------
+test("cancellation lifecycle: host-terminated, user-terminated and admin-cancelled confirmed bookings send first-name-only, contact-free e-mails and the guest's read drops back to the approximate location", async () => {
+  const NO_CONTACT = (e) => { assert.equal(e.params.hostContact, undefined, `${e.templateId}: hostContact`); assert.equal(e.params.guestContact, undefined, `${e.templateId}: guestContact`); assert.equal(e.params.street, undefined, `${e.templateId}: street`); assert.equal(e.params.hostEmail, undefined); assert.equal(e.params.guestEmail, undefined); };
+  const cases = [
+    ["host terminates", async (b) => h.api("PATCH", "/booking/host/terminate", { token: HT, body: { bookingId: b._id } }), [13, 14], ["guest"]],
+    ["guest terminates", async (b) => h.api("PATCH", "/booking/user/terminate", { token: GT, body: { bookingId: b._id } }), [22, 20], ["host"]],
+    ["admin cancels", async (b) => h.api("PATCH", "/booking/admin/cancel", { token: AT, body: { bookingId: b._id, reason: "test" } }), [32, 33], []],
+  ];
+  let base = 780;
+  for (const [label, act, [guestTpl, hostTpl], hidden] of cases) {
+    const booking = await paidBooking(L, GT, (base += 4)); // instant listing → confirmed + paid, voucher e-mails sent
+    h.resetEmails();
+    const r = await act(booking);
+    assert.equal(r.status, 200, `${label}: ${r.status} ${JSON.stringify(r.body).slice(0, 160)}`);
+    for (const who of hidden) assert.deepEqual(leaks(r.body, who), [], `${label}: the response hides the ${who} from the acting counterpart`);
+    const sent = h.sentEmails();
+    const toGuest = sent.find((e) => e.recipientEmail === G.email && e.templateId === guestTpl);
+    const toHost = sent.find((e) => e.recipientEmail === H.email && e.templateId === hostTpl);
+    assert.ok(toGuest, `${label}: guest e-mail ${guestTpl} sent (${sent.map((e) => e.templateId).join(",")})`);
+    assert.ok(toHost, `${label}: host e-mail ${hostTpl} sent`);
+    NO_CONTACT(toGuest); NO_CONTACT(toHost);
+    assert.equal(toGuest.params.hostName, "Rahul", `${label}: host first name only`);
+    assert.equal(toHost.params.userName, "Priya", `${label}: guest first name only`);
+    // the recipient's own full name is fine; the counterpart's last name never is (admin copies carry everything)
+    assert.ok(!JSON.stringify(toGuest.params).includes(CANARY.host.lastName), `${label}: guest e-mail carries no host last name`);
+    assert.ok(!JSON.stringify(toHost.params).includes(CANARY.guest.lastName), `${label}: host e-mail carries no guest last name`);
+    // the guest's own read: cancelled → no street, approximate point again
+    const after = await h.api("GET", `/booking/${booking._id}`, { token: GT });
+    assert.equal(after.body.data.status, "cancelled", label);
+    assert.equal(after.body.data.propertyId.address.street, undefined, `${label}: street gone`);
+    const dist = haversine(TRUE_LAT, TRUE_LNG, after.body.data.propertyId.address.latitude, after.body.data.propertyId.address.longitude);
+    assert.ok(dist > 140 && dist < 360, `${label}: approximate again (${Math.round(dist)} m)`);
+    assert.deepEqual(leaks(after.body, "host"), []);
+    // the host keeps the exact address of their own listing on the cancelled booking
+    const hostRead = await h.api("GET", `/booking/${booking._id}`, { token: HT });
+    assert.equal(hostRead.body.data.propertyId.address.street, STREET, label);
+    assert.deepEqual(leaks(hostRead.body, "guest"), []);
+  }
+});
+
+test("an unpaid (created) booking and a paid request-to-book awaiting the host never carry the exact location; the guest's own list agrees with the detail read", async () => {
+  const created = await h.api("POST", "/booking/", { token: GT, body: h.bookingBody(L, { checkIn: h.day(900), checkOut: h.day(902) }) });
+  assert.equal(created.status, 201, JSON.stringify(created.body).slice(0, 200));
+  assert.equal(created.body.data.paymentStatus, "unpaid");
+  const read = await h.api("GET", `/booking/${created.body.data._id}`, { token: GT });
+  assert.equal(read.body.data.propertyId.address.street, undefined, "unpaid: no street");
+  const d1 = haversine(TRUE_LAT, TRUE_LNG, read.body.data.propertyId.address.latitude, read.body.data.propertyId.address.longitude);
+  assert.ok(d1 > 140 && d1 < 360, `unpaid: approximate (${Math.round(d1)} m)`);
+  assert.deepEqual(leaks(read.body, "host"), []);
+  const list = await h.api("GET", "/booking/data", { token: GT });
+  for (const row of list.body.data) {
+    const exact = row.status === "confirmed" && row.paymentStatus === "paid";
+    assert.equal(row.propertyId.address.street !== undefined, exact, `list row ${row._id} ${row.status}/${row.paymentStatus}`);
+  }
+  assert.deepEqual(leaks(list.body, "host"), []);
+});
+
 test("traveller names at checkout follow the name policy (they reach the host's guest list)", async () => {
   const listing = await h.makeListing(H);
   const bad = await h.api("POST", "/booking/", { token: GT, body: h.bookingBody(listing, { checkIn: h.day(800), checkOut: h.day(802), guestData: { adults: [{ name: "Rahul 9876543210", age: 30 }], children: [] } }) });
@@ -263,7 +319,7 @@ test("traveller names at checkout follow the name policy (they reach the host's 
 });
 
 test("names: registration, become-host and the admin rename refuse contact-bearing names; ordinary names pass", async () => {
-  const bad = ["Rahul9876543210", "9876543210", "rahul@gmail.com", "@rahul123", "rahulvilla.in", "WhatsApp Rahul"];
+  const bad = ["Rahul9876543210", "9876543210", "rahul@gmail.com", "@rahul123", "rahulvilla.in", "WhatsApp Rahul", "Rahul\u0968\u0967\u0968\u0969\u096a\u096b\u096c\u096d\u096e\u096f", "Ra\u200bhul98765", "Rahul (at) gmail", "\uff19\uff18\uff17\uff16\uff15\uff14\uff13\uff12\uff11\uff10", "nine eight seven six five four three two one zero", "Rahul insta rahul_123", "Rahul <script>", "Rahul' OR 1=1"];
   for (const name of bad) {
     const r = await h.api("POST", "/register/request-otp", { body: { firstName: name, lastName: "Test", phoneNumber: "9700000111", email: `n${Date.now()}@test.local`, dob: "1990-01-01" } });
     assert.equal(r.status, 422, `${name}: ${r.status}`);
@@ -271,7 +327,7 @@ test("names: registration, become-host and the admin rename refuse contact-beari
     const rename = await h.api("PATCH", `/guests/name/${X._id}`, { token: AT, body: { firstName: name, lastName: "Test", expected: { firstName: X.firstName, lastName: X.lastName } } });
     assert.equal(rename.status, 400, `admin rename ${name}`);
   }
-  for (const name of ["José", "Mary Jane", "O'Brien", "Anne-Marie"]) {
+  for (const name of ["José", "Mary Jane", "O'Brien", "Anne-Marie", "Zoë", "Nguyễn", "राहुल", "Müller", "D'Souza"]) {
     const rename = await h.api("PATCH", `/guests/name/${X._id}`, { token: AT, body: { firstName: name, lastName: "Test", expected: { firstName: (await User().findById(X._id)).firstName, lastName: "Test" } } });
     assert.equal(rename.status, 200, `${name}: ${JSON.stringify(rename.body)}`);
   }
@@ -296,14 +352,38 @@ test("profile: about + languages are judged as one resource, against the host's 
   assert.equal(r.status, 422, "half a number already stored + the other half now");
   r = await put({ about: "Near Calangute beach", languages: ["English"] });
   assert.equal(r.status, 200);
+  // the address arrives AFTER the profile text: "Sunrise Lane" is allowed in the
+  // about while no listing of the host has it; once a listing moves there, every
+  // public read masks it (read-time masking is address-aware per request)
+  r = await put({ about: "Find us at Plot 5, Sunrise Lane, next to the bakery", languages: ["English"] });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const moved = await h.makeListing(H, { address: { street: "Plot 5, Sunrise Lane", city: "Anjuna", state: "Goa" } });
+  const pub = await h.api("GET", `/hostData/${H._id}`, { token: GT });
+  assert.equal(pub.status, 200);
+  assert.ok(!/Sunrise Lane|Plot 5/.test(pub.body.data.about), `about masked after the address moved: ${pub.body.data.about}`);
+  const stay = await h.api("GET", `/properties/${moved._id}`);
+  assert.ok(!/Sunrise Lane|Plot 5/.test(JSON.stringify(stay.body.data.host || {})), "host block on the listing masked too");
+  const own = await h.api("GET", `/hostData/${H._id}`, { token: HT });
+  assert.ok(/Sunrise Lane/.test(own.body.data.about), "the host still reads their own text");
+  r = await put({ about: "Near Calangute beach", languages: ["English"] });
+  assert.equal(r.status, 200);
+  await ListingProperty().deleteOne({ _id: moved._id });
 });
 
 test("listing writes (host, admin): title + description + rules judged together, own address refused; a legit listing passes", async () => {
   const other = await h.makeListing(H, { address: { street: "House 9, Palm Lane", city: "Anjuna", state: "Goa" } });
   const update = (token, body, path) => h.api("PUT", path || `/properties/update-listing-property/${other._id}`, { token, body });
-  let r = await update(HT, { title: "Palm villa 98765", description: "Call 43210 for the best rate" });
+  const before = await ListingProperty().findById(other._id).lean();
+  let r = await update(HT, { title: "Palm villa 98765", description: "Call 43210 for the best rate", customRules: ["no parties"], basePrice: 123456 });
   assert.equal(r.status, 422);
   assert.ok(r.body.fields.includes("title") && r.body.fields.includes("description"), JSON.stringify(r.body.fields));
+  // a refused write saves nothing — not the clean fields of the same request either
+  const afterRefusal = await ListingProperty().findById(other._id).lean();
+  assert.equal(afterRefusal.title, before.title);
+  assert.equal(afterRefusal.description, before.description);
+  assert.deepEqual(afterRefusal.customRules || [], before.customRules || []);
+  assert.equal(afterRefusal.basePrice, before.basePrice);
+  assert.equal(String(afterRefusal.updatedAt), String(before.updatedAt));
   r = await update(HT, { title: "Palm villa", description: "Book directly with me and save 12%" });
   assert.equal(r.status, 422);
   r = await update(HT, { description: "We are at House 9, Palm Lane, come straight in" });

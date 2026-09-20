@@ -112,7 +112,7 @@ Verdict table (`services/kycVerdict.js`): `http_response_code === 200` and `resu
 | `POST /` (listing photos) | 401 | 200 | 200 | 200 | keys `listings/<actorId>/<uuid>-<name>` (owner-bound, unique) |
 | `POST /profile?userId=` | 401 | 403 | 200 | 200 | keys `profiles/<userId>/<uuid>-<name>` |
 | `DELETE /delete {url}` | 401 | 403 | 200 | 200 | own upload / own listing photo / own profile picture; foreign reference to the same object → 409 `OBJECT_IN_USE`; legacy unreferenced keys admin-only; non-bucket or path-confusing URLs → 400 `INVALID_KEY` |
-| `POST /generate-presigned-url` | 401 | 403 | 403 | 200 | dead (`SPACE_NAME` unset) |
+| `POST /generate-presigned-url` | 401 | 403 | 403 | 410 | retired (`UPLOAD_PATH_RETIRED`): a presigned PUT would bypass the image sanitiser; no shipped client uses it |
 
 ## Bank details & hosts (`/api/v1/hostData`, `/api/v1/hosts`)
 
@@ -164,3 +164,135 @@ Repo-wide search of `ListingProperty`, `propertyId`, `property:` across models/c
 
 ## Admin audit trail (`adminauditlogs`)
 `user.rename` (before/after names), `listing.delete` (host id, title, photo keys, cleanup and sweep outcomes), `kyc.document.view`, `kyc.document.download` (log id, host id, mime, bytes), `kyc.document.manual_verify`. Written in the same transaction as the change or before the bytes leave the server; never emails, document bytes or full URLs. Indexes: `{targetId, createdAt}`, `{action, createdAt}` — created by `scripts/ensure-indexes.js` together with `kyclogs {userId, type, createdAt}` (`--explain` proves the IXSCAN).
+
+---
+
+# Contact lock-down — response PII policy (2026-09-20)
+
+Exercised by `tests/batch-s/pii.test.js` (canary VALUES of the counterpart
+searched in every serialised body) and `tests/batch-s/contact-moderation.test.js`
+(the golden corpus shared with `majestic-chat`). Legend as above; **counterpart**
+= the other party of a booking / conversation, or any user seen by the public.
+
+## What a counterpart may learn about a user
+`_id, firstName, profilePicture, about, languages, averageRating, reviewCount,
+avgPropertyRating, propertyReviewCount, createdAt` — nothing else (`utils/sanitizeResponse.js`
+`PUBLIC_USER_FIELDS`). Never `lastName`, `email`, `phoneNumber`, `dob`, `address`,
+`gender`, `bio`, `role`, `status`, `kyc`, `bank`, `hostOffer`, `verification`,
+`preferences`, `bookings`, `wishlist`. The caller's own record keeps everything
+but the secrets (`otp*`, `lockUntil`, `tokenVersion`, `password`); an admin keeps
+everything. A first name that fails the name policy is masked on read.
+
+| Endpoint | Primary control | Backstop |
+|---|---|---|
+| `GET /booking/:id`, lifecycle responses | `utils/bookingView.js` (counterpart public, own self, payment without `customerDetails`, listing per status) | filter |
+| `GET /booking/data`, `/user/:id`, `/host/:id`, `/filter`, `/analytics-filter`, `/analytics-stats-filter`, `/revenue-filter`, `/filter-active-bookings` | populate with `PUBLIC_USER_SELECT` / `$addFields` projection + `bookingsForActor` | filter |
+| `GET /payment/booking`, `/payment/:id` | `customerDetails` removed for non-admins | filter |
+| `GET /review/:propertyId` (public), `/hostData/review/:id` (public) | reviewer `PUBLIC_USER_SELECT`, text masked (contact + listing address) | filter |
+| `GET /hostData/:id`, `/hosts/single/:id`, `/hosts/:id` | self → own record minus secrets; other → public projection, `about` masked against all the host's listing addresses | filter |
+| `GET /guests/info/:id`, `/guests/guest-by-id` | `PUBLIC_USER_SELECT` (no `lastName`) | filter |
+| `GET /properties/*`, `/prop-listing/*` (public) | `sanitizeProperty`: owner-only fields removed, approximate point, text masked, host public | filter |
+| `GET /properties/user-properties/:userEmail` | self-or-admin (`requireSelfEmailParamOrAdmin`): another user gets 403, so an e-mail cannot be probed for listings | filter |
+| `GET /booking/revenue-filter` (host) | guest populated with `firstName` only | filter |
+| `POST /booking-interest/availability` | authenticated, actor-derived user, no email echoed; `GET /` admin-only | filter |
+| emails (`services/bookingNotifications.js`) | counterpart first name; `hostContact/guestContact/street` only in confirmation (voucher) emails and admin emails | — |
+| invoice / guest-list PDFs | host first name; "Booked by" first name | — |
+
+**Backstop** — `middleware/piiResponseFilter.js` wraps `res.json` for every
+non-admin response: user-shaped objects that are not the caller keep only the
+public fields, the caller's own loses its secrets, listings that are not the
+caller's lose `hostEmail/validRegistrationNo/bankDetails/address.registrationNumber`,
+`customerDetails` is dropped. It **fails closed**: a body it cannot sanitise
+(cycle, depth > 16) answers `500 RESPONSE_FILTER_ERROR` without a byte of the
+original. `authMiddleware` resolves `req.actor` on both token branches (an
+admin-shaped token that is neither an Admin nor a User is refused with 401).
+
+## Location (OTA model)
+Public listing reads carry an approximate point: the true point moved 150–350 m
+by a bearing/distance from `HMAC(LOCATION_MASK_SECRET ‖ derived from JWT_SECRET
+with the context "majestic-location-mask-v1", listingId)` — stable per listing,
+not recoverable from the id and the public point, moved by key rotation — and
+no `street`, `line1/line2`, `registrationNumber`. Exact street + coordinates
+appear only in the guest's own booking while `status === "confirmed" &&
+paymentStatus === "paid"` (pending, rejected, cancelled → approximate again) and
+in the confirmation voucher email; the host always sees their own listing.
+
+## Public-text policy (write time, every writer incl. admins)
+`utils/publicTextPolicy.js` + `utils/contactModeration.js` (generated mirror of
+`majestic-chat/packages/shared/src/moderation/patterns.ts`): names at
+registration / become-host / admin rename; profile `about` + `languages`
+(merged with the stored values, against every listing address of the host);
+listing `title/description/customRules/safetyFeatures.*.description` (merged
+existing + patch, against the listing's own address); review text. Refusal:
+`422 CONTACT_INFO_NOT_ALLOWED { kinds, fields }`. On read, the same detector
+masks legacy public text (`•••`), listing text as one resource.
+
+**Traveller names at checkout** (`guestData.adults[].name`, `children[].name`)
+reach the host's check-in register and guest-list PDF, so the names of one
+booking are judged together by the detector (a phone number split across rows
+is still one identifier) — `422 CONTACT_INFO_NOT_ALLOWED { fields: ["guestData"] }`.
+Unlike account names they stay free text otherwise ("Guest 2", "Aarav (2 yrs)").
+
+**One detector, one corpus.** `tests/batch-s/fixtures/contact-vectors.json` is a
+byte-identical copy of the chat repo's corpus; `contact-moderation.test.js` pins
+its sha256 (over normalised line endings) and the release harness
+(`tests/pw-final/corpus-parity.mjs`) fails when the two files differ. To change a
+rule: edit `majestic-chat/packages/shared/src/moderation/patterns.ts`, regenerate
+the corpus, copy it here, re-pin both suites, and re-emit the mirror with
+`node packages/shared/scripts/emit-contact-moderation-cjs.js <this repo>/utils/contactModeration.js`.
+Never hand-edit `utils/contactModeration.js`.
+
+## Images
+Every public image reference (listing `photos[]`, `profilePicture`) must be an
+object of our bucket (`utils/publicTextPolicy.js` `checkListingImages` /
+`checkProfileImage`, `422 IMAGE_NOT_ALLOWED { fields }`): those went through the
+sanitiser or the legacy script, and a foreign host would otherwise see every
+viewer's address. Only entries new to the resource are judged, so a legacy
+reference never blocks an unrelated edit. The presigned direct-to-bucket route
+is retired (`410 UPLOAD_PATH_RETIRED`).
+
+`services/imageSanitizer.js`: uploads are decoded, re-encoded without metadata
+(EXIF GPS!), orientation baked, QR codes refused (`422 IMAGE_NOT_ALLOWED`),
+non-images refused (`400 INVALID_IMAGE`). Legacy objects: `scripts/strip-image-metadata.js`
+(dry run → `--apply`, then purge the CDN cache). Visible text inside a picture
+is not OCR'd — the admin's listing approval remains the manual control.
+
+## Audit additions (2026-09-20)
+`tests/batch-s/pii-sweep.test.js` derives every GET route from the Express
+router at runtime and calls it as anonymous / guest / host / stranger with the
+seeded ids; a counterpart canary value, a secret field name, another host's
+owner-only listing value or a 500 turns it red — a new endpoint cannot leak
+quietly. Mutants (`tests/pw-final` runner, evidence `pii-mutations-server.json`):
+projection removed (backstop holds), projection + filter removed, filter fails
+open, customerDetails exposed, per-field moderation, id-only offset, exact
+location for pending, allow-list weakened, legacy masking off, traveller names
+unmoderated, metadata kept, presigned path revived, foreign image refs, QR not
+refused, admin exempt from the text policy, address tokens off, raw legacy
+first names, a route without projection and backstop — each caught.
+
+## Release gate
+`node scripts/pii-shadow-scan.js --uri=<prod DB_URI> --chat-uri=<prod chat URI>`
+(read-only) and `node scripts/strip-image-metadata.js --uri=<prod DB_URI>`
+before promotion; `--apply` on both is the owner's call (read-time masking
+already keeps legacy content off the wire). Probe: `node tests/batch-s/pii-probe.mjs`.
+
+Dev-cluster run (2026-09-20, read-only): 187 listings — 2 carry a WhatsApp
+mention in their rules (masked on read; the hosts can rephrase), 0 false
+positives after two detector refinements found by this very scan (sentence
+boundaries between fields, numbered list items); 32 hosts, 14 reviews clean;
+chat: 0 stored last names, 13 legacy messages, none contact-bearing. Images:
+215 scanned, 33 with EXIF/XMP, 0 with GPS, 1 with a QR code. Evidence under
+`tests/pw-final/evidence/pii-shadow-scan-dev.txt` / `pii-strip-images-dev-dry.txt`.
+
+## Compatibility notes (verified with real builds)
+- The production site (`cdrx/user/phase-1`) against this backend: every page
+  renders, messaging / cancel / confirm / profile / listing writes work; the
+  counterpart shows by first name because `lastName` is simply absent; a 422
+  from the text policy is shown through the site's generic error toast.
+- This backend never reads `userEmail / hostEmail / userName / hostName` from
+  lifecycle request bodies (nor did the previous one) — the new site sends
+  `{ bookingId }` only.
+- admin.site builds its date filters with `toLocaleDateString()` while the admin
+  booking / transaction endpoints parse `M/D/YYYY`: in a D/M/YYYY browser locale
+  the admin lists are empty. Pre-existing, unrelated to this change; the fix is
+  `format(date, "M/d/yyyy")` as done for the host pages in user.website.

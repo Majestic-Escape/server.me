@@ -1,4 +1,6 @@
 const User = require("../models/User");
+const { checkPublicText, refusePublicText, addressTokensOf, checkProfileImage, refuseImages } = require("../utils/publicTextPolicy");
+const ListingProperty = require("../models/ListingProperty");
 
 // GET /api/profile - fetch user profile using email
 exports.getProfile = async (req, res) => {
@@ -74,6 +76,21 @@ exports.updateProfile = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "Profile not found" });
     }
+
+    // Contact lock-down: `about` and `languages` are public — judged as one
+    // resource (existing + patch) against contact details and the exact
+    // address of every listing this user hosts.
+    const nextAbout = about !== undefined ? cleanString(about, 2000) : user.about;
+    const nextLanguages = languages !== undefined ? (Array.isArray(languages) ? languages.map((l) => cleanString(l, 50)).filter(Boolean).slice(0, 20) : []) : user.languages || [];
+    const listings = await ListingProperty.find({ host: user._id }).select("address line1 line2").lean();
+    const policy = checkPublicText(
+      [{ field: "about", text: nextAbout || "" }, ...nextLanguages.map((l, i) => ({ field: `languages[${i}]`, text: String(l) }))],
+      { addressTokens: listings.map(addressTokensOf) }
+    );
+    if (!policy.ok) return refusePublicText(res, policy);
+    // a profile picture must be one of our (sanitised) bucket objects
+    const image = checkProfileImage(user, body);
+    if (!image.ok) return refuseImages(res, image);
 
     user.dob = dob;
     user.phoneNumber = cleanString(phoneNumber, 20);

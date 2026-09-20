@@ -175,7 +175,6 @@ function generateInvoiceHTML(invoiceData, payment, tax) {
             Hosted by
             <strong>
               ${(invoiceData?.hostId?.firstName || "").toUpperCase()}
-              ${(invoiceData?.hostId?.lastName || "").toUpperCase()}
             </strong>
           </p>
 

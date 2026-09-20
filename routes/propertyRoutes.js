@@ -10,6 +10,7 @@ const {
   requireBodyListingHostOrAdmin,
   requireSelfHostEmailOrAdmin,
   requireSelfUserIdOrAdmin,
+  requireSelfEmailParamOrAdmin,
 } = require("../middleware/listingOwnership");
 // Batch S: listing mutations decide price/bookability -> host-or-admin only.
 const admin = [authMiddleware, requireAdmin];
@@ -97,6 +98,7 @@ router.patch("/update-kyc-property/:id", authMiddleware, requireSelfUserIdOrAdmi
 router.get(
   "/user-properties/:userEmail",
   authMiddleware,
+  requireSelfEmailParamOrAdmin("userEmail"),
   propertyController.getUserPropertyListings,
 );
 router.get(

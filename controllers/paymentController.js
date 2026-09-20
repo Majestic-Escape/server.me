@@ -198,6 +198,16 @@ async function canReadPayment(req, payment) {
   return !!booking && (authz.isBookingGuest(actor, booking) || authz.isBookingHost(actor, booking));
 }
 
+// Contact lock-down: the guest's name / email / phone recorded on the payment
+// (customerDetails) are for the admin transactions page only.
+async function paymentForActor(req, payment) {
+  const actor = await authz.resolveActor(req);
+  if (authz.isAdmin(actor)) return payment;
+  const obj = typeof payment.toObject === "function" ? payment.toObject({ virtuals: true }) : { ...payment };
+  delete obj.customerDetails;
+  return obj;
+}
+
 exports.getPayment = async (req, res) => {
   try {
     const payment = await Payment.findOne({
@@ -214,7 +224,7 @@ exports.getPayment = async (req, res) => {
     }
     res.json({
       success: true,
-      data: payment,
+      data: await paymentForActor(req, payment),
     });
   } catch (error) {
     console.error("Get payment error:", error);
@@ -244,7 +254,7 @@ exports.getPaymentByBooking = async (req, res) => {
     }
     res.json({
       success: true,
-      data: payment,
+      data: await paymentForActor(req, payment),
     });
   } catch (error) {
     console.error("Get payment error:", error);

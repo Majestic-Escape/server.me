@@ -2,6 +2,7 @@
 // Letters (any script) plus combining marks, spaces, dots, apostrophes and
 // hyphens; 1–50 characters after NFC + whitespace collapse. No digits, no
 // control characters, no bidi overrides, no HTML.
+const { isAcceptableName } = require("./contactModeration");
 const NAME_RE = /^[\p{L}\p{M}][\p{L}\p{M}\s.'’-]*$/u;
 const MAX_LEN = 50;
 
@@ -15,6 +16,8 @@ function validateName(value, { required = true, label = "Name" } = {}) {
   if (value === "") return required ? `${label} is required` : null;
   if (value.length > MAX_LEN) return `${label} must be ${MAX_LEN} characters or fewer`;
   if (!NAME_RE.test(value)) return `${label} may only contain letters, spaces, dots, apostrophes and hyphens`;
+  // Contact lock-down: "WhatsApp Rahul" is letters-only but still a contact channel.
+  if (!isAcceptableName(value)) return `${label} may not contain contact details or social handles`;
   return null;
 }
 

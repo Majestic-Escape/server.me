@@ -64,6 +64,28 @@ async function requireSelfHostEmailOrAdmin(req, res, next) {
   }
 }
 
+// :userEmail param (user-properties): a host may list their own listings by
+// e-mail, admins anyone's — otherwise a known e-mail would reveal whether it
+// belongs to a host and which listings are theirs (contact lock-down).
+function requireSelfEmailParamOrAdmin(param = "userEmail") {
+  return async (req, res, next) => {
+    try {
+      const actor = await authz.resolveActor(req);
+      if (!actor) return deny(res, 401, "AUTH_REQUIRED", "Authentication required");
+      if (authz.isAdmin(actor)) return next();
+      const email = actor.user && actor.user.email;
+      let wanted = req.params && req.params[param];
+      try { wanted = decodeURIComponent(wanted || ""); } catch { /* keep as sent */ }
+      if (!email || !wanted || String(wanted).toLowerCase() !== String(email).toLowerCase()) {
+        return deny(res, 403, "FORBIDDEN", "You can only access your own listings");
+      }
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
 // :param is a *host* user id (update-kyc-property): must be the caller.
 function requireSelfUserIdOrAdmin(param = "id") {
   return async (req, res, next) => {
@@ -84,4 +106,5 @@ module.exports = {
   requireBodyListingHostOrAdmin,
   requireSelfHostEmailOrAdmin,
   requireSelfUserIdOrAdmin,
+  requireSelfEmailParamOrAdmin,
 };

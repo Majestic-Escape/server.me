@@ -16,8 +16,11 @@ const storage = () => require("../../services/storage");
 const provider = () => require("../../services/kycProvider");
 
 // Minimal files that sniff as jpeg / png / pdf.
-const JPEG = Buffer.concat([Buffer.from("ffd8ffe000104a464946", "hex"), Buffer.alloc(64, 1)]);
-const PNG = Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.alloc(64, 2)]);
+let JPEG; // a real JPEG (see PNG below)
+// A real image: uploads are decoded and re-encoded since the contact lock-down
+// (metadata stripped, QR codes refused), so a bag of bytes with a PNG header
+// is refused as INVALID_IMAGE.
+let PNG;
 const PDF = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(64, 3)]);
 const b64 = (buf) => buf.toString("base64");
 const BUCKET = () => `https://${process.env.DO_SPACES_BUCKET}.${process.env.REGION}.digitaloceanspaces.com/`;
@@ -41,6 +44,8 @@ async function upload(token, files, { path = "/uploads/", field = "images" } = {
 }
 
 test.before(async () => {
+  PNG = await require("sharp")({ create: { width: 8, height: 8, channels: 3, background: "#336699" } }).png().toBuffer();
+  JPEG = await require("sharp")({ create: { width: 8, height: 8, channels: 3, background: "#996633" } }).jpeg().toBuffer();
   await h.start();
   G = await h.makeUser({ firstName: "Guest", lastName: "One" });
   GT = h.userToken(G);
@@ -307,6 +312,12 @@ test("document verification: cheap validation before any log or provider call; v
   assert.equal(retry.status, 502);
   form = await KycHostData().findOne({ hostId: H._id }).lean();
   assert.equal(form.documentInfo.isVerified, true, "a failed retry of the same document keeps the verification");
+  // the controller releases the lease in a `finally` that runs after the 502 has
+  // been sent (pre-existing ordering, documented in the 2026-09-20 audit): allow it a moment
+  for (let i = 0; i < 20 && form.verification.ocr.inFlightUntil; i++) {
+    await h.sleep(50);
+    form = await KycHostData().findOne({ hostId: H._id }).lean();
+  }
   assert.equal(form.verification.ocr.inFlightUntil, null, "in-flight lease released");
   assert.equal(form.verification.ocr.count, 2, "the attempt still counts (it may have cost credits)");
 
@@ -476,7 +487,7 @@ test("uploads: authenticated, owner-bound keys, profile picture only on own acco
   assert.equal(up.status, 200, JSON.stringify(up.body));
   assert.equal(up.body.urls.length, 2);
   const key0 = storage().keyFromUrl(up.body.urls[0]);
-  assert.match(key0, new RegExp(`^listings/${H._id}/[0-9a-f-]{36}-My-Photo-1-.JPG$`));
+  assert.match(key0, new RegExp(`^listings/${H._id}/[0-9a-f-]{36}-My-Photo-1-.jpg$`)); // re-encoded (contact lock-down): the extension follows the output format
   assert.equal(storage().ownerFromKey(key0), String(H._id));
   const key1 = storage().keyFromUrl(up.body.urls[1]);
 
@@ -544,4 +555,8 @@ test("uploads: authenticated, owner-bound keys, profile picture only on own acco
   assert.equal((await del(HT, `${BUCKET()}listings/${H._id}%2Fmine.jpg`)).status, 200, "%2F is the same object as / and the owner segment still matches");
   assert.deepEqual(storage().__mock.deleted, [`listings/${H._id}/mine.jpg`]);
   assert.equal((await h.api("POST", "/uploads/generate-presigned-url", { token: HT, body: { fileName: "x", fileType: "image/png" } })).status, 403);
+  // the raw direct-to-bucket path is retired for admins too: every public image goes through the sanitiser
+  const presigned = await h.api("POST", "/uploads/generate-presigned-url", { token: AT, body: { fileName: "x", fileType: "image/png" } });
+  assert.equal(presigned.status, 410, JSON.stringify(presigned.body));
+  assert.equal(presigned.body.code, "UPLOAD_PATH_RETIRED");
 });

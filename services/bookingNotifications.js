@@ -20,10 +20,45 @@ const adminEmails = () =>
     .filter(Boolean);
 const baseUrl = () => process.env.NEXTAUTH_URL;
 
-function names(booking) {
-  const userName = changeToUpperCase(`${booking.userId?.firstName || ""} ${booking.userId?.lastName || ""}`.trim());
-  const hostName = changeToUpperCase(`${booking.hostId?.firstName || ""} ${booking.hostId?.lastName || ""}`.trim());
-  return { userName, hostName, params: paramsToObject(userName, hostName, booking) };
+const REVEAL_NONE = { contact: false, street: false };
+const REVEAL_VOUCHER = { contact: true, street: true };
+
+// Contact lock-down: each recipient gets their own full name, the
+// counterpart's FIRST name, and - for the confirmation emails of a confirmed,
+// paid booking and for every admin email - the voucher data (counterpart
+// contact, exact street). Pending / rejected / cancelled emails carry no
+// contact details and no street.
+function fullName(u) {
+  return `${u?.firstName || ""} ${u?.lastName || ""}`.trim();
+}
+function firstName(u, fallback) {
+  return (u?.firstName || "").trim() || fallback;
+}
+function paramsFor(booking, recipient, reveal = REVEAL_NONE) {
+  const guest = booking.userId;
+  const host = booking.hostId;
+  let userName;
+  let hostName;
+  if (recipient === "guest") {
+    userName = fullName(guest);
+    hostName = firstName(host, "your host");
+  } else if (recipient === "host") {
+    userName = firstName(guest, "your guest");
+    hostName = fullName(host);
+  } else {
+    userName = fullName(guest);
+    hostName = fullName(host);
+  }
+  return paramsToObject(userName, hostName, booking, recipient === "admin" ? REVEAL_VOUCHER : reveal);
+}
+function names(booking, reveal = REVEAL_NONE) {
+  return {
+    userName: changeToUpperCase(fullName(booking.userId)),
+    hostName: changeToUpperCase(fullName(booking.hostId)),
+    guest: paramsFor(booking, "guest", reveal),
+    host: paramsFor(booking, "host", reveal),
+    admin: paramsFor(booking, "admin"),
+  };
 }
 
 async function sendToAdmins(templateId, params) {
@@ -66,18 +101,21 @@ async function buildAttachments(booking, payment) {
 //   manual (host approval needed): host 8, admins 9, user 42
 //   instant:                       host 34 (+guest list), user 35 (+invoice), admins 36
 async function notifyPaid(booking, payment, { manual }) {
-  const { params } = names(booking);
   if (manual) {
-    await sendEmail(booking.hostId.email, 8, params);
-    await sendToAdmins(9, params);
-    await sendEmail(booking.userId.email, 42, params);
+    // pending host approval: no contact details, no street
+    const p = names(booking);
+    await sendEmail(booking.hostId.email, 8, p.host);
+    await sendToAdmins(9, p.admin);
+    await sendEmail(booking.userId.email, 42, p.guest);
     return;
   }
+  // instant booking confirmed by the payment: the voucher emails
+  const p = names(booking, REVEAL_VOUCHER);
   const { invoiceAttachment, guestListOnlyAttachment, cleanup } = await buildAttachments(booking, payment);
   try {
-    await sendEmail(booking.hostId.email, 34, params, guestListOnlyAttachment);
-    await sendEmail(booking.userId.email, 35, params, invoiceAttachment);
-    await sendToAdmins(36, params);
+    await sendEmail(booking.hostId.email, 34, p.host, guestListOnlyAttachment);
+    await sendEmail(booking.userId.email, 35, p.guest, invoiceAttachment);
+    await sendToAdmins(36, p.admin);
   } finally {
     await cleanup();
   }
@@ -86,8 +124,8 @@ async function notifyPaid(booking, payment, { manual }) {
 function reviewParams(booking, bookingId) {
   const token = jwt.sign({ bookingId }, process.env.JWT_SECRET, { expiresIn: "14d" });
   return {
-    userName: `${booking.userId.firstName} ${booking.userId.lastName}`,
-    hostName: `${booking.hostId.firstName} ${booking.hostId.lastName}`,
+    userName: firstName(booking.userId, "Guest"),
+    hostName: firstName(booking.hostId, "Host"),
     propertyTitle: `${booking.propertyId?.title || ""}`,
     userUrl: `${baseUrl()}/rating?token=${token}&booking=${bookingId}`,
     hostUrl: `${baseUrl()}/rating?token=${token}&booking=${bookingId}`,
@@ -111,12 +149,13 @@ async function scheduleReviewEmails(booking) {
 // Host confirmed a (paid, manual) booking: user 10 (+invoice), host 19
 // (+guest list), admins 18, then the post-checkout review reminder.
 async function notifyHostConfirmed(booking, payment) {
-  const { params } = names(booking);
+  // host approved a paid booking: the voucher emails
+  const p = names(booking, REVEAL_VOUCHER);
   const { invoiceAttachment, guestListOnlyAttachment, cleanup } = await buildAttachments(booking, payment);
   try {
-    await sendEmail(booking.userId.email, 10, params, invoiceAttachment);
-    await sendEmail(booking.hostId.email, 19, params, guestListOnlyAttachment);
-    await sendToAdmins(18, params);
+    await sendEmail(booking.userId.email, 10, p.guest, invoiceAttachment);
+    await sendEmail(booking.hostId.email, 19, p.host, guestListOnlyAttachment);
+    await sendToAdmins(18, p.admin);
   } finally {
     await cleanup();
   }
@@ -130,28 +169,28 @@ async function notifyInstantConfirmed(booking) {
 
 // Cancellation flows (template ids unchanged).
 async function notifyHostRejected(booking) {
-  const { params } = names(booking);
-  await sendEmail(booking.userId.email, 11, params);
-  await sendToAdmins(16, params);
-  await sendEmail(booking.hostId.email, 17, params);
+  const p = names(booking);
+  await sendEmail(booking.userId.email, 11, p.guest);
+  await sendToAdmins(16, p.admin);
+  await sendEmail(booking.hostId.email, 17, p.host);
 }
 async function notifyAdminCancelled(booking) {
-  const { params } = names(booking);
-  await sendEmail(booking.userId.email, 32, params);
-  await sendToAdmins(31, params);
-  await sendEmail(booking.hostId.email, 33, params);
+  const p = names(booking);
+  await sendEmail(booking.userId.email, 32, p.guest);
+  await sendToAdmins(31, p.admin);
+  await sendEmail(booking.hostId.email, 33, p.host);
 }
 async function notifyHostTerminated(booking) {
-  const { params } = names(booking);
-  await sendEmail(booking.userId.email, 13, params);
-  await sendEmail(booking.hostId.email, 14, params);
-  await sendToAdmins(15, params);
+  const p = names(booking);
+  await sendEmail(booking.userId.email, 13, p.guest);
+  await sendEmail(booking.hostId.email, 14, p.host);
+  await sendToAdmins(15, p.admin);
 }
 async function notifyUserTerminated(booking) {
-  const { params } = names(booking);
-  await sendEmail(booking.userId.email, 22, params);
-  await sendEmail(booking.hostId.email, 20, params);
-  await sendToAdmins(21, params);
+  const p = names(booking);
+  await sendEmail(booking.userId.email, 22, p.guest);
+  await sendEmail(booking.hostId.email, 20, p.host);
+  await sendToAdmins(21, p.admin);
 }
 
 module.exports = {

@@ -17,6 +17,8 @@ const notify = require("../services/bookingNotifications");
 const attention = require("../services/attention");
 const authz = require("../middleware/authz");
 const { isObjectId, rejectInvalidId } = require("../middleware/validateObjectId");
+const { bookingForActor } = require("../utils/bookingView");
+const { detectContactInParts } = require("../utils/contactModeration");
 
 // Product limits are OFF unless configured: neither the pre-S backend nor the
 // booking calendar (which only disables past and taken dates) ever limited
@@ -65,6 +67,20 @@ function sanitizeGuestData(raw) {
       .map((r) => ({ name: String(r.name).trim().slice(0, 120), age: Number.isFinite(Number(r.age)) ? Number(r.age) : undefined }));
   }
   return clean;
+}
+
+// Traveller names reach the host (check-in register, guest-list PDF) — the one
+// place a guest's typed name is shown in full — so they must not be a side
+// channel: the names of one booking are judged together by the contact
+// detector (a phone number, email, handle, link or payment id split across
+// rows is still one identifier). Unlike account names they are free text
+// otherwise ("Aarav (2 yrs)", "Guest 2" pass) — contact lock-down.
+function guestDataProblem(guestData) {
+  const names = [];
+  for (const key of ["adults", "children"]) for (const r of guestData[key] || []) names.push(r.name);
+  if (!names.length) return null;
+  if (detectContactInParts(names).status === "blocked") return "Traveller names may not contain phone numbers, email addresses, links, social handles or payment details";
+  return null;
 }
 
 // Validates and normalises the stay window. Instants are kept as sent (the
@@ -146,6 +162,9 @@ exports.createBooking = async (req, res) => {
     if (!isHostBlock && Number.isFinite(capacity) && capacity > 0 && adults + children > capacity) {
       return fail(res, 400, "OVER_CAPACITY", `This stay allows up to ${capacity} guests`);
     }
+    const guestData = sanitizeGuestData(body.guestData);
+    const travellerProblem = guestDataProblem(guestData);
+    if (travellerProblem) return fail(res, 422, "CONTACT_INFO_NOT_ALLOWED", travellerProblem, { fields: ["guestData"] });
 
     // Authoritative price.
     let quote;
@@ -249,7 +268,7 @@ exports.createBooking = async (req, res) => {
       adults,
       children,
       infants,
-      guestData: sanitizeGuestData(body.guestData),
+      guestData,
       price: quote.total,
       subTotal: quote.subTotal,
       currency: "INR",
@@ -317,7 +336,7 @@ exports.markBookingAsPaid = async (req, res) => {
     const sent = await sendPaidNotifications(booking);
     if (sent.error === "PAYMENT_NOT_FOUND") return fail(res, 404, "PAYMENT_NOT_FOUND", "Payment not found");
     if (sent.error) return fail(res, 502, "NOTIFY_FAILED", "Booking is paid but notifications could not be sent");
-    return res.status(200).json({ success: true, data: booking, alreadyNotified: !!sent.alreadyNotified });
+    return res.status(200).json({ success: true, data: bookingForActor(booking, actor), alreadyNotified: !!sent.alreadyNotified });
   } catch (err) {
     return handleError(res, err, "markBookingAsPaid error");
   }
@@ -446,7 +465,7 @@ async function cancelCore({ req, res, bookingId, allowed, nextStatus, refund, no
     success: true,
     message: refundResult.refunded ? "Refund issued and booking terminated" : "Booking cancelled without refund",
     refunded: !!refundResult.refunded,
-    data: updated,
+    data: bookingForActor(updated, actor),
   });
 }
 
@@ -542,7 +561,11 @@ exports.updateBooking = async (req, res) => {
       if (!current) return fail(res, 404, "BOOKING_NOT_FOUND", "Booking not found");
       patch.guests = (patch.adults ?? current.adults ?? 0) + (patch.children ?? current.children ?? 0);
     }
-    if (req.body.guestData !== undefined) patch.guestData = sanitizeGuestData(req.body.guestData);
+    if (req.body.guestData !== undefined) {
+      patch.guestData = sanitizeGuestData(req.body.guestData);
+      const travellerProblem = guestDataProblem(patch.guestData);
+      if (travellerProblem) return fail(res, 422, "CONTACT_INFO_NOT_ALLOWED", travellerProblem, { fields: ["guestData"] });
+    }
     if (typeof req.body.flag === "boolean") patch.flag = req.body.flag;
     patch.updatedAt = new Date();
     const booking = await Booking.findByIdAndUpdate(req.params.bookingId, { $set: patch }, { new: true });
@@ -580,7 +603,7 @@ exports.updateCloseModal = async (req, res) => {
     const booking = await loadBooking(res, req.body.bookingId, "");
     if (!booking) return;
     if (!(authz.isBookingGuest(actor, booking) || authz.isAdmin(actor))) return authz.forbid(res);
-    return res.json({ success: true, data: booking });
+    return res.json({ success: true, data: bookingForActor(booking, actor) });
   } catch (err) {
     return handleError(res, err, "updateCloseModal error");
   }
@@ -595,7 +618,7 @@ exports.getBookingById = async (req, res) => {
     if (!(authz.isBookingGuest(actor, booking) || authz.isBookingHost(actor, booking) || authz.isAdmin(actor))) {
       return authz.forbid(res);
     }
-    return res.status(200).json({ success: true, data: booking });
+    return res.status(200).json({ success: true, data: bookingForActor(booking, actor) });
   } catch (err) {
     return handleError(res, err, "getBookingById error");
   }

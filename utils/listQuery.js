@@ -1,6 +1,7 @@
 // One list-query contract for the admin dashboard tables.
 //
-//   ?page=1&limit=10          page-based (limit alias: pageSize; legacy ?skip= is
+//   ?page=1&limit=10          page-based (limit alias: pageSize; ?limit=0 = everything,
+//                             which the admin analytics charts use; legacy ?skip= is
 //                             honoured when ?page= is absent)
 //   ?sort=field:desc          one allow-listed key, "field:asc" | "field:desc",
 //                             "-field" or "field" (asc); anything else → default

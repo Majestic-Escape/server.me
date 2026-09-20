@@ -312,6 +312,12 @@ test("document verification: cheap validation before any log or provider call; v
   assert.equal(retry.status, 502);
   form = await KycHostData().findOne({ hostId: H._id }).lean();
   assert.equal(form.documentInfo.isVerified, true, "a failed retry of the same document keeps the verification");
+  // the controller releases the lease in a `finally` that runs after the 502 has
+  // been sent (pre-existing ordering, documented in the 2026-09-20 audit): allow it a moment
+  for (let i = 0; i < 20 && form.verification.ocr.inFlightUntil; i++) {
+    await h.sleep(50);
+    form = await KycHostData().findOne({ hostId: H._id }).lean();
+  }
   assert.equal(form.verification.ocr.inFlightUntil, null, "in-flight lease released");
   assert.equal(form.verification.ocr.count, 2, "the attempt still counts (it may have cost credits)");
 

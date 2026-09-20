@@ -840,17 +840,19 @@ exports.getActiveBookings = async (req, res) => {
   }
 };
 
+// The host picker of the admin pages: one { host, hostEmail } per host with
+// an active listing (it used to return every active listing document).
 exports.getAllHostEmails = async (req, res) => {
-  const emails = await ListingProperty.find({
-    status: "active",
-  });
-  if (!emails) {
-    return res
-      .status(404)
-      .json({ success: false, message: "Host email not found" });
+  const rows = await ListingProperty.find({ status: "active" }).select("host hostEmail").sort({ hostEmail: 1 }).lean();
+  const seen = new Set();
+  const data = [];
+  for (const r of rows) {
+    const key = String(r.host || r.hostEmail || "");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    data.push({ _id: r._id, host: r.host, hostEmail: r.hostEmail });
   }
-
-  res.status(200).json({ success: true, data: emails });
+  res.status(200).json({ success: true, data });
 };
 exports.getAllUserBookings = async (req, res) => {
   try {
@@ -1259,9 +1261,11 @@ exports.getBookingsByHostGroupByUsers = async (req, res) => {
       if (from) filter.checkIn.$gte = date.from;
       if (to) filter.checkIn.$lte = date.to;
     }
+    // ?hostId= is the HOST whose guests are listed (the admin picks a host
+    // e-mail); it used to be applied to userId, so the picker never matched.
     if (hostId && hostId.toLowerCase() != "all") {
       if (!mongoose.Types.ObjectId.isValid(String(hostId))) return res.json({ success: true, data: [], ...listMeta({ page, limit, total: 0, sortKey }) });
-      filter.userId = new mongoose.Types.ObjectId(hostId);
+      filter.hostId = new mongoose.Types.ObjectId(hostId);
     }
     const afterLookup = [];
     const titleTerm = title && title.toLowerCase() !== "all" ? searchRegex(title) : null;

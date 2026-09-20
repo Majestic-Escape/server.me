@@ -170,9 +170,14 @@ test("booking history (users-by-host): unpaginated by default, paged/sorted/sear
   assert.equal(top.body.data[0].totalBookings, 1);
   const found = await h.api("GET", "/booking/users-by-host?hostId=all&search=guest2&from=1/1/2027&to=12/31/2027&page=1&limit=50", { token: AT });
   assert.ok(found.body.total >= 5 && found.body.data.every((r) => /^Guest2/.test(r.userId.firstName) || /guest2/.test(r.userId.email)), JSON.stringify(found.body.data.map((r) => r.userId.firstName)));
-  const one = await h.api("GET", `/booking/users-by-host?hostId=${GUESTS[3]._id}&from=1/1/2027&to=12/31/2027`, { token: AT });
-  assert.equal(one.body.total, 1);
-  assert.equal(one.body.data[0].userId.email, "guest3@lists.test");
+  const byHost = await h.api("GET", `/booking/users-by-host?hostId=${HOST._id}&from=1/1/2027&to=12/31/2027`, { token: AT });
+  assert.equal(byHost.body.total, 20, "the host picker filters by HOST (it used to be applied to the guest id)");
+  const otherHost = await h.api("GET", `/booking/users-by-host?hostId=${GUESTS[3]._id}&from=1/1/2027&to=12/31/2027`, { token: AT });
+  assert.equal(otherHost.body.total, 0);
+  const picker = await h.api("GET", "/booking/hostEmails", { token: AT });
+  assert.equal(picker.status, 200);
+  assert.ok(picker.body.data.length >= 1 && picker.body.data.every((r) => r.host && r.hostEmail && Object.keys(r).length <= 3), "one slim { host, hostEmail } per host");
+  assert.equal(new Set(picker.body.data.map((r) => String(r.host))).size, picker.body.data.length, "no duplicate hosts");
   const junk = await h.api("GET", "/booking/users-by-host?hostId=not-an-id&from=1/1/2027&to=12/31/2027", { token: AT });
   assert.equal(junk.status, 200);
   assert.equal(junk.body.total, 0);

@@ -1,6 +1,6 @@
 // GENERATED FILE — do not edit by hand.
 // Contact-information detector, emitted from majestic-chat
-// packages/shared/src/moderation/patterns.ts (commit a30fa86) by
+// packages/shared/src/moderation/patterns.ts (commit e0c9b5b) by
 // packages/shared/scripts/emit-contact-moderation-cjs.js. The TypeScript
 // source is the only implementation; tests/batch-s/contact-moderation.test.js
 // asserts the shared golden corpus (tests/batch-s/fixtures/contact-vectors.json)
@@ -950,9 +950,23 @@ function detectContactInParts(parts, options = {}, candidateIndex) {
     if (parts.length < 2)
         return separated;
     let merged = mergeResults(separated, detectJoined(parts, '', options, candidateIndex));
-    const firstBoundary = Math.max(1, parts.length - PAIRWISE_BOUNDARIES);
+    // Judging a candidate: only the boundaries that touch it can add a hit to it
+    // (an identifier finished by the candidate across fillers is the all-glued
+    // pass's job), so the live send path costs three detections, not thirty.
+    // Masking a whole resource judges every recent boundary.
+    const boundaries = [];
+    if (candidateIndex !== undefined) {
+        if (candidateIndex > 0)
+            boundaries.push(candidateIndex);
+        if (candidateIndex + 1 < parts.length)
+            boundaries.push(candidateIndex + 1);
+    }
+    else {
+        for (let b = Math.max(1, parts.length - PAIRWISE_BOUNDARIES); b < parts.length; b++)
+            boundaries.push(b);
+    }
     const relevant = parts.map((p) => isContextRelevant(p));
-    for (let b = firstBoundary; b < parts.length; b++) {
+    for (const b of boundaries) {
         // two plain-prose parts cannot form an identifier when glued (the all-glued pass still covers spelled-out runs)
         if (!relevant[b - 1] && !relevant[b])
             continue;

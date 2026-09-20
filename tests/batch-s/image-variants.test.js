@@ -219,6 +219,9 @@ test("delete: a photo's master and every variant go together, by master or varia
   assert.equal(objectsOf(ka).length, 1 + WIDTHS().length + 1, "nothing deleted for a foreign caller");
   assert.equal((await del(HT, up.body.urls[0])).status, 200);
   assert.equal(objectsOf(ka).length, 0, "master, every variant and the stray are gone");
+  assert.ok(storage().__mock.purged.includes(ka) && storage().__mock.purged.includes(storage().variantKey(ka, 640)), "the deleted objects are purged from the CDN edges");
+  assert.match(storage().IMMUTABLE_CACHE_CONTROL, /max-age=31536000/);
+  assert.match(storage().IMMUTABLE_CACHE_CONTROL, /s-maxage=86400/, "the edge re-checks daily so a deleted photo cannot outlive s-maxage there");
   assert.equal((await del(HT, up.body.urls[0])).status, 200, "deleting again is fine (idempotent)");
   // the variant URL of a photo names the photo
   const variantUrl = storage().cdnUrl(storage().variantKey(kb, 960));

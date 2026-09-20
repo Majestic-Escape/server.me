@@ -20,7 +20,9 @@ const { requireSelfEmailQueryOrAdmin } = require("../middleware/userOwnership");
 
 const admin = [authMiddleware, requireAdmin];
 
-router.get("/", getAllPListings);
+// Anonymous catalogue read; the ?hostEmail= filter is for the host's own
+// listings (or an admin) — to anyone else it was an e-mail → host oracle.
+router.get("/", authMiddleware.optional, getAllPListings);
 // Batch P: a host reads their own stage (the site sends ?email=<own> with the
 // session token); admins may ask for any host.
 router.get("/status", authMiddleware, requireSelfEmailQueryOrAdmin, getListingStatus);
@@ -29,7 +31,9 @@ router.get("/status", authMiddleware, requireSelfEmailQueryOrAdmin, getListingSt
 // (hostEmail, street, registration number) were anonymous.
 router.get("/export", ...admin, exportPListings);
 router.get("/admin/:id", ...admin, validateParam("id"), getAdminPListingById);
-router.get("/:id", validateParam("id"), getUserPListingById);
+// The listing's own host (the edit wizard) or an admin gets the stored
+// document — exact address, owner flags; everyone else the public view.
+router.get("/:id", authMiddleware.optional, validateParam("id"), getUserPListingById);
 
 router.post("/", ...admin, createPListing);
 router.put("/:id", ...admin, validateParam("id"), updatePListing);

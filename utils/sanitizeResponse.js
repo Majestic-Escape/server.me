@@ -84,6 +84,15 @@ const SENSITIVE_PROPERTY_FIELDS = [
 const SENSITIVE_ADDRESS_FIELDS = ["street", "registrationNumber"];
 const PRIVATE_LISTING_FIELDS = ["line1", "line2"];
 
+// Admin / owner workflow state that no public or guest reader needs: the
+// host's KYC stage on the listing, the moderation ban flag and Mongoose's
+// version counter.
+const INTERNAL_LISTING_FIELDS = ["kycStatus", "ban", "__v"];
+
+// Never returned to anyone through a listing response: the chat-widget
+// vectors (large, and excluded at the model).
+const VECTOR_LISTING_FIELDS = ["embedding", "embeddingUpdatedAt", "embeddingVersion"];
+
 // Fields to remove from host object to prevent PII leakage (deny-list kept
 // for the legacy sanitizeHost callers; toPublicUser is the allow-list).
 const SENSITIVE_HOST_FIELDS = [
@@ -342,6 +351,9 @@ function sanitizeProperty(property) {
   PRIVATE_LISTING_FIELDS.forEach((field) => {
     delete propObj[field];
   });
+  INTERNAL_LISTING_FIELDS.forEach((field) => {
+    delete propObj[field];
+  });
   if (propObj.address && typeof propObj.address === "object") {
     propObj.address = sanitizeAddress(propObj.address, idString(propObj._id || propObj.id));
   }
@@ -373,10 +385,33 @@ function sanitizePropertyForBookedGuest(property) {
   SENSITIVE_PROPERTY_FIELDS.forEach((field) => {
     delete propObj[field];
   });
+  INTERNAL_LISTING_FIELDS.forEach((field) => {
+    delete propObj[field];
+  });
   if (propObj.address && typeof propObj.address === "object") {
     propObj.address = { ...propObj.address };
     delete propObj.address.registrationNumber;
   }
+  if (propObj.host && typeof propObj.host === "object" && !isObjectId(propObj.host)) {
+    propObj.host = propObj.host.contact ? sanitizeEmbeddedHost(propObj.host) : toPublicUser(propObj.host);
+  }
+  return propObj;
+}
+
+/**
+ * A listing as its own host (or an admin) reads it for editing: the stored
+ * address exactly as entered (street, registration number, precise point),
+ * the owner-only flags (hostEmail, kycStatus, bankDetails, ban) and the text
+ * as stored. The host wizard PUTs this object back, so it must be the truth —
+ * the public view (approximate point, no street) written back through the
+ * wizard would move the listing and erase its street. Vectors never leave.
+ */
+function sanitizePropertyForOwner(property) {
+  if (!property) return property;
+  const propObj = plain(property);
+  VECTOR_LISTING_FIELDS.forEach((field) => {
+    delete propObj[field];
+  });
   if (propObj.host && typeof propObj.host === "object" && !isObjectId(propObj.host)) {
     propObj.host = propObj.host.contact ? sanitizeEmbeddedHost(propObj.host) : toPublicUser(propObj.host);
   }
@@ -392,6 +427,7 @@ module.exports = {
   sanitizeProperty,
   sanitizeProperties,
   sanitizePropertyForBookedGuest,
+  sanitizePropertyForOwner,
   sanitizeAddress,
   approximateLocation,
   resetLocationKeyCache,
@@ -408,4 +444,5 @@ module.exports = {
   SENSITIVE_HOST_FIELDS,
   SENSITIVE_ADDRESS_FIELDS,
   PRIVATE_LISTING_FIELDS,
+  INTERNAL_LISTING_FIELDS,
 };

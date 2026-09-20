@@ -192,6 +192,8 @@ everything. A first name that fails the name policy is masked on read.
 | `GET /hostData/:id`, `/hosts/single/:id`, `/hosts/:id` | self → own record minus secrets; other → public projection, `about` masked against all the host's listing addresses | filter |
 | `GET /guests/info/:id`, `/guests/guest-by-id` | `PUBLIC_USER_SELECT` (no `lastName`) | filter |
 | `GET /properties/*`, `/prop-listing/*` (public) | `sanitizeProperty`: owner-only fields removed, approximate point, text masked, host public | filter |
+| `GET /properties/user-properties/:userEmail` | self-or-admin (`requireSelfEmailParamOrAdmin`): another user gets 403, so an e-mail cannot be probed for listings | filter |
+| `GET /booking/revenue-filter` (host) | guest populated with `firstName` only | filter |
 | `POST /booking-interest/availability` | authenticated, actor-derived user, no email echoed; `GET /` admin-only | filter |
 | emails (`services/bookingNotifications.js`) | counterpart first name; `hostContact/guestContact/street` only in confirmation (voucher) emails and admin emails | — |
 | invoice / guest-list PDFs | host first name; "Booked by" first name | — |
@@ -254,6 +256,19 @@ is retired (`410 UPLOAD_PATH_RETIRED`).
 non-images refused (`400 INVALID_IMAGE`). Legacy objects: `scripts/strip-image-metadata.js`
 (dry run → `--apply`, then purge the CDN cache). Visible text inside a picture
 is not OCR'd — the admin's listing approval remains the manual control.
+
+## Audit additions (2026-09-20)
+`tests/batch-s/pii-sweep.test.js` derives every GET route from the Express
+router at runtime and calls it as anonymous / guest / host / stranger with the
+seeded ids; a counterpart canary value, a secret field name, another host's
+owner-only listing value or a 500 turns it red — a new endpoint cannot leak
+quietly. Mutants (`tests/pw-final` runner, evidence `pii-mutations-server.json`):
+projection removed (backstop holds), projection + filter removed, filter fails
+open, customerDetails exposed, per-field moderation, id-only offset, exact
+location for pending, allow-list weakened, legacy masking off, traveller names
+unmoderated, metadata kept, presigned path revived, foreign image refs, QR not
+refused, admin exempt from the text policy, address tokens off, raw legacy
+first names, a route without projection and backstop — each caught.
 
 ## Release gate
 `node scripts/pii-shadow-scan.js --uri=<prod DB_URI> --chat-uri=<prod chat URI>`

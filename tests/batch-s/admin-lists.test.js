@@ -154,6 +154,9 @@ test("bookings admin list: filtered total (was the global paid count), status/da
   assert.deepEqual(secretKeys(all.body), [], "joined users carry no secrets, listings no embedding");
   const sameDay = await h.api("GET", "/booking/admin/analytics-filter?status=all&from=1/5/2027&to=1/5/2027", { token: AT });
   assert.equal(sameDay.body.success, false, "legacy toDate guard kept");
+  const iso = await h.api("GET", "/booking/admin/analytics-filter?status=all&from=2027-01-05T00:00:00.000Z&to=2027-01-09T00:00:00.000Z&page=1&limit=100", { token: AT });
+  assert.equal(iso.status, 200);
+  assert.equal(iso.body.total, 5, "ISO calendar dates (what the admin Analytics page sends) are accepted");
   const everything = await h.api("GET", "/booking/admin/analytics-filter?status=all&from=1/1/2027&to=12/31/2027&limit=0&sort=checkIn:desc", { token: AT });
   assert.equal(everything.body.data.length, N, "limit=0 returns the whole range (the analytics charts; the endpoint used to cap at 10)");
   assert.equal(everything.body.limit, 0);

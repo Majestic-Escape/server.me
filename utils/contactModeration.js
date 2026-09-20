@@ -1,6 +1,6 @@
 // GENERATED FILE — do not edit by hand.
 // Contact-information detector, emitted from majestic-chat
-// packages/shared/src/moderation/patterns.ts (commit 4c1e9cb) by
+// packages/shared/src/moderation/patterns.ts (commit c5da05a) by
 // packages/shared/scripts/emit-contact-moderation-cjs.js. The TypeScript
 // source is the only implementation; tests/batch-s/contact-moderation.test.js
 // asserts the shared golden corpus (tests/batch-s/fixtures/contact-vectors.json)
@@ -405,8 +405,10 @@ function isAllowedUrlHost(host) {
 // Patterns (run on the normalised text; every quantifier is bounded)
 // ---------------------------------------------------------------------------
 // 10 digits starting 6–9 with up to three separator characters between any two digits.
-const PHONE_RE = /(?<!\d)(?:(?:\+|00)?91[\s.\-()]{0,3})?(?:0[\s.\-]{0,2})?([6-9](?:[\s.\-_()/*|:;]{0,3}\d){9})(?![\s.\-_()/*|:;]{0,3}\d)/g;
-const INTL_PHONE_RE = /(?<![\d+])\+(?:\d[\s.\-()]{0,2}){7,14}\d(?!\d)/g;
+// Separators inside one number never include a line break: digits on separate
+// lines / in separate messages are SPLIT_PHONE's job, with its explanation rules.
+const PHONE_RE = /(?<!\d)(?:(?:\+|00)?91[ 	.\-()]{0,3})?(?:0[ 	.\-]{0,2})?([6-9](?:[ 	.\-_()/*|:;]{0,3}\d){9})(?![ 	.\-_()/*|:;]{0,3}\d)/g;
+const INTL_PHONE_RE = /(?<![\d+])\+(?:\d[ 	.\-()]{0,2}){7,14}\d(?!\d)/g;
 const EMAIL_RE = /[a-z0-9][a-z0-9._%+\-]{0,63}@[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?){0,4}\.[a-z]{2,24}(?![a-z0-9])/g;
 const PROVIDER_RE = /(?<![a-z0-9])(gmail|googlemail|yahoo|ymail|hotmail|outlook|protonmail|proton\.me|rediffmail|rediff|icloud|zoho|aol)(?![a-z0-9])/g;
 const UPI_RE = /(?<![a-z0-9._\-])[a-z0-9][a-z0-9._\-]{1,63}@(ybl|oksbi|okaxis|okhdfcbank|okicici|paytm|upi|apl|ibl|axl|ptyes|ptsbi|ptaxis|yapl|fam|axisb|sbi|hdfcbank|icici|kotak|jio|airtel|freecharge|waaxis|wahdfcbank|waicici|wasbi|okbizaxis|axisbank|barodampay|cnrb|indus|federal|pnb|uco|idfcbank|yesbank|rbl|dbs|kbl|abfspay|ikwik|naviaxis|slice)(?![a-z0-9])/g;
@@ -653,11 +655,13 @@ function unexplainedDigitTokens(norm) {
     // An enumeration ("1", "2", "3" …) is a consecutive ascending run of small
     // numbers, not a phone number spelt one digit per message: a token that
     // continues such a run from the previous fragment is dropped.
+    // (a run needs three consecutive values: "8" then "9" alone is not one)
     return kept.filter((tok, i) => {
-        if (i === 0 || tok.digits.length > 2)
+        if (i < 2 || tok.digits.length > 2)
             return true;
         const prev = kept[i - 1].digits;
-        return !(prev.length <= 2 && Number(tok.digits) === Number(prev) + 1);
+        const prev2 = kept[i - 2].digits;
+        return !(prev.length <= 2 && prev2.length <= 2 && Number(tok.digits) === Number(prev) + 1 && Number(prev) === Number(prev2) + 1);
     });
 }
 /**
@@ -671,26 +675,37 @@ function detectSplitPhone(norm) {
         return [];
     const hits = [];
     const flagged = new Set();
-    // Map every concatenated digit position back to its token.
-    const owner = [];
-    let all = '';
-    toks.forEach((t, idx) => {
-        for (let k = 0; k < t.digits.length; k++)
-            owner.push(idx);
-        all += t.digits;
-    });
-    for (let i = 0; i + 10 <= all.length; i++) {
-        if (all[i] < '6')
-            continue;
-        const a = owner[i];
-        const b = owner[i + 9];
-        // One token is the PHONE rule's job unless it is an 11–13 digit run that
-        // hides a mobile number behind extra digits.
-        if (a === b && (toks[a].digits.length < 11 || toks[a].digits.length > 13))
-            continue;
-        for (let k = a; k <= b; k++)
-            flagged.add(k);
-    }
+    // The recipient can read the fragments in either order ("rest 56789" sent
+    // before "part 91234", or digits sent last-to-first), so the concatenation
+    // is scanned in text order and in reverse token order.
+    const scan = (order) => {
+        // Map every concatenated digit position back to its token.
+        const owner = [];
+        let all = '';
+        for (const idx of order) {
+            for (let k = 0; k < toks[idx].digits.length; k++)
+                owner.push(idx);
+            all += toks[idx].digits;
+        }
+        for (let i = 0; i + 10 <= all.length; i++) {
+            if (all[i] < '6')
+                continue;
+            const a = owner[i];
+            const b = owner[i + 9];
+            // One token is the PHONE rule's job unless it is an 11–13 digit run that
+            // hides a mobile number behind extra digits.
+            if (a === b && (toks[a].digits.length < 11 || toks[a].digits.length > 13))
+                continue;
+            const lo = Math.min(a, b);
+            const hi = Math.max(a, b);
+            for (let k = lo; k <= hi; k++)
+                flagged.add(k);
+        }
+    };
+    const forward = toks.map((_, i) => i);
+    scan(forward);
+    if (toks.length > 1)
+        scan(forward.slice().reverse());
     for (const k of [...flagged].sort((x, y) => x - y))
         hits.push(toOriginalHit(norm, PatternType.SPLIT_PHONE, toks[k].s, toks[k].e));
     return hits;

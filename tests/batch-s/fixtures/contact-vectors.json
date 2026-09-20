@@ -854,6 +854,15 @@
       "masked": "•••"
     },
     {
+      "id": "phone-halves-swapped-one-text",
+      "text": "rest 56789 and part 91234",
+      "expected": "blocked",
+      "kinds": [
+        "SPLIT_PHONE"
+      ],
+      "masked": "rest ••• and part •••"
+    },
+    {
       "id": "url-spaced-dot-before",
       "text": "rahulvilla .in",
       "expected": "blocked",
@@ -1637,6 +1646,88 @@
       ]
     },
     {
+      "id": "seq-phone-halves-swapped",
+      "messages": [
+        "rest 56789",
+        "part 91234"
+      ],
+      "blockedAt": [
+        1
+      ],
+      "statuses": [
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "rest •••",
+        "part •••"
+      ]
+    },
+    {
+      "id": "seq-phone-digits-descending-sent-last-first",
+      "messages": [
+        "1",
+        "0",
+        "6",
+        "5",
+        "4",
+        "3",
+        "2",
+        "1",
+        "8",
+        "9"
+      ],
+      "blockedAt": [
+        9
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-fp-counts-both-orders",
+      "messages": [
+        "we booked 3 rooms",
+        "for 2 nights",
+        "my flight is at 6 am",
+        "total 15000 ok?"
+      ],
+      "blockedAt": [],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean"
+      ],
+      "masked": [
+        "we booked 3 rooms",
+        "for 2 nights",
+        "my flight is at 6 am",
+        "total 15000 ok?"
+      ]
+    },
+    {
       "id": "seq-fp-label-run",
       "messages": [
         "g0",
@@ -1886,9 +1977,9 @@
         "blocked"
       ],
       "masked": [
-        "•••",
-        "•••",
-        "•••"
+        "••• ••• •••",
+        "••• ••• •••",
+        "••• ••• ••• •••"
       ]
     },
     {

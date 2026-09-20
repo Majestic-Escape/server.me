@@ -1,6 +1,6 @@
 // GENERATED FILE — do not edit by hand.
 // Contact-information detector, emitted from majestic-chat
-// packages/shared/src/moderation/patterns.ts (commit 599acbb) by
+// packages/shared/src/moderation/patterns.ts (commit 4c1e9cb) by
 // packages/shared/scripts/emit-contact-moderation-cjs.js. The TypeScript
 // source is the only implementation; tests/batch-s/contact-moderation.test.js
 // asserts the shared golden corpus (tests/batch-s/fixtures/contact-vectors.json)
@@ -23,6 +23,7 @@ exports.checkCandidate = checkCandidate;
 exports.checkText = checkText;
 exports.calculateConfidence = calculateConfidence;
 exports.getModerationStatus = getModerationStatus;
+exports.isContextRelevant = isContextRelevant;
 exports.isFragmentBearing = isFragmentBearing;
 exports.isAcceptableName = isAcceptableName;
 const chat_types_1 = { ModerationStatus: { CLEAN: 'clean', FLAGGED: 'flagged', BLOCKED: 'blocked' } };
@@ -87,6 +88,9 @@ exports.ALLOWED_URL_DOMAINS = ['majesticescape.in', 'majesticescape.com'];
 // Characters that carry no visible content and are used to split identifiers.
 const STRIP_RE = /[\u200B-\u200F\u2060-\u2064\uFEFF\uFE00-\uFE0F\u20E3\u034F\u180E\u00AD\u2028\u2029\u0301-\u036F]/u;
 const ND_RE = /\p{Nd}/u;
+// Dot look-alikes used to disguise a domain: ideographic / halfwidth full stops,
+// katakana middle dot, one-dot leader, middle dot, hyphenation point, dot operator, bullet operator.
+const DOT_LIKE_RE = /[\u3002\uFF61\u30FB\u2024\u00B7\u2027\u22C5\u2219]/u;
 function digitValue(ch) {
     const cp = ch.codePointAt(0);
     if (cp >= 0x30 && cp <= 0x39)
@@ -104,6 +108,8 @@ function digitValue(ch) {
 const NUMBER_WORDS = {
     zero: '0', one: '1', two: '2', three: '3', four: '4', five: '5', six: '6', seven: '7', eight: '8', nine: '9',
     oh: '0', // "nine eight oh"
+    ten: '10', eleven: '11', twelve: '12', thirteen: '13', fourteen: '14', fifteen: '15', sixteen: '16', seventeen: '17', eighteen: '18', nineteen: '19',
+    twenty: '20', thirty: '30', forty: '40', fifty: '50', sixty: '60', seventy: '70', eighty: '80', ninety: '90',
     shunya: '0', sifar: '0', ek: '1', do: '2', teen: '3', tin: '3', char: '4', chaar: '4', paanch: '5', panch: '5', pach: '5',
     chhe: '6', che: '6', chha: '6', saat: '7', sat: '7', aath: '8', ath: '8', nau: '9', nou: '9',
 };
@@ -120,7 +126,7 @@ function foldCharacters(original) {
             for (const ch of folded) {
                 if (STRIP_RE.test(ch))
                     continue;
-                out.push({ s: ND_RE.test(ch) ? digitValue(ch) : ch, from: i, to: i + len });
+                out.push({ s: ND_RE.test(ch) ? digitValue(ch) : DOT_LIKE_RE.test(ch) ? '.' : ch, from: i, to: i + len });
             }
         }
         i += len;
@@ -148,6 +154,7 @@ function tokenize(pieces) {
     return tokens;
 }
 const LOOKALIKE_TOKEN = /^[0-9oil]{2,}$/;
+const LOOKALIKE_TOKEN_WIDE = /^[0-9oilsbzgq]{2,}$/;
 /**
  * Stage 2: token rewrites — spelled-out digit runs (≥ 3 consecutive number
  * words / digits), letter look-alikes inside digit tokens, and the
@@ -156,9 +163,11 @@ const LOOKALIKE_TOKEN = /^[0-9oil]{2,}$/;
 function rewriteTokens(pieces) {
     const tokens = tokenize(pieces);
     const replaced = new Map(); // token index → replacement text
+    const replacedSpan = new Map(); // token index → original span when a replacement covers several tokens
     // Number words: only inside a run of ≥ 3 numeric tokens (digits or words)
     // so "do you have", "one night" or "teen" never become digits.
-    const numeric = tokens.map((t) => /^\d+$/.test(t.text) || NUMBER_WORDS[t.text] !== undefined);
+    const REPEAT = { double: 2, triple: 3 };
+    const numeric = tokens.map((t, k) => /^\d+$/.test(t.text) || NUMBER_WORDS[t.text] !== undefined || (REPEAT[t.text] !== undefined && k + 1 < tokens.length && NUMBER_WORDS[tokens[k + 1].text] !== undefined));
     let r = 0;
     while (r < tokens.length) {
         if (!numeric[r]) {
@@ -173,6 +182,12 @@ function rewriteTokens(pieces) {
                 const w = NUMBER_WORDS[tokens[k].text];
                 if (w !== undefined)
                     replaced.set(k, w);
+                else if (REPEAT[tokens[k].text] !== undefined && k + 1 < e) {
+                    // "double nine" → "99": the repeat word disappears, the digit repeats
+                    replaced.set(k, '');
+                    replaced.set(k + 1, NUMBER_WORDS[tokens[k + 1].text].repeat(REPEAT[tokens[k].text]));
+                    k++;
+                }
             }
         }
         r = Math.max(e, r + 1);
@@ -189,18 +204,68 @@ function rewriteTokens(pieces) {
             continue;
         replaced.set(k, parts.map((x) => (/^\d+$/.test(x) ? x : NUMBER_WORDS[x])).join(''));
     }
-    // Look-alikes: a token made of digits and o/i/l/| with at least two real digits.
+    // Look-alikes: a token made of digits and o/i/l/| with at least two real
+    // digits; with s/b/z/g/q as well only when the token is phone-sized (≥ 10
+    // characters, ≥ 6 real digits, at most two letters) so "b2b", "s10" or a
+    // glued run of labels ("g0g1g2g3g4g5") are never touched.
     for (let k = 0; k < tokens.length; k++) {
         const t = tokens[k].text;
-        if (LOOKALIKE_TOKEN.test(t) && (t.match(/\d/g) || []).length >= 2 && /[oil]/.test(t)) {
+        if (replaced.has(k))
+            continue;
+        const digits = (t.match(/\d/g) || []).length;
+        if (LOOKALIKE_TOKEN.test(t) && digits >= 2 && /[oil]/.test(t)) {
             replaced.set(k, t.replace(/o/g, '0').replace(/[il]/g, '1'));
+        }
+        else if (LOOKALIKE_TOKEN_WIDE.test(t) && t.length >= 10 && digits >= 6 && t.length - digits <= 2) {
+            replaced.set(k, t.replace(/o/g, '0').replace(/[il]/g, '1').replace(/s/g, '5').replace(/b/g, '8').replace(/z/g, '2').replace(/[gq]/g, '9'));
+        }
+        else if (t === 'd0t' || t === 'dott' || t === 'd0tt') {
+            replaced.set(k, 'dot');
+        }
+        else if (/^dot(com|net|org|in|co|io|me|info|xyz|site|online|shop|club|app|dev|travel)$/.test(t) && k > 0 && gapIsSmall(pieces, tokens[k - 1], tokens[k], 3)) {
+            // "rahulvilla dotin" → "rahulvilla.in"
+            replaced.set(k, '.' + t.slice(3));
+        }
+    }
+    // Spaced-out letters: "r a h u l v i l l a . i n", "w h a t s a p p" — a run of
+    // ≥ 5 single-character tokens separated by one space (a '.' or '@' may sit
+    // between two of them) collapses into one token, punctuation kept.
+    for (let k = 0; k < tokens.length; k++) {
+        if (tokens[k].text.length !== 1 || replaced.has(k))
+            continue;
+        let e = k;
+        while (e + 1 < tokens.length && tokens[e + 1].text.length === 1 && !replaced.has(e + 1)) {
+            const gap = pieces.slice(tokens[e].end, tokens[e + 1].start).map((x) => x.s).join('');
+            if (!/^ ?[.@]? ?$/.test(gap) || gap.length === 0)
+                break;
+            e++;
+        }
+        if (e - k + 1 >= 5) {
+            let text = '';
+            for (let q = k; q <= e; q++) {
+                if (q > k)
+                    text += pieces.slice(tokens[q - 1].end, tokens[q].start).map((x) => x.s).join('').replace(/ /g, '');
+                text += tokens[q].text;
+                if (q > k)
+                    replaced.set(q, '');
+            }
+            replaced.set(k, text);
+            replacedSpan.set(k, [pieces[tokens[k].start].from, pieces[tokens[e].end - 1].to]);
+            k = e;
         }
     }
     // Joiners: word (at) word → word@word ; word (dot) word → word.word ;
     // "word at word" only when a dot / "dot" / a mail provider follows within two tokens.
     const joiner = new Map(); // token index of "at"/"dot" → '@' | '.'
+    // "rahulvilla(.)in", "rahul[.]sharma" — a bracketed dot between two tokens is a dot.
+    const bracketDot = new Map(); // token index k: the gap BEFORE token k is "(.)"-like
+    for (let k = 1; k < tokens.length; k++) {
+        const gap = pieces.slice(tokens[k - 1].end, tokens[k].start).map((x) => x.s).join('');
+        if (/^\s*[([{]\s*\.\s*[)\]}]\s*$/.test(gap))
+            bracketDot.set(k, true);
+    }
     for (let k = 1; k < tokens.length - 1; k++) {
-        const t = tokens[k].text;
+        const t = replaced.get(k) ?? tokens[k].text;
         if (t !== 'at' && t !== 'dot')
             continue;
         const bracketed = isBracketed(pieces, tokens[k]);
@@ -212,6 +277,21 @@ function rewriteTokens(pieces) {
             continue;
         if (t === 'dot') {
             joiner.set(k, '.');
+            // "dot i n" — the TLD spelled letter by letter after the joiner
+            if (tokens[k + 1].text.length === 1 && k + 2 < tokens.length && tokens[k + 2].text.length === 1) {
+                let e = k + 1;
+                let tld = tokens[e].text;
+                while (e + 1 < tokens.length && tokens[e + 1].text.length === 1 && e - k < 4 && /^ $/.test(pieces.slice(tokens[e].end, tokens[e + 1].start).map((x) => x.s).join(''))) {
+                    e++;
+                    tld += tokens[e].text;
+                }
+                if (tld.length >= 2 && isValidTld(tld)) {
+                    replaced.set(k + 1, tld);
+                    replacedSpan.set(k + 1, [pieces[tokens[k + 1].start].from, pieces[tokens[e].end - 1].to]);
+                    for (let q = k + 2; q <= e; q++)
+                        replaced.set(q, '');
+                }
+            }
         }
         else if (t === 'at') {
             const next = tokens[k + 1]?.text || '';
@@ -222,7 +302,7 @@ function rewriteTokens(pieces) {
                 joiner.set(k, '@');
         }
     }
-    if (replaced.size === 0 && joiner.size === 0)
+    if (replaced.size === 0 && joiner.size === 0 && bracketDot.size === 0)
         return pieces;
     const out = [];
     const outEndOfToken = []; // out.length right after token k was emitted
@@ -241,13 +321,25 @@ function rewriteTokens(pieces) {
             p = nextStart;
             continue;
         }
-        // copy the gap before the token
+        // copy the gap before the token (a bracketed dot becomes a plain dot)
+        if (bracketDot.has(k) && k > 0) {
+            const prevEnd = tokens[k - 1].end;
+            if (p < tok.start)
+                out.push({ s: '.', from: pieces[prevEnd].from, to: pieces[tok.start - 1].to });
+            p = tok.start;
+        }
         while (p < tok.start)
             out.push(pieces[p++]);
         const rep = replaced.get(k);
-        if (rep !== undefined) {
-            const from = pieces[tok.start].from;
-            const to = pieces[tok.end - 1].to;
+        if (rep === '') {
+            // collapsed into the previous token: drop the token and the gap before it
+            out.length = outEndOfToken[k - 1] !== undefined ? outEndOfToken[k - 1] : out.length;
+            p = tok.end;
+        }
+        else if (rep !== undefined) {
+            const span = replacedSpan.get(k);
+            const from = span ? span[0] : pieces[tok.start].from;
+            const to = span ? span[1] : pieces[tok.end - 1].to;
             for (const ch of rep)
                 out.push({ s: ch, from, to });
             p = tok.end;
@@ -313,17 +405,29 @@ function isAllowedUrlHost(host) {
 // Patterns (run on the normalised text; every quantifier is bounded)
 // ---------------------------------------------------------------------------
 // 10 digits starting 6–9 with up to three separator characters between any two digits.
-const PHONE_RE = /(?<!\d)(?:(?:\+|00)?91[\s.\-()]{0,3})?(?:0[\s.\-]{0,2})?([6-9](?:[\s.\-_()/*|]{0,3}\d){9})(?![\s.\-_()/*|]{0,3}\d)/g;
+const PHONE_RE = /(?<!\d)(?:(?:\+|00)?91[\s.\-()]{0,3})?(?:0[\s.\-]{0,2})?([6-9](?:[\s.\-_()/*|:;]{0,3}\d){9})(?![\s.\-_()/*|:;]{0,3}\d)/g;
 const INTL_PHONE_RE = /(?<![\d+])\+(?:\d[\s.\-()]{0,2}){7,14}\d(?!\d)/g;
 const EMAIL_RE = /[a-z0-9][a-z0-9._%+\-]{0,63}@[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?){0,4}\.[a-z]{2,24}(?![a-z0-9])/g;
 const PROVIDER_RE = /(?<![a-z0-9])(gmail|googlemail|yahoo|ymail|hotmail|outlook|protonmail|proton\.me|rediffmail|rediff|icloud|zoho|aol)(?![a-z0-9])/g;
 const UPI_RE = /(?<![a-z0-9._\-])[a-z0-9][a-z0-9._\-]{1,63}@(ybl|oksbi|okaxis|okhdfcbank|okicici|paytm|upi|apl|ibl|axl|ptyes|ptsbi|ptaxis|yapl|fam|axisb|sbi|hdfcbank|icici|kotak|jio|airtel|freecharge|waaxis|wahdfcbank|waicici|wasbi|okbizaxis|axisbank|barodampay|cnrb|indus|federal|pnb|uco|idfcbank|yesbank|rbl|dbs|kbl|abfspay|ikwik|naviaxis|slice)(?![a-z0-9])/g;
 const HANDLE_RE = /(?<![a-z0-9])@[a-z][a-z0-9_.]{3,30}(?![a-z0-9_])/g;
+// host and TLD separated by spaces around the dot: group 2 is the separator (starts with a space when the space precedes the dot)
+const SPACED_DOMAIN_RE = /(?<![a-z0-9@.\-_/])([a-z0-9][a-z0-9\-]{2,61})((?: ?\. {1,2})|(?: {1,2}\. ?))([a-z]{2,24})(?![a-z0-9\-@])/g;
+// www / http lead-in with the dots replaced by spaces or missing
+// TLDs that are NOT ordinary words or abbreviations: after a sentence-ending
+// period they can only be a domain ("rahulvilla. Com"). Every other TLD in the
+// tables — in, it, host, travel, site, club, today… — is also plain English,
+// so ". Hosting gives me", "stay. Host was", "beach. in the morning" are prose
+// unless a lead-in cue ("see", "visit", "website" …) precedes the host.
+const NON_WORD_TLDS = new Set('com net org co io ly gl gg xyz ooo icu mobi cc tk ml ga cf gq'.split(' '));
+const isWordLikeTld = (tld) => !NON_WORD_TLDS.has(tld);
+const URL_LEAD_IN_RE = /(?:^|[^a-z])(?:visit|see|check|checkout|website|site|web|www|browse|open|search|google|find (?:us|me)|link|url|log ?on|go to|head to|type|https?:?)\s*$/;
+const SPACED_URL_RE = /(?<![a-z0-9])(?:https?|www)[\s:/.]{1,4}([a-z0-9][a-z0-9\-]{1,61})[\s.]{1,3}([a-z]{2,24})(?![a-z0-9])/g;
 const URL_SCHEME_RE = /(?:https?:\/\/|www\.)[^\s<>"']{1,200}/g;
 const IPV4_RE = /(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])/g;
 const DOMAIN_RE = /(?<![a-z0-9@.\-_/])([a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?){0,3})\.([a-z]{2,24}|xn--[a-z0-9\-]{2,59})(?![a-z0-9\-@])/g;
-const SOCIAL_RE = /(?<![a-z0-9])(whats\s?app|watsap|watsapp|whatsap|wa\.me|telegram|t\.me|signal\s{0,3}(?:app|number|me|id)|insta(?:gram)?|ig\s*(?:id|handle|:|@)|facebook|fb\s*(?:id|page|profile|messenger|:|@)|messenger|snapchat|snap\s*(?:id|me|:|@)|linkedin|twitter|x\.com|discord|skype|imo\s*(?:number|app|id)|on\s+imo|viber|wechat|line\s+id|threema|zalo|hike\s*(?:app|id))(?![a-z0-9])/g;
-const OFF_PLATFORM_RE = /(?<![a-z0-9])(book(?:ing)?\s+directly|direct\s+booking|directly\s+(?:with|to|from)\s+(?:me|us|you)|outside\s+(?:of\s+)?(?:the\s+)?(?:app|site|website|platform|portal|majestic)|off\s+(?:the\s+)?(?:app|site|platform)|skip\s+(?:the\s+)?(?:app|site|website|platform|commission|fee)|avoid\s+(?:the\s+)?(?:commission|platform\s+fee|service\s+fee)|pay\s+(?:me\s+|us\s+)?(?:directly|cash|offline|in\s+cash|by\s+cash)|cash\s+on\s+arrival|cash\s+at\s+(?:check\s?in|arrival)|g\s?pay|google\s+pay|phone\s?pe|paytm|upi|bank\s+transfer|neft|imps|rtgs|account\s+(?:number|no)|a\/c\s+no|acct?\s+no|ifsc)(?![a-z0-9])/g;
+const SOCIAL_RE = /(?<![a-z0-9])(whats\s?app|watsap|watsapp|whatsap|wapp|wa\.me|wa\s*(?:me|number|no|:)|(?:on|my|via)\s+wa|telegram|t\.me|tg\s+[a-z0-9_@][a-z0-9_.]*|signal\s{0,3}(?:app|number|me|id)|insta(?:gram)?|ig\s*(?:id|handle|:|@)|facebook|fb\s*(?:id|page|profile|messenger|:|@)|fb\s+[a-z][a-z0-9_.]*|messenger|snapchat|snap\s*(?:id|me|:|@)|(?:on|my|via)\s+snap|snap\s+[a-z0-9_.]*[\d_.][a-z0-9_.]*|linkedin|twitter|x\.com|discord|skype|imo\s*(?:number|app|id|:|@)|(?:on|my|via)\s+imo|imo\s+[a-z0-9_.]*[\d_.][a-z0-9_.]*|viber|wechat|line\s+id|threema|zalo|hike\s*(?:app|id|me|:|@)|(?:on|my|via)\s+hike|threads\s*[:@]|threads\s+[a-z0-9_.]*[\d_.][a-z0-9_.]*|(?:on|my|via)\s+tik\s?tok|tik\s?tok\s*[:@]|tik\s?tok\s+[a-z0-9_.]*[\d_.][a-z0-9_.]*|youtube\s*(?:\.com\/|:|@|channel\s*[:@])|yt\s*[:@]|bit[\s.]?ly|tinyurl|tiny[\s.]?url|goo[\s.]?gl|cutt[\s.]?ly|rb[\s.]?gy|is[\s.]gd|shorturl|linktr[\s.]?ee|linktree)(?![a-z0-9])/g;
+const OFF_PLATFORM_RE = /(?<![a-z0-9])(book(?:ing)?\s+directly|direct\s+booking|directly\s+(?:with|to|from)\s+(?:me|us|you)|outside\s+(?:of\s+)?(?:the\s+)?(?:app|site|website|platform|portal|majestic)|off\s+(?:the\s+)?(?:app|site|platform)|skip\s+(?:the\s+)?(?:app|site|website|platform|commission|fee)|avoid\s+(?:the\s+)?(?:commission|platform\s+fee|service\s+fee)|pay\s+(?:me\s+|us\s+)?(?:directly|cash|offline|in\s+cash|by\s+cash)|cash\s+on\s+arrival|cash\s+at\s+(?:check\s?in|arrival)|g\s?pay|google\s+pay|phone\s?pe|paytm|upi|bank\s+transfer|neft|imps|rtgs|account\s+(?:number|no)|a\/c\s+no|acct?\s+no|ifsc|deal\s+(?:offline|directly|outside|off\s+the\s+(?:app|site|platform|record))|offline\s+deal|under\s+the\s+table|no\s+need\s+(?:for|of)\s+(?:the\s+)?(?:app|site|platform|website)|without\s+(?:the\s+)?(?:app|site|platform|website|commission))(?![a-z0-9])/g;
 const CONTACT_INTENT_RE = /(?<![a-z0-9])(?:call|text|reach|contact|message|ping|dm)\s{0,3}(?:me|us)\s{0,3}(?:on|at|via|@)?/g;
 const GENERIC_ADDRESS_WORDS = new Set('road rd lane ln street st nagar near opposite opp behind next to the of and at in on no number num house h plot flat villa apartment apt building bldg colony society sector phase main cross first second third fourth floor gate north south east west new old block wing tower complex enclave vihar marg path gali chowk circle square park garden estate layout extension extn stage area village town city district taluka post office po pin pincode zip india goa maharashtra karnataka kerala rajasthan beach'.split(' '));
 // A street-type word makes a 2-gram meaningful together with one distinctive
@@ -450,6 +554,16 @@ const EXPLAINING_PREV_LARGE = /^(?:rs|inr|usd|eur|price|prices|cost|costs|rate|r
 const EXPLAINING_NEXT_SMALL = /^(?:pm|am|hrs|hr|hours|hour|minutes|mins|min|o'clock|oclock|guests|guest|adults|adult|kids|kid|children|child|infants|infant|nights|night|days|day|weeks|week|months|month|years|year|rooms|room|beds|bed|bedrooms|bedroom|bathrooms|bathroom|bhk|people|persons|person|pax|km|kms|m|meters|metres|mtrs|feet|ft|sqft|sq|acres|acre|floor|floors|star|stars|bottles|bottle|litres|liters|kg|percent|%|rs|inr|rupees|lakh|lakhs|k|total|per|each|only|approx|onwards|pcs|pieces|cars|car|bikes|bike|seater|seats|seat|pool|pools|villas|villa|extra|more|less|off|discount|th|st|nd|rd|sec|seconds|second|dogs|dog|cats|cat|pets|pet|toddlers|toddler|families|family|couples|couple|friends|friend|to|till|until|onwards)$/;
 const EXPLAINING_NEXT_LARGE = /^(?:rs|inr|rupees|lakh|lakhs|k|total|sqft|sq|per|each|only|onwards|off|discount|percent|%|night|nights)$/;
 const STATE_WORDS = /^(?:india|goa|kerala|karnataka|maharashtra|tamil|nadu|delhi|mumbai|bangalore|bengaluru|pune|hyderabad|chennai|kolkata|kochi|jaipur|rajasthan|gujarat|punjab|haryana|bengal|assam|bihar|odisha|telangana|andhra|uttarakhand|himachal|uttar|pradesh|madhya|chhattisgarh|jharkhand|sikkim|meghalaya|manipur|tripura|nagaland|mizoram|arunachal|ladakh|jammu|kashmir|chandigarh|puducherry|pondicherry|lakshadweep|andaman|daman|diu|dadra)$/;
+// "12/10", "12-10-2024", "1/1/25": a calendar date needs plausible day and
+// month values — "90-8" (ninety-eight) is a number read aloud, not a date.
+function looksLikeDate(t) {
+    const m = t.match(/^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2}|\d{4}))?$/);
+    if (!m)
+        return false;
+    const a = Number(m[1]);
+    const b = Number(m[2]);
+    return a >= 1 && b >= 1 && a <= 31 && b <= 31 && (a <= 12 || b <= 12);
+}
 /** Unexplained digit tokens of the text, with their normalised spans. */
 function unexplainedDigitTokens(norm) {
     const text = norm.text;
@@ -459,16 +573,34 @@ function unexplainedDigitTokens(norm) {
     let m;
     while ((m = re.exec(text)))
         tokens.push({ s: m.index, e: m.index + m[0].length, t: m[0] });
+    // Digit tokens that sit in a run of ≥ 4 digit-only tokens separated by
+    // nothing but separators ("on 9 8 7 6 5 4 3 2 1 0") are a number read
+    // aloud, whatever word introduces the run — no count / date word explains them.
+    const isDigitTok = (x) => /^\d+(?:[-/.:]\d+)*[.:/'\-]*$/.test(x.t);
+    const runLen = new Array(tokens.length).fill(0);
+    for (let i = 0; i < tokens.length; i++) {
+        if (!isDigitTok(tokens[i]) || runLen[i])
+            continue;
+        let e = i;
+        while (e + 1 < tokens.length && isDigitTok(tokens[e + 1]) && /^[\s.,\-()/*|:;]{0,3}$/.test(text.slice(tokens[e].e, tokens[e + 1].s)))
+            e++;
+        for (let q = i; q <= e; q++)
+            runLen[q] = e - i + 1;
+    }
     for (let i = 0; i < tokens.length; i++) {
         const tok = tokens[i];
-        const t = tok.t.replace(/[.:/'\-]+$/, '');
+        let t = tok.t.replace(/[.:/'\-]+$/, '');
+        // "90-8", "98-76-54-32-10": digits joined by separators inside one token (dates / times are excluded below)
+        if (/^\d+(?:[-/.:]\d+)+$/.test(t) && !looksLikeDate(t) && !/^\d{1,2}:\d{2}/.test(t))
+            t = t.replace(/[-/.:]/g, '');
         if (!/^\d+$/.test(t))
             continue;
+        const inRun = runLen[i] >= 4;
         const prev = i > 0 ? tokens[i - 1].t : '';
         const next = (i + 1 < tokens.length ? tokens[i + 1].t : '').replace(/[.:/'\-]+$/, '');
         const prevWord = prev.replace(/[.:/'\-]+$/, '');
         const large = t.length >= 5;
-        if (/^\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?$/.test(tok.t) || /^\d{1,2}:\d{2}/.test(tok.t))
+        if (looksLikeDate(tok.t) || /^\d{1,2}:\d{2}/.test(tok.t))
             continue; // date / time
         if (/^(?:19|20)\d{2}$/.test(t) && (EXPLAINING_PREV_SMALL.test(prevWord) || /^(?:to|till|until|onwards)$/.test(next)))
             continue; // a year in context
@@ -478,11 +610,11 @@ function unexplainedDigitTokens(norm) {
             continue; // a round amount
         if (i > 0 && /^[₹$]$/.test(prev))
             continue; // currency symbol
-        if (large ? EXPLAINING_PREV_LARGE.test(prevWord) : EXPLAINING_PREV_SMALL.test(prevWord))
+        if (!inRun && (large ? EXPLAINING_PREV_LARGE.test(prevWord) : EXPLAINING_PREV_SMALL.test(prevWord)))
             continue;
-        if (large ? EXPLAINING_NEXT_LARGE.test(next) : EXPLAINING_NEXT_SMALL.test(next))
+        if (!inRun && (large ? EXPLAINING_NEXT_LARGE.test(next) : EXPLAINING_NEXT_SMALL.test(next)))
             continue;
-        out.push({ s: tok.s, e: tok.s + t.length, digits: t });
+        out.push({ s: tok.s, e: tok.s + tok.t.replace(/[.:/'\-]+$/, '').length, digits: t });
     }
     // A one- or two-digit token only counts as a phone fragment when it is
     // "bare" — its segment (a message, or a field) holds nothing but digits and
@@ -596,6 +728,12 @@ function detectContact(original, options = {}) {
     runRegex(norm, IPV4_RE, PatternType.URL, hits);
     // a purely numeric host label with a bare ccTLD is a numbered list item
     // ("12.As the candles…", "3.In case of…"), not a domain; real IPs are IPV4_RE
+    // "rahulvilla . in", "rahulvilla .in", "www rahulvilla com", "http rahulvilla in":
+    // a space before the dot (or a www/http lead-in) never occurs in prose, so
+    // any valid TLD counts; "label. tld" (space only after the dot) is a sentence
+    // boundary unless the TLD is not an English word (com, net, org …) or a lead-in precedes it.
+    runRegex(norm, SPACED_URL_RE, PatternType.URL, hits, (m) => isValidTld(m[2]) && /[a-z]/.test(m[1]) && !isAllowedUrlHost(m[1] + '.' + m[2]));
+    runRegex(norm, SPACED_DOMAIN_RE, PatternType.URL, hits, (m) => isValidTld(m[3]) && /[a-z]/.test(m[1]) && !isAllowedUrlHost(m[1] + '.' + m[3]) && (/\s/.test(m[2].slice(0, 1)) || !isWordLikeTld(m[3]) || URL_LEAD_IN_RE.test(norm.text.slice(Math.max(0, m.index - 40), m.index))));
     runRegex(norm, DOMAIN_RE, PatternType.URL, hits, (m) => isValidTld(m[2]) && /[a-z]/.test(m[1]) && !isAllowedUrlHost(m[0]) && !emailHits.some((e) => e.start <= norm.from[m.index] && norm.to[m.index + m[0].length - 1] <= e.end));
     const socialHits = [];
     runRegex(norm, SOCIAL_RE, PatternType.SOCIAL, socialHits);
@@ -699,25 +837,50 @@ function maskContactInfo(original, options = {}) {
     return applyMask(original, detectContact(original, options).hits);
 }
 // A sentence boundary between two parts ("…peaceful environment." + "No guests")
-// is not a split identifier: gluing it would read "environment.no" (a .no
-// domain) or turn "at all." + "No" into an obfuscated e-mail. The glued pass
-// keeps a space there when the next part starts a new sentence in the
-// original text (upper-case letter); a lower-case continuation ("rahulvilla."
-// + "in") is still glued and caught.
+// is usually not a split identifier: glued it would read "environment.no" (a
+// .no domain) or turn "at all." + "No" into an obfuscated e-mail. The glued
+// pass still glues it (so "rahulvilla." + "Com", "rahulvilla." + "in" and every
+// non-word TLD are caught), and drops only a URL / e-mail hit that spans the
+// boundary when its TLD is a two-letter ccTLD that doubles as an English word
+// or abbreviation at a sentence start (in, no, it, is, at, …) AND nothing in
+// front of the host reads as a lead-in to a web address ("see", "visit",
+// "website", "www", …). The remaining exception — an English-word ccTLD as a
+// capitalised sentence start with no lead-in — is the documented product
+// exception: it is indistinguishable from ordinary prose and no reader would
+// perceive a web address across a field boundary and a capital letter.
 function sentenceBoundary(prev, next) {
     return /[.!?]\s*$/.test(prev) && /^\s*\p{Lu}/u.test(next);
 }
+function crossBoundaryException(joined, h) {
+    if (h.pattern !== PatternType.URL && h.pattern !== PatternType.EMAIL && h.pattern !== PatternType.OBFUSCATED_EMAIL)
+        return false;
+    const lastLabel = (h.match.toLowerCase().replace(/[/?#].*$/, '').match(/\.([a-z]{2,24})$/) || [])[1];
+    if (!lastLabel || !isWordLikeTld(lastLabel))
+        return false;
+    const before = normalizeForModeration(joined.slice(Math.max(0, h.start - 40), h.start)).text;
+    return !URL_LEAD_IN_RE.test(before);
+}
 function detectJoined(parts, separator, options, candidateIndex) {
     const offsets = [];
+    const boundaries = [];
     let joined = '';
     parts.forEach((p, i) => {
-        if (i)
-            joined += separator || (sentenceBoundary(parts[i - 1], p) ? ' ' : '');
+        if (i) {
+            joined += separator;
+            if (!separator && sentenceBoundary(parts[i - 1], p))
+                boundaries.push(joined.length);
+        }
         offsets.push(joined.length);
         joined += p;
     });
     const candidateStart = candidateIndex !== undefined ? offsets[candidateIndex] : options.candidateStart;
     const res = detectContact(joined, { ...options, candidateStart });
+    const spansBoundary = (h) => boundaries.some((b) => h.start < b && h.end > b);
+    const hits = boundaries.length ? res.hits.filter((h) => !(spansBoundary(h) && crossBoundaryException(joined, h))) : res.hits;
+    const boundary = candidateStart ?? 0;
+    const candidateHits = hits.filter((h) => h.end > boundary);
+    const kinds = [...new Set(candidateHits.map((h) => h.pattern))];
+    const status = kinds.some((k) => exports.BLOCKING_PATTERNS.has(k)) ? chat_types_1.ModerationStatus.BLOCKED : kinds.length ? chat_types_1.ModerationStatus.FLAGGED : chat_types_1.ModerationStatus.CLEAN;
     const locate = (h) => {
         const out = [];
         for (let i = 0; i < parts.length; i++) {
@@ -730,7 +893,7 @@ function detectJoined(parts, separator, options, candidateIndex) {
         }
         return out;
     };
-    return { hits: res.hits.flatMap(locate), kinds: res.kinds, status: res.status, candidateHits: res.candidateHits.flatMap(locate) };
+    return { hits: hits.flatMap(locate), kinds, status, candidateHits: candidateHits.flatMap(locate) };
 }
 function mergeResults(a, b) {
     const key = (h) => `${h.part}:${h.start}:${h.end}:${h.pattern}`;
@@ -816,6 +979,17 @@ const PROVIDER_TEST = new RegExp(PROVIDER_RE.source);
 const SOCIAL_TEST = new RegExp(SOCIAL_RE.source);
 const OFF_PLATFORM_TEST = new RegExp(OFF_PLATFORM_RE.source);
 /** True when a text could be a piece of a split identifier (used for the outage policy). */
+/**
+ * Whether an accepted message must stay in the sender's moderation context
+ * regardless of how many filler messages follow it: anything that can be a
+ * piece of an identifier — a single digit (number words count after
+ * normalisation), an @, a TLD-like token, a provider / social / payment word,
+ * an obfuscated joiner or a handle-like token. Stored as moderation.fragment.
+ */
+function isContextRelevant(text) {
+    const n = normalizeForModeration(text).text;
+    return /\d/.test(n) || isFragmentBearing(text);
+}
 function isFragmentBearing(text) {
     const n = normalizeForModeration(text).text;
     return /\d.*\d/.test(n) || /@/.test(n) || /\.(?:[a-z]{2,24})(?![a-z])/.test(n) || PROVIDER_TEST.test(n) || /(?<![a-z])dot(?![a-z])|[([{]\s*at\s*[)\]}]/.test(n) || /[a-z0-9]_[a-z0-9]/.test(n) || SOCIAL_TEST.test(n) || OFF_PLATFORM_TEST.test(n);

@@ -795,11 +795,12 @@
     {
       "id": "intent-ping-wa",
       "text": "ping me on wa",
-      "expected": "flagged",
+      "expected": "blocked",
       "kinds": [
-        "CONTACT_INTENT"
+        "CONTACT_INTENT",
+        "SOCIAL"
       ],
-      "masked": "ping me on wa"
+      "masked": "ping me •••"
     },
     {
       "id": "fp-dates",
@@ -842,6 +843,531 @@
       "expected": "clean",
       "kinds": [],
       "masked": "St. Xavier church is 2 km away, e.g. approx. 10 min by car, Rs. 500"
+    },
+    {
+      "id": "url-spaced-dot-both",
+      "text": "rahulvilla . in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-spaced-dot-before",
+      "text": "rahulvilla .in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-spaced-dot-after-word-tld",
+      "text": "rahulvilla. in",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "rahulvilla. in"
+    },
+    {
+      "id": "url-spaced-dot-after-word-tld-cue",
+      "text": "see rahulvilla. in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "see •••"
+    },
+    {
+      "id": "url-spaced-dot-after-real-tld",
+      "text": "rahulvilla. com",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-bracket-dot",
+      "text": "rahulvilla(.)in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-square-dot",
+      "text": "rahulvilla[.]in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-dot-spelled-tld",
+      "text": "rahulvilla dot i n",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-d0t",
+      "text": "rahulvilla d0t in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-dotin-glued",
+      "text": "rahulvilla dotin",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-spaced-letters",
+      "text": "r a h u l v i l l a . i n",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-ideographic-stop",
+      "text": "rahulvilla。in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-katakana-dot",
+      "text": "rahulvilla・in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-middle-dot",
+      "text": "rahulvilla·in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-www-spaced",
+      "text": "www rahulvilla com",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-http-spaced",
+      "text": "http rahulvilla in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "url-shortener-spaced",
+      "text": "bit ly slash rahul",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "••• slash rahul"
+    },
+    {
+      "id": "url-shortener-spaced-tinyurl",
+      "text": "tinyurl com rahul",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "••• com rahul"
+    },
+    {
+      "id": "email-spaced-letters",
+      "text": "r a h u l @ g m a i l . c o m",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "email-d0t",
+      "text": "rahul at gmail d0t com",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL_PROVIDER"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-lookalike-s",
+      "text": "9876S43210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-tens-words",
+      "text": "ninety eight seven six five four three two one zero",
+      "expected": "blocked",
+      "kinds": [
+        "SPLIT_PHONE"
+      ],
+      "masked": "••• ••• ••• ••• ••• ••• ••• ••• ••• zero"
+    },
+    {
+      "id": "phone-tens-hyphen-oh",
+      "text": "ninety-eight seven six five four three two one oh",
+      "expected": "blocked",
+      "kinds": [
+        "SPLIT_PHONE"
+      ],
+      "masked": "••• ••• ••• ••• ••• ••• ••• ••• oh"
+    },
+    {
+      "id": "phone-double-nine",
+      "text": "double nine eight seven six five four three two one",
+      "expected": "blocked",
+      "kinds": [
+        "SPLIT_PHONE"
+      ],
+      "masked": "double •••"
+    },
+    {
+      "id": "phone-words-after-on",
+      "text": "call me on nine eight seven six five, four three two one zero",
+      "expected": "blocked",
+      "kinds": [
+        "SPLIT_PHONE"
+      ],
+      "masked": "call me on ••• ••• ••• ••• •••, ••• ••• ••• ••• •••"
+    },
+    {
+      "id": "phone-colon-sep",
+      "text": "98765:43210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "phone-semicolon-sep",
+      "text": "98765;43210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-snap-handle",
+      "text": "snap rahul123",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-fb-name",
+      "text": "fb rahul sharma",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "••• sharma"
+    },
+    {
+      "id": "social-tg-handle",
+      "text": "tg rahul123",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-spaced-whatsapp",
+      "text": "w h a t s a p p",
+      "expected": "blocked",
+      "kinds": [
+        "WHATSAPP"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-wa-me-plain",
+      "text": "wa me",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-wapp",
+      "text": "wapp me",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "••• me"
+    },
+    {
+      "id": "social-imo-handle",
+      "text": "imo rahul123",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-on-hike",
+      "text": "on hike rahul",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "••• rahul"
+    },
+    {
+      "id": "social-threads-handle",
+      "text": "threads rahul_1",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "social-tiktok-cue",
+      "text": "on tiktok rahul",
+      "expected": "blocked",
+      "kinds": [
+        "SOCIAL"
+      ],
+      "masked": "••• rahul"
+    },
+    {
+      "id": "social-youtube-url",
+      "text": "youtube.com/rahulvilla",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••/rahulvilla"
+    },
+    {
+      "id": "offplatform-deal-offline",
+      "text": "deal offline",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "offplatform-no-need-app",
+      "text": "no need for the app",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "offplatform-without-platform",
+      "text": "without the platform",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "fp-sentence-period-in",
+      "text": "we loved it. in the morning the view is great",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "we loved it. in the morning the view is great"
+    },
+    {
+      "id": "fp-sentence-period-It",
+      "text": "great stay near the beach. It has a pool",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "great stay near the beach. It has a pool"
+    },
+    {
+      "id": "fp-youtube-tv",
+      "text": "the tv has netflix and youtube",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "the tv has netflix and youtube"
+    },
+    {
+      "id": "fp-hike-fort",
+      "text": "we can go for a hike to the fort",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "we can go for a hike to the fort"
+    },
+    {
+      "id": "fp-threads-sheets",
+      "text": "bed sheets with 300 threads",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "bed sheets with 300 threads"
+    },
+    {
+      "id": "fp-tiktok-cafe",
+      "text": "tiktok famous cafe nearby",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "tiktok famous cafe nearby"
+    },
+    {
+      "id": "fp-letters-list",
+      "text": "options a, b, c, d and e",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "options a, b, c, d and e"
+    },
+    {
+      "id": "fp-snap-attached",
+      "text": "snap of the beach attached",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "snap of the beach attached"
+    },
+    {
+      "id": "fp-b2b",
+      "text": "b2b guests welcome",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "b2b guests welcome"
+    },
+    {
+      "id": "fp-dimensions-run",
+      "text": "a 3 x 4 x 5 m garden shed",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "a 3 x 4 x 5 m garden shed"
+    },
+    {
+      "id": "fp-double-bed",
+      "text": "1 double room, 2 single rooms, triple occupancy ok",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "1 double room, 2 single rooms, triple occupancy ok"
+    },
+    {
+      "id": "fp-check-pool",
+      "text": "check the pool. It is heated",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "check the pool. It is heated"
+    },
+    {
+      "id": "fp-deal-breakfast",
+      "text": "the deal includes breakfast",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "the deal includes breakfast"
+    },
+    {
+      "id": "fp-no-need-car",
+      "text": "no need for a car, everything is walkable",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "no need for a car, everything is walkable"
+    },
+    {
+      "id": "fp-platform-bed",
+      "text": "platform bed in the master bedroom",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "platform bed in the master bedroom"
+    },
+    {
+      "id": "fp-app-crashed",
+      "text": "the app crashed twice",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "the app crashed twice"
+    },
+    {
+      "id": "fp-date-90-8-not",
+      "text": "we stayed 12-10 to 14-10",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "we stayed 12-10 to 14-10"
+    },
+    {
+      "id": "fp-sentence-Hosting",
+      "text": "meeting guests from around the world. Hosting gives me the chance to share",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "meeting guests from around the world. Hosting gives me the chance to share"
+    },
+    {
+      "id": "fp-sentence-Host",
+      "text": "convenient for a short stay. Host was responsive and helpful.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "convenient for a short stay. Host was responsive and helpful."
+    },
+    {
+      "id": "fp-sentence-travel",
+      "text": "we love the beach. travel is easy from here",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "we love the beach. travel is easy from here"
+    },
+    {
+      "id": "url-sentence-Com",
+      "text": "rahulvilla. Com has photos",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "••• has photos"
+    },
+    {
+      "id": "url-cue-travel",
+      "text": "check rahulvilla. travel",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "check •••"
     },
     {
       "id": "fp-numbered-list-tld",
@@ -1108,6 +1634,198 @@
       "masked": [
         "first five •••",
         "last five •••"
+      ]
+    },
+    {
+      "id": "seq-fp-label-run",
+      "messages": [
+        "g0",
+        "g1",
+        "g2",
+        "g3",
+        "g4",
+        "g5",
+        "g6",
+        "g7",
+        "g8",
+        "g9",
+        "g10",
+        "g11"
+      ],
+      "blockedAt": [],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean"
+      ],
+      "masked": [
+        "g0",
+        "g1",
+        "g2",
+        "g3",
+        "g4",
+        "g5",
+        "g6",
+        "g7",
+        "g8",
+        "g9",
+        "g10",
+        "g11"
+      ]
+    },
+    {
+      "id": "seq-fp-room-numbers",
+      "messages": [
+        "room 101",
+        "room 102",
+        "flat 2b",
+        "a1",
+        "a2",
+        "a3",
+        "a4",
+        "a5",
+        "a6",
+        "a7"
+      ],
+      "blockedAt": [],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean"
+      ],
+      "masked": [
+        "room 101",
+        "room 102",
+        "flat 2b",
+        "a1",
+        "a2",
+        "a3",
+        "a4",
+        "a5",
+        "a6",
+        "a7"
+      ]
+    },
+    {
+      "id": "seq-phone-with-fillers",
+      "messages": [
+        "first five 98765",
+        "ok",
+        "sure",
+        "thanks",
+        "see you",
+        "last five 43210"
+      ],
+      "blockedAt": [
+        5
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "first five •••",
+        "ok",
+        "sure",
+        "thanks",
+        "see you",
+        "last five •••"
+      ]
+    },
+    {
+      "id": "seq-email-with-fillers",
+      "messages": [
+        "rahul",
+        "ok",
+        "@",
+        "fine",
+        "gmail",
+        "thanks",
+        "dot",
+        "com"
+      ],
+      "blockedAt": [
+        4,
+        7
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "clean",
+        "blocked",
+        "clean",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "rahul",
+        "ok",
+        "@",
+        "fine",
+        "•••",
+        "•••",
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-domain-word-tld-halves",
+      "messages": [
+        "rahulvilla",
+        "dot in"
+      ],
+      "blockedAt": [
+        1
+      ],
+      "statuses": [
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "•••",
+        "•••"
+      ]
+    },
+    {
+      "id": "seq-social-split",
+      "messages": [
+        "whats",
+        "app me on 98765",
+        "43210"
+      ],
+      "blockedAt": [
+        1
+      ],
+      "statuses": [
+        "clean",
+        "blocked",
+        "clean"
+      ],
+      "masked": [
+        "•••",
+        "••• me on •••",
+        "•••"
       ]
     },
     {
@@ -1640,6 +2358,42 @@
       "masked": {
         "about": "write to •••",
         "languages": "•••"
+      }
+    },
+    {
+      "id": "fields-boundary-Travel-exception",
+      "fields": {
+        "title": "rahulvilla.",
+        "description": "Travel with us"
+      },
+      "expected": "clean",
+      "masked": {
+        "title": "rahulvilla.",
+        "description": "Travel with us"
+      }
+    },
+    {
+      "id": "fields-boundary-Travel-cue",
+      "fields": {
+        "title": "see rahulvilla.",
+        "description": "Travel with us"
+      },
+      "expected": "blocked",
+      "masked": {
+        "title": "see •••",
+        "description": "••• with us"
+      }
+    },
+    {
+      "id": "fields-boundary-Com",
+      "fields": {
+        "title": "rahulvilla.",
+        "description": "Com has photos"
+      },
+      "expected": "blocked",
+      "masked": {
+        "title": "•••",
+        "description": "••• has photos"
       }
     }
   ],

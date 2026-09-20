@@ -185,6 +185,12 @@ async function main() {
         const signature = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(`${order.id}|${id}`).digest("hex");
         return res.end(JSON.stringify({ razorpay_payment_id: id, razorpay_order_id: order.id, razorpay_signature: signature, amount: order.amount }));
       }
+      // POST /make-listing { status, title, owner: "host"|"hostB" } → a fresh listing for the browser suites (drafts / pending)
+      if (req.url === "/make-listing") {
+        const owner = json.owner === "hostB" ? HOST_B : HOST;
+        const l = await h.makeListing(owner, { title: json.title ?? "", status: json.status || "incomplete", photos: json.photos || [PHOTO], address: { city: "Panaji", state: "Goa", country: "India", district: "North Goa" } });
+        return res.end(JSON.stringify({ id: String(l._id), status: l.status, title: l.title }));
+      }
       if (req.url === "/set-price") {
         await ListingProperty.updateOne({ _id: json.listingId }, { $set: { basePrice: json.basePrice } });
         return res.end(JSON.stringify({ ok: true }));

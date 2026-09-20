@@ -222,6 +222,21 @@ async function main() {
         const l = await h.makeListing(owner, { title: json.title ?? "", status: json.status || "incomplete", photos: json.photos || [PHOTO], address: json.address || { city: "Panaji", state: "Goa", country: "India", district: "North Goa" }, ...(json.fields || {}) });
         return res.end(JSON.stringify({ id: String(l._id), status: l.status, title: l.title }));
       }
+      // POST /set-kyc { status: "completed" | "pending" } → the seeded host's KYC form
+      // (the verified summary page vs the wizard); "completed" mirrors what the
+      // verification endpoints write, "pending" restores the seed.
+      if (req.url === "/set-kyc") {
+        const KycHostData = require("../../models/KycHostForm");
+        const completed = json.status === "completed";
+        const form = await KycHostData.findOneAndUpdate(
+          { hostId: HOST._id },
+          completed
+            ? { $set: { status: "completed", "documentInfo.isVerified": true, "documentInfo.reviewStatus": "verified", "documentInfo.reviewReason": "", "documentInfo.verifiedAt": new Date("2026-09-01T10:00:00Z") } }
+            : { $set: { status: "pending", "documentInfo.isVerified": false, "documentInfo.reviewStatus": "needs_review", "documentInfo.reviewReason": "NAME_MISMATCH", "documentInfo.verifiedAt": null } },
+          { new: true },
+        ).lean();
+        return res.end(JSON.stringify({ id: String(form._id), status: form.status }));
+      }
       if (req.url === "/set-price") {
         await ListingProperty.updateOne({ _id: json.listingId }, { $set: { basePrice: json.basePrice } });
         return res.end(JSON.stringify({ ok: true }));

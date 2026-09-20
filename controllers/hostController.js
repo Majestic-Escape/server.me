@@ -4,6 +4,7 @@ const Razorpay = require("razorpay");
 const Review = require("../models/Review");
 const User = require("../models/User");
 const { parseMDYToUTC } = require("../utils/convertDate");
+const { parseListQuery, listMeta, pageStages, searchRegex } = require("../utils/listQuery");
 const axios = require("axios");
 const { encrypt } = require("../utils/encrypt");
 const authz = require("../middleware/authz");
@@ -322,88 +323,90 @@ exports.getHostReviewsById = async (req, res) => {
   }
 };
 
+// Sortable columns of the admin Reviews table.
+const ADMIN_REVIEW_SORT = {
+  createdAt: "createdAt",
+  rating: "rating",
+  hideStatus: "hideStatus",
+  guest: "user.firstName",
+  title: "property.title",
+  checkIn: "bookingId.checkIn",
+};
+
+// GET /hostData/review/admin — filters, search, sort and paging in one
+// aggregation (it used to load every review and filter in JS); without
+// ?page= / ?limit= the whole list is returned as before. averageRating and
+// reviewCount describe the filtered set, not the page.
 exports.getAllReviews = async (req, res) => {
   try {
     const { flagged, search, stars, checkin, checkout, property } = req.query;
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("reached");
-    }
+    const { page, limit, skip, sort, sortKey } = parseListQuery(req.query, {
+      sortable: ADMIN_REVIEW_SORT,
+      defaultSort: "-createdAt",
+      defaultLimit: 0,
+    });
     const filter = {};
-
-    // ⭐ Fix date filter
     if (checkin && checkout) {
       const range = parseMDYToUTC(checkin, checkout);
       filter.createdAt = { $gte: range.from, $lte: range.to };
     } else if (checkin && !checkout) {
-      const singleDay = parseMDYToUTC(checkin); // pass only checkin
+      const singleDay = parseMDYToUTC(checkin);
       filter.createdAt = { $gte: singleDay.from, $lte: singleDay.to };
     }
-    if (stars && stars !== "all") {
-      filter.rating = Number(stars);
+    if (stars && stars !== "all") filter.rating = Number(stars);
+
+    const afterLookup = [];
+    if (flagged && flagged == "true") afterLookup.push({ $match: { "bookingId.flag": true, hideStatus: "pending" } });
+    const term = searchRegex(search);
+    if (term) {
+      afterLookup.push({
+        $match: {
+          $or: [
+            { content: { $regex: term } },
+            { "user.firstName": { $regex: term } },
+            { "user.lastName": { $regex: term } },
+            {
+              $expr: {
+                $regexMatch: {
+                  input: { $concat: [{ $ifNull: ["$user.firstName", ""] }, " ", { $ifNull: ["$user.lastName", ""] }] },
+                  regex: term,
+                },
+              },
+            },
+          ],
+        },
+      });
     }
+    const propertyTerm = property && property !== "all" ? searchRegex(property) : null;
+    if (propertyTerm) afterLookup.push({ $match: { "property.title": { $regex: propertyTerm } } });
 
-    // Step 2: Fetch reviews with population
-    let reviews = await Review.find(filter)
-      .populate({
-        path: "bookingId",
-        model: "Booking",
-
-        select: "checkIn checkOut flag",
-      })
-      .populate({
-        path: "property",
-        select: "title",
-      })
-      .populate({
-        path: "user",
-        select: "firstName lastName",
-      })
-      .lean();
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("a", reviews);
-    }
-    // Step 3: Extra filters in JS
-
-    if (flagged && flagged == "true") {
-      reviews = reviews.filter(
-        (r) => r.bookingId.flag == true && r.hideStatus == "pending"
-      );
-    }
-
-    if (search) {
-      const s = search.toLowerCase();
-      reviews = reviews.filter(
-        (r) =>
-          r.content?.toLowerCase().includes(s) ||
-          `${r.user?.firstName} ${r.user?.lastName}`.toLowerCase().includes(s)
-      );
-    }
-
-    if (property && property !== "all") {
-      const p = property.toLowerCase();
-      reviews = reviews.filter((r) =>
-        r.property?.title?.toLowerCase().includes(p)
-      );
-    }
-
-    // Step 4: Average rating
-    const avgRating =
-      reviews.length > 0
-        ? (
-            reviews.reduce((sum, r) => sum + (r.rating || 0), 0) /
-            reviews.length
-          ).toFixed(2)
-        : 0;
-
+    const [result] = await Review.aggregate([
+      { $match: filter },
+      { $lookup: { from: "bookings", localField: "bookingId", foreignField: "_id", pipeline: [{ $project: { checkIn: 1, checkOut: 1, flag: 1 } }], as: "bookingId" } },
+      { $unwind: { path: "$bookingId", preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: "listingproperties", localField: "property", foreignField: "_id", pipeline: [{ $project: { title: 1 } }], as: "property" } },
+      { $unwind: { path: "$property", preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: "users", localField: "user", foreignField: "_id", pipeline: [{ $project: { firstName: 1, lastName: 1 } }], as: "user" } },
+      { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
+      ...afterLookup,
+      {
+        $facet: {
+          data: [{ $sort: sort }, ...pageStages({ skip, limit })],
+          stats: [{ $group: { _id: null, count: { $sum: 1 }, avg: { $avg: "$rating" } } }],
+        },
+      },
+    ]);
+    const stats = result.stats[0] || { count: 0, avg: 0 };
+    const total = stats.count;
     res.status(200).json({
       success: true,
-      data: reviews,
-      averageRating: avgRating,
-      reviewCount: reviews.length,
+      data: result.data,
+      averageRating: total > 0 ? Number(stats.avg).toFixed(2) : 0,
+      reviewCount: total,
+      ...listMeta({ page, limit, total, sortKey }),
     });
   } catch (error) {
-    console.error("Error in getHostReviewsById:", error);
+    console.error("Error in getAllReviews:", error);
     res
       .status(500)
       .json({ message: "Error fetching reviews", error: error.message });

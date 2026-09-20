@@ -157,6 +157,17 @@ test("booking-interest: recorded for the caller, no email echoed; the list is ad
   assert.deepEqual(leaks(forged.body, "host"), []);
   assert.equal((await h.api("GET", "/booking-interest/", { token: XT })).status, 403);
   assert.equal((await h.api("GET", "/booking-interest/", { token: AT })).status, 200);
+  // a second enquiry by the same account updates the first (the collection is
+  // unique per e-mail) instead of failing with a raw E11000
+  const again = await h.api("POST", "/booking-interest/availability", { token: XT, body: { propertyId: String(L._id), dateFrom: h.day(20), dateTo: h.day(23), guests: 4 } });
+  assert.equal(again.status, 201, JSON.stringify(again.body));
+  assert.equal(String(again.body.data._id), String(forged.body.data._id), "same enquiry row, updated");
+  assert.equal(again.body.data.guests, 4);
+  assert.equal(again.body.data.email, undefined);
+  const invalid = await h.api("POST", "/booking-interest/availability", { token: XT, body: { propertyId: String(L._id) } });
+  assert.equal(invalid.status, 400);
+  assert.equal(invalid.body.code, "VALIDATION_ERROR");
+  assert.doesNotMatch(JSON.stringify(invalid.body), /E11000|dup key|@/);
 });
 
 // ---------------------------------------------------------------------------

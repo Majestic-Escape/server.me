@@ -1,5 +1,6 @@
 const Property = require("../models/Property");
 const ListingProperty = require("../models/ListingProperty");
+const { parseListQuery, listMeta, pageStages, searchRegex } = require("../utils/listQuery");
 const Booking = require("../models/Booking");
 const { sendEmail } = require("../utils/sendEmail");
 const {
@@ -404,15 +405,49 @@ exports.getPropertyCount = async (req, res) => {
     });
   }
 };
+// Sortable columns of the admin Hosts (host-history) table → Mongo paths.
+const ADMIN_HOST_SORT = {
+  firstName: "firstName",
+  lastName: "lastName",
+  email: "email",
+  createdAt: "createdAt",
+  allPropertyCount: "allPropertyCount",
+  activePropertyCount: "activePropertyCount",
+  inactivePropertyCount: "inactivePropertyCount",
+  kycDocCount: "kycDocCount",
+};
+
 exports.getAdminFilter = async (req, res) => {
   try {
     const { search } = req.query;
 
-    // const limit = parseInt(req.query.limit, 10) || 10;
-    // const skip = parseInt(req.query.skip, 10) || 0;
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 10;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip, sort, sortKey } = parseListQuery(req.query, {
+      sortable: ADMIN_HOST_SORT,
+      defaultSort: "-createdAt",
+    });
+    const term = searchRegex(search);
+    // the same search narrows both the page and the count, so totalPages is right
+    const searchStages = term
+      ? [
+          {
+            $match: {
+              $or: [
+                { email: { $regex: term } },
+                { firstName: { $regex: term } },
+                { lastName: { $regex: term } },
+                {
+                  $expr: {
+                    $regexMatch: {
+                      input: { $concat: [{ $ifNull: ["$firstName", ""] }, " ", { $ifNull: ["$lastName", ""] }] },
+                      regex: term,
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ]
+      : [];
     const pipeline = [
       // 1️⃣ Lookup ACTIVE properties
       {
@@ -516,37 +551,16 @@ exports.getAdminFilter = async (req, res) => {
         $facet: {
           // 🔹 A) Filtered + paginated users
           data: [
-            ...(search
-              ? [
-                  {
-                    $match: {
-                      $or: [
-                        { email: { $regex: search, $options: "i" } },
-                        { firstName: { $regex: search, $options: "i" } },
-                        { lastName: { $regex: search, $options: "i" } },
-                        {
-                          $expr: {
-                            $regexMatch: {
-                              input: {
-                                $concat: ["$firstName", " ", "$lastName"],
-                              },
-                              regex: search,
-                              options: "i",
-                            },
-                          },
-                        },
-                      ],
-                    },
-                  },
-                ]
-              : []),
-            { $sort: { createdAt: -1 } },
-
-            { $skip: skip },
-            { $limit: limit },
+            ...searchStages,
+            { $sort: sort },
+            ...pageStages({ skip, limit }),
             {
               $project: {
                 password: 0,
+                otp: 0,
+                otpRetries: 0,
+                lockUntil: 0,
+                tokenVersion: 0,
                 allProperties: 0,
                 activeProperties: 0,
                 inactiveProperties: 0,
@@ -566,7 +580,7 @@ exports.getAdminFilter = async (req, res) => {
           ],
 
           // 🔹 C) Total count AFTER OR condition + search
-          filteredCount: [{ $count: "count" }],
+          filteredCount: [...searchStages, { $count: "count" }],
           // propertyStats: [
           //   {
           //     $group: {
@@ -584,18 +598,15 @@ exports.getAdminFilter = async (req, res) => {
 
     const totalHost = result[0].filteredCount[0]?.count || 0;
 
-    const totalPages = Math.ceil(totalHost / limit);
+    const meta = listMeta({ page, limit, total: totalHost, sortKey });
     res.json({
       success: true,
       data: result[0].data,
-      totalPages,
       resultsPerPage: limit,
-
-      total: totalHost,
-
       allEligibleHostEmails: result[0].allEligibleHostEmails.map(
         (u) => u.email,
       ),
+      ...meta,
     });
   } catch (error) {
     console.error("Search error:", error);
@@ -966,13 +977,34 @@ exports.getProcessingListingsForAdmin = async (req, res) => {
 //   }
 // };
 
+// Sortable columns of the admin Properties table → Mongo paths.
+const ADMIN_LISTING_SORT = {
+  title: "title",
+  propertyType: "propertyType",
+  placeType: "placeType",
+  guests: "guests",
+  bedrooms: "bedrooms",
+  beds: "beds",
+  bathrooms: "bathrooms",
+  basePrice: "basePrice",
+  status: "status",
+  kycStatus: "kycStatus",
+  hostEmail: "host.email",
+  hostKyc: "host.kyc",
+  hostBank: "host.bank",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+};
+
 exports.getFilteredListingsForAdmin = async (req, res) => {
   try {
     const { search, status } = req.query;
 
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 30;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip, sort, sortKey } = parseListQuery(req.query, {
+      sortable: ADMIN_LISTING_SORT,
+      defaultSort: "-updatedAt",
+      defaultLimit: 30,
+    });
 
     const matchStage = {};
 
@@ -984,16 +1016,15 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
       }
     }
 
-    if (search && search.toLowerCase().trim() != "") {
+    const term = searchRegex(search);
+    if (term) {
       matchStage.$or = [
-        { title: { $regex: search, $options: "i" } },
-        // { placeType: { $regex: search, $options: "i" } },
+        { title: { $regex: term } },
         {
           $expr: {
             $regexMatch: {
               input: { $ifNull: ["$host.email", ""] },
-              regex: search,
-              options: "i",
+              regex: term,
             },
           },
         },
@@ -1015,9 +1046,8 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
           /* ---------- FILTERED DATA ---------- */
           data: [
             { $match: matchStage },
-            { $sort: { updatedAt: -1 } },
-            { $skip: skip },
-            { $limit: limit },
+            { $sort: sort },
+            ...pageStages({ skip, limit }),
             // Aggregations bypass the model's embedding exclusion, and the
             // joined user document must not carry credentials to the admin UI.
             {
@@ -1085,6 +1115,7 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
       totalActiveListings: stats.totalActive,
       totalProcessingListings: stats.totalProcessing,
       totalList: stats.totalList,
+      ...listMeta({ page, limit, total: totalProperties, sortKey }),
     });
   } catch (error) {
     console.error(error);

@@ -97,7 +97,14 @@ node scripts/image-variants-backfill.js --uri="<DB_URI>" --apply         # write
 node scripts/image-variants-backfill.js --uri="<DB_URI>" --apply --retry # only masters that failed
 node scripts/image-variants-backfill.js --uri="<DB_URI>" --prune         # orphan variants (report)
 node scripts/image-variants-backfill.js --uri="<DB_URI>" --prune --apply # delete them
+node scripts/image-variants-backfill.js --urls=refs.json --apply           # references from a JSON list (no DB access)
 ```
+
+`--urls=<file>` takes the references from a JSON array of URLs (or of
+`{ url, owner }` objects) instead of the database — an operator without
+database access can build the list from the API (public catalogue for the
+active listings' photos and host pictures; the admin listings/users endpoints
+for everything else). The production run of 2026-09-21 was done this way.
 
 * Reads listing photos + profile pictures, LISTs each master's variant prefix,
   renders only the missing widths from the master read from the bucket (never

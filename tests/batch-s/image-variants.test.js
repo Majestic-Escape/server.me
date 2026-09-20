@@ -421,6 +421,20 @@ test("backfill: dry run writes nothing; apply renders the missing set from the b
   for (const m of [m1, m2, m3, m4]) for (const k of storage().variantKeys(m)) assert.ok(storage().__mock.objects.has(k), `${k} kept`);
   assert.ok(!log.join("\n").includes(process.env.DO_SPACES_SECRET), "no secret in the output");
 
+  // --urls: the references come from a JSON list (an operator without database
+  // access builds it from the API); the database is not opened at all
+  const m5 = `listings/${H._id}/ffffffff-ffff-4fff-8fff-ffffffffffff-list.jpg`;
+  await storage().putObject(m5, SMALL, "image/jpeg");
+  const urlsFile = path.join(tmp, "refs.json");
+  fs.writeFileSync(urlsFile, JSON.stringify([storage().publicUrl(m5), { url: storage().cdnUrl(m1), owner: "listing x (active)" }, "https://images.unsplash.com/foreign.jpg", { url: storage().publicUrl(dangling) }]));
+  const fromList = await backfill().run({ urls: urlsFile, apply: true, state: path.join(tmp, "state-urls.json"), concurrency: 1, limit: 0 }, logger);
+  assert.equal(fromList.masters, 3, "two of ours + the dangling one; the foreign URL is skipped");
+  assert.equal(fromList.foreign, 1);
+  assert.equal(fromList.generated, 1, "only the new master needed variants");
+  assert.equal(fromList.complete, 1, "m1 already has every variant");
+  assert.equal(fromList.masterMissing, 1);
+  for (const k of storage().variantKeys(m5)) assert.ok(storage().__mock.objects.has(k), `${k} from the list`);
+
   await ListingProperty().deleteOne({ _id: L._id });
   await User().updateOne({ _id: H._id }, { $unset: { profilePicture: 1 } });
   storage().resetMock();

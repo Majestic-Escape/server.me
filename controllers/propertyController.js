@@ -1,5 +1,6 @@
 const Property = require("../models/Property");
 const ListingProperty = require("../models/ListingProperty");
+const { parseListQuery, listMeta, pageStages, searchRegex } = require("../utils/listQuery");
 const Booking = require("../models/Booking");
 const { sendEmail } = require("../utils/sendEmail");
 const {
@@ -27,6 +28,41 @@ const { catalogueCache } = require("../utils/httpCache");
 const { CARD_PROJECTION, pageParams, escapeRegex } = require("../utils/listingProjection");
 const { checkListingWrite, refusePublicText, LISTING_TEXT_SELECT, checkListingImages, refuseImages } = require("../utils/publicTextPolicy");
 const { notifyListingChanged } = require("../services/listingChanged");
+const authz = require("../middleware/authz");
+
+// Host listing writes were `$set: req.body`: a host could activate their own
+// listing (no admin review), mark it KYC-complete / bank-verified, unban it,
+// forge its rating or hand it to another host. These fields belong to the
+// server, the admin or the host's KYC — never to the wizard's PUT body.
+const HOST_IMMUTABLE_LISTING_FIELDS = [
+  "_id",
+  "id",
+  "host",
+  "hostEmail",
+  "kycStatus",
+  "bankDetails",
+  "validRegistrationNo",
+  "ban",
+  "badge",
+  "averageRating",
+  "reviewCount",
+  "embedding",
+  "embeddingUpdatedAt",
+  "embeddingVersion",
+  "createdAt",
+  "updatedAt",
+  "__v",
+];
+// A host may leave the status alone, park a draft ("incomplete") or submit
+// it for review ("processing"). Activation is the admin's decision and
+// delisting / relisting have their own routes.
+const HOST_SETTABLE_STATUSES = ["incomplete", "processing"];
+
+function stripHostImmutableFields(body) {
+  const patch = { ...(body || {}) };
+  for (const field of HOST_IMMUTABLE_LISTING_FIELDS) delete patch[field];
+  return patch;
+}
 // Host fields the approve / delist / update handlers read for their emails
 // and responses — never the whole user document.
 const HOST_CONTACT_SELECT = "firstName lastName phoneNumber kyc bank";
@@ -404,15 +440,49 @@ exports.getPropertyCount = async (req, res) => {
     });
   }
 };
+// Sortable columns of the admin Hosts (host-history) table → Mongo paths.
+const ADMIN_HOST_SORT = {
+  firstName: "firstName",
+  lastName: "lastName",
+  email: "email",
+  createdAt: "createdAt",
+  allPropertyCount: "allPropertyCount",
+  activePropertyCount: "activePropertyCount",
+  inactivePropertyCount: "inactivePropertyCount",
+  kycDocCount: "kycDocCount",
+};
+
 exports.getAdminFilter = async (req, res) => {
   try {
     const { search } = req.query;
 
-    // const limit = parseInt(req.query.limit, 10) || 10;
-    // const skip = parseInt(req.query.skip, 10) || 0;
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 10;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip, sort, sortKey } = parseListQuery(req.query, {
+      sortable: ADMIN_HOST_SORT,
+      defaultSort: "-createdAt",
+    });
+    const term = searchRegex(search);
+    // the same search narrows both the page and the count, so totalPages is right
+    const searchStages = term
+      ? [
+          {
+            $match: {
+              $or: [
+                { email: { $regex: term } },
+                { firstName: { $regex: term } },
+                { lastName: { $regex: term } },
+                {
+                  $expr: {
+                    $regexMatch: {
+                      input: { $concat: [{ $ifNull: ["$firstName", ""] }, " ", { $ifNull: ["$lastName", ""] }] },
+                      regex: term,
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ]
+      : [];
     const pipeline = [
       // 1️⃣ Lookup ACTIVE properties
       {
@@ -516,37 +586,16 @@ exports.getAdminFilter = async (req, res) => {
         $facet: {
           // 🔹 A) Filtered + paginated users
           data: [
-            ...(search
-              ? [
-                  {
-                    $match: {
-                      $or: [
-                        { email: { $regex: search, $options: "i" } },
-                        { firstName: { $regex: search, $options: "i" } },
-                        { lastName: { $regex: search, $options: "i" } },
-                        {
-                          $expr: {
-                            $regexMatch: {
-                              input: {
-                                $concat: ["$firstName", " ", "$lastName"],
-                              },
-                              regex: search,
-                              options: "i",
-                            },
-                          },
-                        },
-                      ],
-                    },
-                  },
-                ]
-              : []),
-            { $sort: { createdAt: -1 } },
-
-            { $skip: skip },
-            { $limit: limit },
+            ...searchStages,
+            { $sort: sort },
+            ...pageStages({ skip, limit }),
             {
               $project: {
                 password: 0,
+                otp: 0,
+                otpRetries: 0,
+                lockUntil: 0,
+                tokenVersion: 0,
                 allProperties: 0,
                 activeProperties: 0,
                 inactiveProperties: 0,
@@ -566,7 +615,7 @@ exports.getAdminFilter = async (req, res) => {
           ],
 
           // 🔹 C) Total count AFTER OR condition + search
-          filteredCount: [{ $count: "count" }],
+          filteredCount: [...searchStages, { $count: "count" }],
           // propertyStats: [
           //   {
           //     $group: {
@@ -584,18 +633,15 @@ exports.getAdminFilter = async (req, res) => {
 
     const totalHost = result[0].filteredCount[0]?.count || 0;
 
-    const totalPages = Math.ceil(totalHost / limit);
+    const meta = listMeta({ page, limit, total: totalHost, sortKey });
     res.json({
       success: true,
       data: result[0].data,
-      totalPages,
       resultsPerPage: limit,
-
-      total: totalHost,
-
       allEligibleHostEmails: result[0].allEligibleHostEmails.map(
         (u) => u.email,
       ),
+      ...meta,
     });
   } catch (error) {
     console.error("Search error:", error);
@@ -966,13 +1012,34 @@ exports.getProcessingListingsForAdmin = async (req, res) => {
 //   }
 // };
 
+// Sortable columns of the admin Properties table → Mongo paths.
+const ADMIN_LISTING_SORT = {
+  title: "title",
+  propertyType: "propertyType",
+  placeType: "placeType",
+  guests: "guests",
+  bedrooms: "bedrooms",
+  beds: "beds",
+  bathrooms: "bathrooms",
+  basePrice: "basePrice",
+  status: "status",
+  kycStatus: "kycStatus",
+  hostEmail: "host.email",
+  hostKyc: "host.kyc",
+  hostBank: "host.bank",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+};
+
 exports.getFilteredListingsForAdmin = async (req, res) => {
   try {
     const { search, status } = req.query;
 
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 30;
-    const skip = (page - 1) * limit;
+    const { page, limit, skip, sort, sortKey } = parseListQuery(req.query, {
+      sortable: ADMIN_LISTING_SORT,
+      defaultSort: "-updatedAt",
+      defaultLimit: 30,
+    });
 
     const matchStage = {};
 
@@ -984,16 +1051,15 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
       }
     }
 
-    if (search && search.toLowerCase().trim() != "") {
+    const term = searchRegex(search);
+    if (term) {
       matchStage.$or = [
-        { title: { $regex: search, $options: "i" } },
-        // { placeType: { $regex: search, $options: "i" } },
+        { title: { $regex: term } },
         {
           $expr: {
             $regexMatch: {
               input: { $ifNull: ["$host.email", ""] },
-              regex: search,
-              options: "i",
+              regex: term,
             },
           },
         },
@@ -1015,9 +1081,8 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
           /* ---------- FILTERED DATA ---------- */
           data: [
             { $match: matchStage },
-            { $sort: { updatedAt: -1 } },
-            { $skip: skip },
-            { $limit: limit },
+            { $sort: sort },
+            ...pageStages({ skip, limit }),
             // Aggregations bypass the model's embedding exclusion, and the
             // joined user document must not carry credentials to the admin UI.
             {
@@ -1085,6 +1150,7 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
       totalActiveListings: stats.totalActive,
       totalProcessingListings: stats.totalProcessing,
       totalList: stats.totalList,
+      ...listMeta({ page, limit, total: totalProperties, sortKey }),
     });
   } catch (error) {
     console.error(error);
@@ -1569,6 +1635,31 @@ exports.adminDeleteListing = async (req, res) => {
   }
 };
 
+// DELETE /properties/host/:id — a host deletes its own draft ("incomplete")
+// or withdraws its own pending submission ("processing"); the same fail-safe
+// service as the admin deletion (blockers, one transaction, photo cleanup,
+// audit row with actorKind "host").
+exports.hostDeleteListing = async (req, res) => {
+  const authz = require("../middleware/authz");
+  const listingDeletion = require("../services/listingDeletion");
+  try {
+    const actor = await authz.resolveActor(req);
+    if (!actor || actor.kind !== "user") return authz.forbid(res, "Sign in as the listing's host");
+    const { snapshot, outcome } = await listingDeletion.deleteOwnListing({ listingId: req.params.id, hostId: actor.id });
+    return res.status(200).json({
+      success: true,
+      message: "Listing deleted",
+      data: { _id: snapshot.id, title: snapshot.title, photosRemoved: outcome.photosRemoved, photosSkipped: outcome.photosSkipped, photosFailed: outcome.photosFailed },
+    });
+  } catch (err) {
+    if (err && err.refused) {
+      return res.status(err.status).json({ success: false, code: err.code, message: err.message, statusCode: err.status, ...err.extra });
+    }
+    console.error("hostDeleteListing error", err && err.message);
+    return res.status(503).json({ success: false, code: "DELETE_UNAVAILABLE", message: "The listing could not be deleted right now. Nothing was changed — please try again.", statusCode: 503 });
+  }
+};
+
 // exports.deleteProperty = async (req, res) => {
 //   try {
 //     const { id } = req.params; // listing ID
@@ -1642,7 +1733,7 @@ exports.adminDeleteListing = async (req, res) => {
 
 exports.createListingProperty = async (req, res) => {
   try {
-    const { ...propertyData } = req.body;
+    const propertyData = authz.isAdmin(req.actor) ? { ...req.body } : stripHostImmutableFields(req.body);
     const user = await User.findOne({ email: req.body.hostEmail });
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("xmennn", propertyData);
@@ -1739,15 +1830,28 @@ exports.updateListingProperty = async (req, res) => {
     // }
 
     const before = await ListingProperty.findById(id).select(`status ${LISTING_TEXT_SELECT}`).lean();
+    if (!before) {
+      return res.status(404).json({ message: "Property not found or unauthorized to update" });
+    }
+    const isAdmin = authz.isAdmin(req.actor);
+    const patch = isAdmin ? { ...req.body } : stripHostImmutableFields(req.body);
+    if (!isAdmin && patch.status !== undefined && patch.status !== before.status && !HOST_SETTABLE_STATUSES.includes(patch.status)) {
+      return res.status(403).json({
+        success: false,
+        code: "LISTING_STATUS_NOT_ALLOWED",
+        message: "A listing goes live only after admin review; use delist / reactivate for the other changes",
+        statusCode: 403,
+      });
+    }
     // Contact lock-down: judged on the resulting listing (existing + patch),
     // so a number split across fields or across saves is refused too.
-    const policy = checkListingWrite(before, req.body);
+    const policy = checkListingWrite(before, patch);
     if (!policy.ok) return refusePublicText(res, policy);
-    const images = checkListingImages(before, req.body);
+    const images = checkListingImages(before, patch);
     if (!images.ok) return refuseImages(res, images);
     const property = await ListingProperty.findOneAndUpdate(
       { _id: id },
-      { $set: req.body },
+      { $set: patch },
       { new: true, runValidators: true },
     ).populate({ path: "host", select: HOST_CONTACT_SELECT });
 

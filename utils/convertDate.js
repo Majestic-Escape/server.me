@@ -1,7 +1,17 @@
 export function parseMDYToUTC(from, to) {
   if (!from) return null;
   function sliceDate(dateStr) {
-    const parts = dateStr.split("/");
+    const str = String(dateStr).trim();
+    // ISO calendar dates ("2026-08-20" or "2026-08-20T00:00:00.000Z") are
+    // accepted too: the admin Analytics page sends them, and every date
+    // filter is a calendar day, never an instant.
+    const iso = str.match(/^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/);
+    if (iso) {
+      const [, y, m, d] = iso.map(Number);
+      if (!m || !d || !y) throw new Error("Invalid date parts");
+      return { year: y, month: m, day: d };
+    }
+    const parts = str.split("/");
     if (parts.length !== 3)
       throw new Error("Invalid date format. Expected M/D/YYYY");
     const [m, d, y] = parts.map(Number);

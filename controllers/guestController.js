@@ -11,6 +11,7 @@ const mongoose = require("mongoose");
 const ListingProperty = require("../models/ListingProperty");
 const { notifyListingChanged } = require("../services/listingChanged");
 const User = require("../models/User");
+const { parseListQuery, listMeta, pageStages } = require("../utils/listQuery");
 const KycHostData = require("../models/KycHostForm");
 const KycLogs = require("../models/KycLogs");
 const AdminAuditLog = require("../models/AdminAuditLog");
@@ -34,11 +35,27 @@ function isTransient(err) {
 
 // GET /guests/?search=&limit=&skip= — every non-privileged account, hosts
 // flagged (isHost/totalProperties), newest activity first.
+// Sortable columns of the admin Users table → pipeline paths.
+const ADMIN_USER_SORT = {
+  firstName: "firstName",
+  lastName: "lastName",
+  email: "email",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+  status: "status",
+  isHost: "isHost",
+  totalProperties: "totalProperties",
+  totalReviews: "totalReviews",
+  averageRating: "averageRating",
+};
+
 exports.getGuests = async (req, res) => {
   try {
     const { search } = req.query;
-    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
-    const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
+    const { page, limit, skip, sort, sortKey } = parseListQuery(req.query, {
+      sortable: ADMIN_USER_SORT,
+      defaultSort: "-updatedAt",
+    });
 
     const matchStage = await privilegedExclusion();
     if (search && String(search).trim() !== "") {
@@ -65,14 +82,14 @@ exports.getGuests = async (req, res) => {
         },
       },
       { $project: { password: 0, properties: 0, reviews: 0, otp: 0, otpRetries: 0, lockUntil: 0, tokenVersion: 0 } },
-      { $sort: { updatedAt: -1, _id: -1 } },
-      { $facet: { data: [{ $skip: skip }, { $limit: limit }], totalCount: [{ $count: "count" }] } },
+      { $sort: sort },
+      { $facet: { data: pageStages({ skip, limit }), totalCount: [{ $count: "count" }] } },
     ];
 
     const result = await User.aggregate(pipeline);
     const data = result[0].data;
     const total = result[0].totalCount[0]?.count || 0;
-    res.status(200).json({ data, total, limit, skip, hasMore: skip + limit < total });
+    res.status(200).json({ data, skip, ...listMeta({ page, limit, total, sortKey }) });
   } catch (err) {
     console.error("getGuests error", err && err.message);
     res.status(500).json({ error: "Failed to fetch users" });

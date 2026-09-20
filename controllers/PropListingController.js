@@ -2,8 +2,10 @@ const ListingProperty = require("../models/ListingProperty");
 const {
   sanitizeProperty,
   sanitizeProperties,
+  sanitizePropertyForOwner,
   SAFE_HOST_SELECT,
 } = require("../utils/sanitizeResponse");
+const authz = require("../middleware/authz");
 const { checkListingWrite, refusePublicText, LISTING_TEXT_SELECT, checkListingImages, refuseImages } = require("../utils/publicTextPolicy");
 const { notifyListingChanged } = require("../services/listingChanged");
 
@@ -65,6 +67,20 @@ exports.getAllPListings = async (req, res) => {
       ];
     }
     if (hostEmail) {
+      // Contact lock-down: only the host themselves (or an admin) may list by
+      // e-mail — otherwise a known address revealed whether it belongs to a
+      // host and which listings are theirs.
+      const actor = req.actor || null;
+      const own = actor && actor.kind === "user" && actor.user && actor.user.email &&
+        String(actor.user.email).toLowerCase() === String(hostEmail).trim().toLowerCase();
+      if (!authz.isAdmin(actor) && !own) {
+        return res.status(actor ? 403 : 401).json({
+          success: false,
+          code: actor ? "FORBIDDEN" : "AUTH_REQUIRED",
+          message: actor ? "You can only list your own listings" : "Authentication required",
+          statusCode: actor ? 403 : 401,
+        });
+      }
       query.hostEmail = hostEmail;
     }
 
@@ -121,8 +137,12 @@ exports.getUserPListingById = async (req, res) => {
       });
     }
 
-    // Sanitize listing to remove hostEmail and other sensitive data
-    const sanitizedListing = sanitizeProperty(listing);
+    // The owner (the edit wizard writes this object back) and admins read the
+    // stored document; everyone else the public view (approximate point, no
+    // street, no owner flags). authMiddleware.optional resolved req.actor.
+    const actor = req.actor || null;
+    const owner = authz.isAdmin(actor) || authz.isListingHost(actor, listing);
+    const sanitizedListing = owner ? sanitizePropertyForOwner(listing) : sanitizeProperty(listing);
     res.status(200).json(sanitizedListing);
   } catch (error) {
     console.error("Error fetching user property listing:", error);

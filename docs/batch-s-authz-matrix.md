@@ -53,6 +53,8 @@ booking/payment suites.
 |---|---|---|---|---|
 | `POST /create-listing-property` | 401 | 403 (hostEmail ≠ own) | 200 | 200 |
 | `PUT /update-listing-property/:id` | 401 | 403 | 200 | 200 |
+
+Body policy for a host (`HOST_IMMUTABLE_LISTING_FIELDS`, both routes): `_id`, `host`, `hostEmail`, `kycStatus`, `bankDetails`, `validRegistrationNo`, `ban`, `badge`, `averageRating`, `reviewCount`, `embedding*`, `createdAt`, `updatedAt`, `__v` are dropped from the patch — the writes were `$set: req.body`, so a host could activate, KYC-complete, bank-verify, unban, rate or hand over their own listing. `status` may stay as it is, become `incomplete` (park the draft) or `processing` (submit for review); any other transition (`active`, `inactive`) is `403 LISTING_STATUS_NOT_ALLOWED` — activation is the admin's, delist / reactivate have their own routes. Admins keep the full write.
 | `PATCH /update-kyc-property/:id` (id = host id) | 401 | 403 | 200 | 200 |
 | `POST /timings` | 401 | 403 | 200 | 200 |
 | `PATCH /host/delist/:id`, `/host/reactivate/:id` | 401 | 403 | 200 | 200 |
@@ -146,7 +148,8 @@ Verdict table (`services/kycVerdict.js`): `http_response_code === 200` and `resu
 | `POST /prop-listing/` | 401 | 403 | 403 | 200 | |
 | `PUT /prop-listing/:id` | 401 | 403 | 403 | 200 | |
 | `DELETE /prop-listing/:id`, `POST /prop-listing/bulk-action` | 404 | 404 | 404 | 404 | routes removed |
-| `GET /prop-listing/:id` | 200 | 200 | 200 | 200 | public read; malformed id → 404 (Batch P) |
+| `GET /prop-listing/:id` | 200 (public view) | 200 (public view) | 200 (stored document) | 200 (stored document) | `authMiddleware.optional`: the listing host and admins read the stored address (street, registration number, exact point) and owner flags — the edit wizard PUTs this object back, and the public view written back moved the listing by its approximate offset and erased the street. A stale / banned session with a token is refused (401/403), never served the public view. Malformed id → 404 (Batch P) |
+| `GET /prop-listing/?hostEmail=` | 401 | 403 | 200 | 200 | the filter is self-or-admin (an e-mail could be probed for host-ness and listings); without `hostEmail` the catalogue read stays anonymous |
 | `GET /prop-listing/status?email=` | 401 | 403 | 200 | 200 | Batch P: the caller's own stage (`host` id or legacy `hostEmail`), status-only projection; admins may ask for any host. Used to match every listing in the collection |
 | `GET /prop-listing/admin/:id` | 401 | 403 | 403 | 200 | Batch P: was anonymous (hostEmail, street, registration number); admin compat sends the token |
 | `GET /prop-listing/export` | 401 | 403 | 403 | 200 | Batch P: was anonymous (whole catalogue with hosts); no UI caller |
@@ -192,7 +195,8 @@ everything. A first name that fails the name policy is masked on read.
 | `GET /review/:propertyId` (public), `/hostData/review/:id` (public) | reviewer `PUBLIC_USER_SELECT`, text masked (contact + listing address) | filter |
 | `GET /hostData/:id`, `/hosts/single/:id`, `/hosts/:id` | self → own record minus secrets; other → public projection, `about` masked against all the host's listing addresses | filter |
 | `GET /guests/info/:id`, `/guests/guest-by-id` | `PUBLIC_USER_SELECT` (no `lastName`) | filter |
-| `GET /properties/*`, `/prop-listing/*` (public) | `sanitizeProperty`: owner-only fields removed, approximate point, text masked, host public | filter |
+| `GET /properties/*`, `/prop-listing/*` (public) | `sanitizeProperty`: owner-only fields removed, approximate point, text masked, host public; `kycStatus`, `ban`, `__v` (`INTERNAL_LISTING_FIELDS`) dropped from public and booked-guest views | filter |
+| `GET /prop-listing/:id` (listing host / admin) | `sanitizePropertyForOwner`: the stored document minus vectors, host public | filter (owner keeps `hostEmail` / `registrationNumber`) |
 | `GET /properties/user-properties/:userEmail` | self-or-admin (`requireSelfEmailParamOrAdmin`): another user gets 403, so an e-mail cannot be probed for listings | filter |
 | `GET /booking/revenue-filter` (host) | guest populated with `firstName` only | filter |
 | `POST /booking-interest/availability` | authenticated, actor-derived user, no email echoed; `GET /` admin-only | filter |

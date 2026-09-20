@@ -112,8 +112,11 @@ const VARIANT_WIDTHS = [160, 320, 640, 960, 1280, 1600, 1920, 2560, 3840];
 const VARIANT_FORMAT = "webp";
 const VARIANT_CONTENT_TYPE = "image/webp";
 // Objects are addressed by unique keys (uuid / timestamp masters, versioned
-// variant sets), so browsers and the CDN may keep them for a year.
-const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+// variant sets), so browsers may keep them for a year (max-age, immutable).
+// The CDN edge re-checks the origin daily (s-maxage — the Spaces CDN honours
+// it, measured): a deleted photo leaves every edge within 24 h even without
+// a purge, and purgeCdn() removes it at once when DO_API_TOKEN is configured.
+const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, s-maxage=86400, immutable";
 const VARIANT_KEY_RE = /^(.+)\/(v[0-9]+)\/w([0-9]{2,4})\.webp$/;
 
 function isVariantKey(key) {
@@ -145,6 +148,7 @@ function variantWidthFor(width) {
 // --- upload / deletion -----------------------------------------------------
 const mock = {
   deleted: [], // every object key deleted (masters and variants)
+  purged: [], // keys handed to the CDN purge
   uploaded: [],
   objects: new Map(),
   failMode: null,
@@ -160,6 +164,7 @@ function setMockFailure(mode) {
 }
 function resetMock() {
   mock.deleted = [];
+  mock.purged = [];
   mock.uploaded = [];
   mock.objects = new Map();
   mock.failMode = null;
@@ -293,11 +298,48 @@ async function deleteObjects(keys) {
   return out;
 }
 
+// --- CDN purge ------------------------------------------------------------------
+// Best effort, after a delete: the DigitalOcean CDN API drops the deleted
+// objects from every edge at once instead of at the end of s-maxage. Needs a
+// DigitalOcean API token with CDN scope in DO_API_TOKEN (not the Spaces
+// keys); without it the call is skipped and the edge expiry applies.
+let cdnEndpointId = null;
+async function purgeCdn(keys) {
+  const unique = [...new Set((keys || []).filter((k) => typeof k === "string" && k))];
+  if (!unique.length) return { purged: 0, skipped: "nothing" };
+  if (process.env.SPACES_MOCK === "1") {
+    mock.purged.push(...unique);
+    return { purged: unique.length };
+  }
+  const token = process.env.DO_API_TOKEN;
+  if (!token) return { purged: 0, skipped: "DO_API_TOKEN not configured" };
+  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+  try {
+    if (!cdnEndpointId) {
+      const res = await fetch("https://api.digitalocean.com/v2/cdn/endpoints?per_page=200", { headers });
+      if (!res.ok) throw new Error(`endpoints ${res.status}`);
+      const origin = `${bucket()}.${region()}.digitaloceanspaces.com`;
+      const ep = ((await res.json()).endpoints || []).find((e) => String(e.origin).toLowerCase() === origin);
+      if (!ep) throw new Error(`no CDN endpoint for ${origin}`);
+      cdnEndpointId = ep.id;
+    }
+    for (let i = 0; i < unique.length; i += 50) {
+      const res = await fetch(`https://api.digitalocean.com/v2/cdn/endpoints/${cdnEndpointId}/cache`, { method: "DELETE", headers, body: JSON.stringify({ files: unique.slice(i, i + 50) }) });
+      if (!res.ok && res.status !== 204) throw new Error(`purge ${res.status}`);
+    }
+    return { purged: unique.length };
+  } catch (err) {
+    console.error("storage: CDN purge failed (objects expire from the edge within s-maxage)", err && err.message);
+    return { purged: 0, error: String(err && err.message) };
+  }
+}
+
 // Deletes images: each master key together with every object under its
 // variant prefix (the derived variant keys plus whatever a prefix listing
 // finds — older sets, strays). Idempotent: a key that no longer exists is a
 // successful delete for S3, and a failed listing only narrows the sweep to
 // the derived keys. Variant keys passed directly are deleted as themselves.
+// The deleted objects are purged from the CDN edges (best effort).
 async function deleteImages(keys) {
   const masters = [...new Set((keys || []).filter((k) => typeof k === "string" && k))];
   const all = new Set();
@@ -312,6 +354,7 @@ async function deleteImages(keys) {
     }
   }
   const result = await deleteObjects([...all]);
+  if (result.deleted.length) await purgeCdn(result.deleted);
   // Results are per photo. A master counts as deleted only when every object
   // under it went: a leftover variant is still a public object of a deleted
   // photo, so the master stays in the caller's retry set
@@ -348,6 +391,7 @@ module.exports = {
   listKeys,
   deleteObjects,
   deleteImages,
+  purgeCdn,
   VARIANT_SET,
   VARIANT_WIDTHS,
   VARIANT_FORMAT,

@@ -185,6 +185,43 @@ async function main() {
         const signature = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET).update(`${order.id}|${id}`).digest("hex");
         return res.end(JSON.stringify({ razorpay_payment_id: id, razorpay_order_id: order.id, razorpay_signature: signature, amount: order.amount }));
       }
+      // /seed-admin-lists?n=30 — extra guests / listings / bookings / payments /
+      // reviews so the admin tables cross page boundaries (idempotent: rows are
+      // tagged "QA List"; a second call adds nothing).
+      if (req.url.startsWith("/seed-admin-lists")) {
+        const n = Math.min(Math.max(parseInt(new URL(req.url, "http://x").searchParams.get("n") || "30", 10) || 30, 1), 200);
+        const User = require("../../models/User");
+        const Review = require("../../models/Review");
+        const existing = await ListingProperty.countDocuments({ title: /^QA List Villa/ });
+        if (!existing) {
+          for (let i = 0; i < n; i++) {
+            const tag = String(i).padStart(2, "0");
+            const g = await h.makeUser({ firstName: `Lister${tag}`, lastName: "Guest", email: `lister${tag}@test.local`, phoneNumber: `98${String(10000000 + i)}`, createdAt: new Date(Date.UTC(2026, 0, 1 + (i % 28))) });
+            const l = await h.makeListing(i % 4 === 0 ? HOST_B : HOST, { title: `QA List Villa ${tag}`, basePrice: 1500 + i * 50, guests: 2 + (i % 6), status: i % 5 === 0 ? "processing" : "active", address: { city: ["Panaji", "Manali", "Lonavala", "Alibaug"][i % 4], state: "Goa", country: "India", district: "North Goa" } });
+            const b = await Booking.create({ userId: g._id, hostId: l.host, propertyId: l._id, action: "user", source: "local", checkIn: new Date(Date.UTC(2027, 2, 1 + (i % 27))), checkOut: new Date(Date.UTC(2027, 2, 3 + (i % 27))), nights: 2, guests: 2, adults: 2, children: 0, infants: 0, price: 6000 + i * 25, subTotal: 5500 + i * 25, status: i % 3 === 0 ? "pending" : "confirmed", paymentStatus: i % 3 === 0 ? "unpaid" : "paid", reviewed: i % 2 === 0 });
+            await Payment.create({ orderId: `order_list_${tag}`, paymentId: `pay_list_${tag}`, amount: (6000 + i * 25) * 100, currency: "INR", bookingId: b._id, propertyId: l._id, status: i % 3 === 0 ? "created" : "paid", paymentType: i % 7 === 0 ? "refunded" : "pay-in", customerDetails: { name: `Lister${tag} Guest`, email: `lister${tag}@test.local`, contact: `98${String(10000000 + i)}` }, createdAt: new Date(Date.UTC(2026, 4, 1 + (i % 28))) });
+            await Review.create({ user: g._id, property: l._id, bookingId: b._id, hostId: l.host, rating: 1 + (i % 5), content: `QA List review ${tag} — a pleasant stay`, hideStatus: i % 6 === 0 ? "pending" : "accept", createdAt: new Date(Date.UTC(2026, 5, 1 + (i % 28))) });
+          }
+        }
+        // 12 recent bookings (check-ins over the last 6 days) so the Analytics
+        // page's default range has more than one page of rows
+        const recent = await Booking.countDocuments({ sourceId: "qa-recent" });
+        if (!recent) {
+          const listings = await ListingProperty.find({ title: /^QA List Villa/ }).select("_id host").limit(12).lean();
+          for (let i = 0; i < 12 && i < listings.length; i++) {
+            const day = new Date(); day.setUTCHours(0, 0, 0, 0); day.setUTCDate(day.getUTCDate() - (i % 6)); // two per day inside the page's default 7-day range
+            const out = new Date(day); out.setUTCDate(out.getUTCDate() + 2);
+            await Booking.create({ userId: GUEST._id, hostId: listings[i].host, propertyId: listings[i]._id, action: "user", source: "local", checkIn: day, checkOut: out, nights: 2, guests: 2, adults: 2, children: 0, infants: 0, price: 4000 + i * 10, subTotal: 3600 + i * 10, status: "confirmed", paymentStatus: "paid", sourceId: "qa-recent" });
+          }
+        }
+        return res.end(JSON.stringify({ ok: true, added: existing ? 0 : n }));
+      }
+      // POST /make-listing { status, title, owner: "host"|"hostB", address?, fields? } → a fresh listing for the browser suites (drafts / pending / wizard)
+      if (req.url === "/make-listing") {
+        const owner = json.owner === "hostB" ? HOST_B : HOST;
+        const l = await h.makeListing(owner, { title: json.title ?? "", status: json.status || "incomplete", photos: json.photos || [PHOTO], address: json.address || { city: "Panaji", state: "Goa", country: "India", district: "North Goa" }, ...(json.fields || {}) });
+        return res.end(JSON.stringify({ id: String(l._id), status: l.status, title: l.title }));
+      }
       if (req.url === "/set-price") {
         await ListingProperty.updateOne({ _id: json.listingId }, { $set: { basePrice: json.basePrice } });
         return res.end(JSON.stringify({ ok: true }));

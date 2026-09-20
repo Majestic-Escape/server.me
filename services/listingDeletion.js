@@ -28,7 +28,11 @@ const User = require("../models/User");
 const AdminAuditLog = require("../models/AdminAuditLog");
 const storage = require("./storage");
 
-const DELETABLE_STATUSES = ["processing"];
+// Admins delete pending submissions and abandoned drafts; a host deletes its
+// own drafts and withdraws its own pending submissions. Live / delisted
+// listings are never deleted (delist instead).
+const DELETABLE_STATUSES = ["processing", "incomplete"];
+const HOST_DELETABLE_STATUSES = ["incomplete", "processing"];
 
 class DeletionRefused extends Error {
   constructor(status, code, message, extra = {}) {
@@ -60,7 +64,12 @@ const BLOCKERS = [
 ];
 
 // The transactional part. Resolves to the committed snapshot.
-async function deleteListingTransaction({ listingId, actorId }) {
+//   actorKind "admin" (default): any pending / draft listing.
+//   actorKind "host": ownerId must be the listing's host (a foreign listing
+//   answers 404, never 403 — no existence oracle) and only that host's own
+//   drafts / pending submissions qualify.
+async function deleteListingTransaction({ listingId, actorId, actorKind = "admin", ownerId = null }) {
+  const allowed = actorKind === "host" ? HOST_DELETABLE_STATUSES : DELETABLE_STATUSES;
   const session = await mongoose.startSession();
   try {
     let snapshot = null;
@@ -68,8 +77,9 @@ async function deleteListingTransaction({ listingId, actorId }) {
       snapshot = null;
       const listing = await ListingProperty.findById(listingId).select("status title host photos").session(session);
       if (!listing) throw new DeletionRefused(404, "LISTING_NOT_FOUND", "Listing not found");
-      if (!DELETABLE_STATUSES.includes(listing.status)) {
-        throw new DeletionRefused(409, "LISTING_NOT_PENDING", "Only pending listings can be deleted — delist active ones instead", { status: listing.status });
+      if (actorKind === "host" && (!ownerId || String(listing.host) !== String(ownerId))) throw new DeletionRefused(404, "LISTING_NOT_FOUND", "Listing not found");
+      if (!allowed.includes(listing.status)) {
+        throw new DeletionRefused(409, "LISTING_NOT_PENDING", "Only drafts and pending listings can be deleted — delist active ones instead", { status: listing.status });
       }
       const photoKeys = uniqueKeys(listing.photos);
 
@@ -85,14 +95,14 @@ async function deleteListingTransaction({ listingId, actorId }) {
 
       const calendars = await ExternalCalendar.deleteMany({ propertyId: listing._id }, { session });
       const interests = await BookingInterest.deleteMany({ propertyId: String(listing._id) }, { session });
-      const deleted = await ListingProperty.findOneAndDelete({ _id: listing._id, status: { $in: DELETABLE_STATUSES } }, { session });
+      const deleted = await ListingProperty.findOneAndDelete({ _id: listing._id, status: { $in: allowed }, ...(actorKind === "host" ? { host: ownerId } : {}) }, { session });
       if (!deleted) throw new DeletionRefused(409, "LISTING_NOT_PENDING", "The listing changed while it was being deleted — refresh and try again");
 
       const rows = await AdminAuditLog.create(
         [
           {
             actorId,
-            actorKind: "admin",
+            actorKind,
             action: "listing.delete",
             targetType: "ListingProperty",
             targetId: listing._id,
@@ -188,8 +198,17 @@ async function deletePendingListing({ listingId, actorId }) {
   return { snapshot, outcome };
 }
 
+// A host deleting its own draft or withdrawing its own pending submission.
+async function deleteOwnListing({ listingId, hostId }) {
+  const snapshot = await deleteListingTransaction({ listingId, actorId: hostId, actorKind: "host", ownerId: hostId });
+  const outcome = await finishDeletion(snapshot);
+  return { snapshot, outcome };
+}
+
 module.exports = {
   DELETABLE_STATUSES,
+  HOST_DELETABLE_STATUSES,
+  deleteOwnListing,
   DeletionRefused,
   deleteListingTransaction,
   finishDeletion,

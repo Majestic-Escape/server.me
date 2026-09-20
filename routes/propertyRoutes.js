@@ -74,6 +74,8 @@ router.patch(
 // Admin deletes a pending listing (Batch A2): transactional, blocker-checked,
 // audited; photos removed from the Space after commit (services/listingDeletion.js).
 router.delete("/admin/:id", ...admin, validateParam("id"), propertyController.adminDeleteListing);
+// a host deletes its own draft / withdraws its own pending submission (the service re-checks ownership inside the transaction)
+router.delete("/host/:id", authMiddleware, validateParam("id"), propertyController.hostDeleteListing);
 
 router.post(
   "/create-listing-property",

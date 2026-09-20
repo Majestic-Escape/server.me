@@ -111,4 +111,13 @@ const authMiddleware = async (req, res, next) => {
   }
 };
 
+// Public route that answers differently to a signed-in caller (a listing's
+// own host reads the exact address): no Authorization header → anonymous;
+// a header → the full check above, so a stale or banned session is refused
+// instead of silently served the public view.
+authMiddleware.optional = (req, res, next) => {
+  if (!req.headers["authorization"]) return next();
+  return authMiddleware(req, res, next);
+};
+
 module.exports = authMiddleware;

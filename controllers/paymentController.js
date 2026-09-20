@@ -5,6 +5,7 @@ const Payment = require("../models/Payment");
 const User = require("../models/User");
 const Booking = require("../models/Booking");
 const { parseMDYToUTC } = require("../utils/convertDate");
+const { parseListQuery, listMeta, pageStages, searchRegex } = require("../utils/listQuery");
 const cron = require("node-cron");
 
 const HostPayout = require("../models/HostPayout");
@@ -26,79 +27,69 @@ const razorpay = getRazorpay();
 
 // Usage in your route:
 
+// Sortable columns of the admin Transactions table.
+const ADMIN_PAYMENT_SORT = {
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+  amount: "amount",
+  status: "status",
+  paymentType: "paymentType",
+  paymentId: "paymentId",
+  title: "propertyId.title",
+  customer: "customerDetails.name",
+};
+// The legacy ?searchList= values map onto the sort contract.
+const LEGACY_PAYMENT_SORT = { "date-desc": "-createdAt", "date-asc": "createdAt", "amount-desc": "-amount", "amount-asc": "amount" };
+
+// GET /payment/fetch (admin) — filters, search, sort and paging in one
+// aggregation; without ?page= / ?limit= the whole list is returned as before.
 exports.fetch = async (req, res) => {
   try {
-    const { paymentType, search, searchList, from, to } = req.query;
+    const { paymentType, search, searchList, from, to, status } = req.query;
+    const { page, limit, skip, sort, sortKey } = parseListQuery(
+      { ...req.query, sort: req.query.sort || LEGACY_PAYMENT_SORT[searchList] },
+      { sortable: ADMIN_PAYMENT_SORT, defaultSort: "-createdAt", defaultLimit: 0 },
+    );
     const date = parseMDYToUTC(from, to);
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log(date.from, date.to);
-    }
-
     const filter = {};
-    if (paymentType && paymentType != "all") {
-      filter.paymentType = paymentType;
-    }
+    if (paymentType && paymentType != "all") filter.paymentType = paymentType;
+    if (status && status !== "all") filter.status = status;
+    if (from && !to) filter.createdAt = { $gte: date.from };
+    else if (from && to) filter.createdAt = { $gte: date.from, $lte: date.to };
 
-    if (from && !to) {
-      // only from date given
-      filter.createdAt = { $gte: date.from };
-    } else if (from && to) {
-      // both from and to date given
-      filter.createdAt = {
-        $gte: date.from,
-        $lte: date.to,
-      };
-    }
-
-    let data;
-    if (!searchList) {
-      data = await Payment.find(filter).populate("propertyId");
-    }
-    if (searchList) {
-      if (searchList == "date-desc") {
-        data = await Payment.find(filter)
-          .populate("propertyId")
-          .sort({ createdAt: -1 });
-      } else if (searchList == "date-asc") {
-        data = await Payment.find(filter)
-          .populate("propertyId")
-          .sort({ createdAt: 1 });
-      } else if (searchList == "amount-desc") {
-        data = await Payment.find(filter)
-          .populate("propertyId")
-          .sort({ amount: -1 });
-      } else {
-        data = await Payment.find(filter)
-          .populate("propertyId")
-          .sort({ amount: 1 });
-      }
-    }
-
-    if (!data) {
-      return res.status(400).json({
-        success: false,
-        error: "Payment data not available",
-      });
-    }
-    if (search) {
-      data = data.filter(
-        (b) =>
-          b.propertyId.title.toLowerCase().includes(search.toLowerCase()) ||
-          b.paymentId.toLowerCase().includes(search.toLowerCase()) ||
-          b.customerDetails.name.toLowerCase().includes(search.toLowerCase()),
-      );
-    }
-
-    res.json({
-      success: true,
-      data: data,
-    });
+    const term = searchRegex(search);
+    const searchStages = term
+      ? [
+          {
+            $match: {
+              $or: [
+                { "propertyId.title": { $regex: term } },
+                { paymentId: { $regex: term } },
+                { orderId: { $regex: term } },
+                { "customerDetails.name": { $regex: term } },
+                { "customerDetails.email": { $regex: term } },
+              ],
+            },
+          },
+        ]
+      : [];
+    const propertyProjection = { title: 1, propertyType: 1, placeType: 1, photos: 1, host: 1, address: 1, status: 1, basePrice: 1 };
+    const [result] = await Payment.aggregate([
+      { $match: filter },
+      { $lookup: { from: "listingproperties", localField: "propertyId", foreignField: "_id", pipeline: [{ $project: propertyProjection }], as: "propertyId" } },
+      { $unwind: { path: "$propertyId", preserveNullAndEmptyArrays: true } },
+      ...searchStages,
+      {
+        $facet: {
+          data: [{ $sort: sort }, ...pageStages({ skip, limit })],
+          count: [{ $count: "count" }],
+        },
+      },
+    ]);
+    const total = result.count[0]?.count || 0;
+    res.json({ success: true, data: result.data, ...listMeta({ page, limit, total, sortKey }) });
   } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: "Failed to create order",
-    });
+    res.status(500).json({ success: false, error: "Failed to fetch payments" });
   }
 };
 // Create a new order — Batch S: the amount is the server quote, never the

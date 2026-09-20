@@ -18,7 +18,7 @@ const ACTIONS = [
 const adminAuditLogSchema = new mongoose.Schema(
   {
     actorId: { type: mongoose.Schema.Types.ObjectId, required: true },
-    actorKind: { type: String, enum: ["admin"], default: "admin" },
+    actorKind: { type: String, enum: ["admin", "host"], default: "admin" },
     action: { type: String, enum: ACTIONS, required: true },
     targetType: { type: String, required: true },
     targetId: { type: mongoose.Schema.Types.ObjectId, required: true },

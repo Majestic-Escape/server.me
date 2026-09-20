@@ -203,6 +203,17 @@ async function main() {
             await Review.create({ user: g._id, property: l._id, bookingId: b._id, hostId: l.host, rating: 1 + (i % 5), content: `QA List review ${tag} — a pleasant stay`, hideStatus: i % 6 === 0 ? "pending" : "accept", createdAt: new Date(Date.UTC(2026, 5, 1 + (i % 28))) });
           }
         }
+        // 12 recent bookings (check-ins over the last 12 days) so the Analytics
+        // page's default range has more than one page of rows
+        const recent = await Booking.countDocuments({ sourceId: "qa-recent" });
+        if (!recent) {
+          const listings = await ListingProperty.find({ title: /^QA List Villa/ }).select("_id host").limit(12).lean();
+          for (let i = 0; i < 12 && i < listings.length; i++) {
+            const day = new Date(); day.setUTCHours(0, 0, 0, 0); day.setUTCDate(day.getUTCDate() - i);
+            const out = new Date(day); out.setUTCDate(out.getUTCDate() + 2);
+            await Booking.create({ userId: GUEST._id, hostId: listings[i].host, propertyId: listings[i]._id, action: "user", source: "local", checkIn: day, checkOut: out, nights: 2, guests: 2, adults: 2, children: 0, infants: 0, price: 4000 + i * 10, subTotal: 3600 + i * 10, status: "confirmed", paymentStatus: "paid", sourceId: "qa-recent" });
+          }
+        }
         return res.end(JSON.stringify({ ok: true, added: existing ? 0 : n }));
       }
       if (req.url === "/set-price") {

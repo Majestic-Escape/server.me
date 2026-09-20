@@ -216,6 +216,12 @@ async function main() {
         }
         return res.end(JSON.stringify({ ok: true, added: existing ? 0 : n }));
       }
+      // POST /make-listing { status, title, owner: "host"|"hostB" } → a fresh listing for the browser suites (drafts / pending)
+      if (req.url === "/make-listing") {
+        const owner = json.owner === "hostB" ? HOST_B : HOST;
+        const l = await h.makeListing(owner, { title: json.title ?? "", status: json.status || "incomplete", photos: json.photos || [PHOTO], address: { city: "Panaji", state: "Goa", country: "India", district: "North Goa" } });
+        return res.end(JSON.stringify({ id: String(l._id), status: l.status, title: l.title }));
+      }
       if (req.url === "/set-price") {
         await ListingProperty.updateOne({ _id: json.listingId }, { $set: { basePrice: json.basePrice } });
         return res.end(JSON.stringify({ ok: true }));

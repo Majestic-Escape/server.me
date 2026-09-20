@@ -1600,6 +1600,31 @@ exports.adminDeleteListing = async (req, res) => {
   }
 };
 
+// DELETE /properties/host/:id — a host deletes its own draft ("incomplete")
+// or withdraws its own pending submission ("processing"); the same fail-safe
+// service as the admin deletion (blockers, one transaction, photo cleanup,
+// audit row with actorKind "host").
+exports.hostDeleteListing = async (req, res) => {
+  const authz = require("../middleware/authz");
+  const listingDeletion = require("../services/listingDeletion");
+  try {
+    const actor = await authz.resolveActor(req);
+    if (!actor || actor.kind !== "user") return authz.forbid(res, "Sign in as the listing's host");
+    const { snapshot, outcome } = await listingDeletion.deleteOwnListing({ listingId: req.params.id, hostId: actor.id });
+    return res.status(200).json({
+      success: true,
+      message: "Listing deleted",
+      data: { _id: snapshot.id, title: snapshot.title, photosRemoved: outcome.photosRemoved, photosSkipped: outcome.photosSkipped, photosFailed: outcome.photosFailed },
+    });
+  } catch (err) {
+    if (err && err.refused) {
+      return res.status(err.status).json({ success: false, code: err.code, message: err.message, statusCode: err.status, ...err.extra });
+    }
+    console.error("hostDeleteListing error", err && err.message);
+    return res.status(503).json({ success: false, code: "DELETE_UNAVAILABLE", message: "The listing could not be deleted right now. Nothing was changed — please try again.", statusCode: 503 });
+  }
+};
+
 // exports.deleteProperty = async (req, res) => {
 //   try {
 //     const { id } = req.params; // listing ID

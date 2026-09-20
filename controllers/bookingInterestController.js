@@ -12,22 +12,20 @@ exports.createBooking = async (req, res) => {
     if (!userId) return res.status(403).json({ success: false, code: "FORBIDDEN", message: "Not allowed" });
     const userData = await User.findById(userId);
 
-    const email = await userData.email;
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("this is email", email);
+    if (!userData) return res.status(403).json({ success: false, code: "FORBIDDEN", message: "Not allowed" });
+    const email = userData.email;
+    if (!propertyId || !dateFrom || !dateTo || !Number.isFinite(Number(guests))) {
+      return res.status(400).json({ success: false, code: "VALIDATION_ERROR", message: "propertyId, dateFrom, dateTo and guests are required" });
     }
-    const newBooking = new Booking({
-      userId,
-      email,
-      propertyId,
-      dateFrom,
-      dateTo,
-      guests,
-      specialOffers,
-    });
-
-    const savedBooking = await newBooking.save();
-    const data = savedBooking.toObject();
+    // The collection keeps one enquiry per account (unique e-mail index in
+    // production), so a second enquiry is an update of the first — it used to
+    // fail with a raw E11000 on every enquiry after the first.
+    const saved = await Booking.findOneAndUpdate(
+      { email },
+      { $set: { userId, email, propertyId: String(propertyId), dateFrom, dateTo, guests: Number(guests), specialOffers: !!specialOffers, createdAt: new Date() } },
+      { upsert: true, new: true, runValidators: true, setDefaultsOnInsert: true },
+    );
+    const data = saved.toObject();
     delete data.email;
 
     res.status(201).json({
@@ -36,10 +34,11 @@ exports.createBooking = async (req, res) => {
       message: "Booking created successfully",
     });
   } catch (error) {
+    console.error("booking-interest create failed:", error && error.message);
     res.status(400).json({
       success: false,
+      code: "BOOKING_INTEREST_FAILED",
       message: "Error creating booking",
-      error: error.message,
     });
   }
 };

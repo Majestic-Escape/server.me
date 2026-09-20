@@ -31,6 +31,10 @@
 //                  is no longer referenced (or that belong to an older set);
 //                  with --apply they are deleted. Never touches masters.
 //   --only=<s>     restrict to master keys containing <s> (smoke tests)
+//   --urls=<file>  take the references from a JSON file (an array of photo /
+//                  profile-picture URLs, or of { url, owner } objects) instead
+//                  of the database — for an operator without database access
+//                  (the list can come from the API); the database is not opened
 //
 //   env: DB_URI (or --uri), DO_SPACES_KEY / DO_SPACES_SECRET / DO_SPACES_BUCKET / REGION
 //   Nothing secret is ever printed.
@@ -61,6 +65,7 @@ function parseArgs(argv) {
     state: opt("state") || path.join(process.cwd(), "image-variants-backfill.state.json"),
     report: opt("report") || "",
     only: opt("only") || "",
+    urls: opt("urls") || "",
   };
 }
 
@@ -89,10 +94,9 @@ function saveState(file, state) {
 }
 
 // --- references --------------------------------------------------------------
-// Every master key referenced by a listing photo or a profile picture.
-async function referencedMasters() {
-  const ListingProperty = require("../models/ListingProperty");
-  const User = require("../models/User");
+// Every master key referenced by a listing photo or a profile picture — from
+// the database, or from a JSON list of URLs (`--urls`).
+async function referencedMasters(urlsFile) {
   const refs = new Map(); // master key → { owners: [...], urls: Set }
   const add = (url, owner) => {
     const key = storage.keyFromUrl(url);
@@ -106,6 +110,18 @@ async function referencedMasters() {
   };
   let foreign = 0;
   let total = 0;
+  if (urlsFile) {
+    const list = JSON.parse(fs.readFileSync(urlsFile, "utf8"));
+    for (const item of Array.isArray(list) ? list : []) {
+      const url = typeof item === "string" ? item : item && item.url;
+      if (!url) continue;
+      total += 1;
+      if (add(url, (item && item.owner) || "list") === "foreign") foreign += 1;
+    }
+    return { refs, total, foreign };
+  }
+  const ListingProperty = require("../models/ListingProperty");
+  const User = require("../models/User");
   for (const l of await ListingProperty.find({ photos: { $exists: true, $ne: [] } }).select("photos status").lean()) {
     for (const url of l.photos || []) {
       total += 1;
@@ -212,13 +228,13 @@ async function prune(refs, opts, log) {
 
 // --- main ------------------------------------------------------------------------
 async function run(opts, log = console.log) {
-  if (!opts.uri) throw new Error("--uri or DB_URI required");
+  if (!opts.uri && !opts.urls) throw new Error("--uri or DB_URI required (or --urls=<file>)");
   if ((opts.apply || opts.prune) && !(process.env.DO_SPACES_KEY && process.env.DO_SPACES_SECRET) && process.env.SPACES_MOCK !== "1") {
     throw new Error("DO_SPACES_KEY / DO_SPACES_SECRET are required for --apply / --prune");
   }
   const state = loadState(opts.state);
-  // in-process callers (tests) may already hold the connection
-  const ownConnection = mongoose.connection.readyState !== 1;
+  // in-process callers (tests) may already hold the connection; a URL list needs none
+  const ownConnection = !opts.urls && mongoose.connection.readyState !== 1;
   if (ownConnection) await mongoose.connect(opts.uri);
   let stopping = false;
   const onSigint = () => {
@@ -251,7 +267,7 @@ async function run(opts, log = console.log) {
     prune: null,
   };
   try {
-    const { refs, total, foreign } = await referencedMasters();
+    const { refs, total, foreign } = await referencedMasters(opts.urls);
     summary.references = total;
     summary.foreign = foreign;
     summary.masters = refs.size;
@@ -339,6 +355,7 @@ async function run(opts, log = console.log) {
   } finally {
     process.off("SIGINT", onSigint);
     if (ownConnection) await mongoose.disconnect().catch(() => {});
+    else if (opts.urls && mongoose.connection.readyState !== 1) { /* nothing was opened */ }
   }
   return summary;
 }

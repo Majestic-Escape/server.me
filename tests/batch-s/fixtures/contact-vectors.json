@@ -463,6 +463,42 @@
       "masked": "‮olleh"
     },
     {
+      "id": "lri-inside-domain",
+      "text": "rahulvilla⁦.in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "•••"
+    },
+    {
+      "id": "lre-inside-whatsapp",
+      "text": "whats‪app me",
+      "expected": "blocked",
+      "kinds": [
+        "WHATSAPP"
+      ],
+      "masked": "••• me"
+    },
+    {
+      "id": "lre-inside-gpay",
+      "text": "g‪pay me",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "••• me"
+    },
+    {
+      "id": "tag-inside-phone",
+      "text": "98765󠀠43210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "•••"
+    },
+    {
       "id": "phone-11-digits",
       "text": "98765432101",
       "expected": "blocked",

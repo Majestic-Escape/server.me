@@ -11,6 +11,7 @@ const mongoose = require("mongoose");
 const ListingProperty = require("../models/ListingProperty");
 const { notifyListingChanged } = require("../services/listingChanged");
 const User = require("../models/User");
+const { parseListQuery, listMeta, pageStages } = require("../utils/listQuery");
 const KycHostData = require("../models/KycHostForm");
 const KycLogs = require("../models/KycLogs");
 const AdminAuditLog = require("../models/AdminAuditLog");
@@ -34,11 +35,30 @@ function isTransient(err) {
 
 // GET /guests/?search=&limit=&skip= — every non-privileged account, hosts
 // flagged (isHost/totalProperties), newest activity first.
+// Sortable columns of the admin Users table → pipeline paths.
+const ADMIN_USER_SORT = {
+  firstName: "firstName",
+  lastName: "lastName",
+  email: "email",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+  status: "status",
+  isHost: "isHost",
+  totalProperties: "totalProperties",
+  totalReviews: "totalReviews",
+  averageRating: "averageRating",
+  totalBookings: "totalBookings",
+  totalSpent: "totalSpent",
+  lastBookingAt: "lastBookingAt",
+};
+
 exports.getGuests = async (req, res) => {
   try {
     const { search } = req.query;
-    const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 100);
-    const skip = Math.max(parseInt(req.query.skip, 10) || 0, 0);
+    const { page, limit, skip, sort, sortKey } = parseListQuery(req.query, {
+      sortable: ADMIN_USER_SORT,
+      defaultSort: "-updatedAt",
+    });
 
     const matchStage = await privilegedExclusion();
     if (search && String(search).trim() !== "") {
@@ -52,6 +72,17 @@ exports.getGuests = async (req, res) => {
       ];
     }
 
+    // ?minSpent= ?minBookings= ?minRating= ?isHost=true|false narrow the list after the stats are known
+    const statFilters = [];
+    const num = (v) => (v === undefined || v === "" ? null : Number(v));
+    const minSpent = num(req.query.minSpent);
+    const minBookings = num(req.query.minBookings);
+    const minRating = num(req.query.minRating);
+    if (Number.isFinite(minSpent) && minSpent > 0) statFilters.push({ $match: { totalSpent: { $gte: minSpent } } });
+    if (Number.isFinite(minBookings) && minBookings > 0) statFilters.push({ $match: { totalBookings: { $gte: minBookings } } });
+    if (Number.isFinite(minRating) && minRating > 0) statFilters.push({ $match: { averageRating: { $gte: minRating } } });
+    if (req.query.isHost === "true" || req.query.isHost === "false") statFilters.push({ $match: { isHost: req.query.isHost === "true" } });
+    if (req.query.status === "active" || req.query.status === "banned") statFilters.push({ $match: { "status.active": req.query.status === "active" } });
     const pipeline = [
       { $match: matchStage },
       { $lookup: { from: "listingproperties", localField: "_id", foreignField: "host", as: "properties" } },
@@ -64,15 +95,35 @@ exports.getGuests = async (req, res) => {
           averageRating: { $cond: [{ $gt: [{ $size: "$reviews" }, 0] }, { $avg: "$reviews.rating" }, 0] },
         },
       },
-      { $project: { password: 0, properties: 0, reviews: 0, otp: 0, otpRetries: 0, lockUntil: 0, tokenVersion: 0 } },
-      { $sort: { updatedAt: -1, _id: -1 } },
-      { $facet: { data: [{ $skip: skip }, { $limit: limit }], totalCount: [{ $count: "count" }] } },
+      // booking stats (paid, guest-made) for the Total spent / Bookings / Last booking columns and their filters
+      {
+        $lookup: {
+          from: "bookings",
+          let: { uid: "$_id" },
+          pipeline: [
+            { $match: { $expr: { $and: [{ $eq: ["$userId", "$$uid"] }, { $eq: ["$action", "user"] }, { $eq: ["$paymentStatus", "paid"] }] } } },
+            { $group: { _id: null, n: { $sum: 1 }, spent: { $sum: "$price" }, last: { $max: "$checkIn" } } },
+          ],
+          as: "bookingStats",
+        },
+      },
+      {
+        $addFields: {
+          totalBookings: { $ifNull: [{ $arrayElemAt: ["$bookingStats.n", 0] }, 0] },
+          totalSpent: { $ifNull: [{ $arrayElemAt: ["$bookingStats.spent", 0] }, 0] },
+          lastBookingAt: { $arrayElemAt: ["$bookingStats.last", 0] },
+        },
+      },
+      ...statFilters,
+      { $project: { password: 0, properties: 0, reviews: 0, bookingStats: 0, otp: 0, otpRetries: 0, lockUntil: 0, tokenVersion: 0 } },
+      { $sort: sort },
+      { $facet: { data: pageStages({ skip, limit }), totalCount: [{ $count: "count" }] } },
     ];
 
     const result = await User.aggregate(pipeline);
     const data = result[0].data;
     const total = result[0].totalCount[0]?.count || 0;
-    res.status(200).json({ data, total, limit, skip, hasMore: skip + limit < total });
+    res.status(200).json({ data, skip, ...listMeta({ page, limit, total, sortKey }) });
   } catch (err) {
     console.error("getGuests error", err && err.message);
     res.status(500).json({ error: "Failed to fetch users" });

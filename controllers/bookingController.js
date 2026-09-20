@@ -1,4 +1,5 @@
 const Booking = require("../models/Booking");
+const { parseListQuery, listMeta, pageStages, searchRegex } = require("../utils/listQuery");
 // Batch P: puppeteer-core / @sparticuz/chromium are loaded by the handlers
 // that need them (see generatePdf / testPdf and utils/generateInvoicePDF).
 const Payment = require("../models/Payment");
@@ -219,80 +220,104 @@ exports.getAnalyticsFilterBookings = async (req, res) => {
 //     res.status(500).json({ success: false, error: error.message });
 //   }
 // };
+// Sortable columns of the admin Bookings table → paths after the lookups.
+const ADMIN_BOOKING_SORT = {
+  checkIn: "checkIn",
+  checkOut: "checkOut",
+  createdAt: "createdAt",
+  updatedAt: "updatedAt",
+  price: "price",
+  status: "status",
+  paymentStatus: "paymentStatus",
+  guest: "userId.firstName",
+  title: "propertyId.title",
+  hostEmail: "hostId.email",
+};
+const USER_SECRET_PROJECTION = { password: 0, otp: 0, otpRetries: 0, lockUntil: 0, tokenVersion: 0 };
+
+// GET /booking/admin/analytics-filter — every filter, the search, the sort and
+// the page are applied in one aggregation, so `total` is the filtered count
+// (it used to be the count of every paid booking) and a search no longer loads
+// the whole collection into memory.
 exports.getAllFilterBookings = async (req, res) => {
   try {
     const { search, status, from, to, title, hostEmail } = req.query;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = parseInt(req.query.skip) || 0;
+    const { page, limit, skip, sort, sortKey } = parseListQuery(req.query, {
+      sortable: ADMIN_BOOKING_SORT,
+      defaultSort: "checkIn:asc",
+    });
     let date;
     if (to == from) {
       return res.json({ success: false, error: "toDate" });
     } else {
       date = parseMDYToUTC(from, to);
     }
-    const total = await Booking.countDocuments({
-      source: "local",
-      action: "user",
-      paymentStatus: "paid",
-    });
     const filter = {
       source: "local",
       action: "user",
     };
-    // const date = parseMDYToUTC(from, to);
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("rub", title, date.from, date.to);
-    }
     if (status && status.toLowerCase() !== "all") {
       filter.status = { $regex: new RegExp(status, "i") };
     }
-
     filter.checkIn = {};
     if (from) filter.checkIn.$gte = date.from;
     if (to) filter.checkIn.$lte = date.to;
+    if (!from && !to) delete filter.checkIn;
 
-    // Fetch bookings first
-    if (!title && !hostEmail && !search) {
-      const bookings = await Booking.find(filter)
-        .populate("userId propertyId hostId")
-        .limit(limit)
-        .skip(skip)
-        .sort({ checkIn: 1 })
-        .lean();
-      res.json({ success: true, data: bookings, total: total });
-    } else {
-      let bookings = await Booking.find(filter)
-        .populate("userId propertyId hostId")
-        .sort({ checkIn: -1 })
-        .lean();
-      if (title && title.toLowerCase() !== "all") {
-        bookings = bookings.filter((item) =>
-          item.propertyId?.title?.toLowerCase().includes(title.toLowerCase()),
-        );
-      }
-
-      if (hostEmail && hostEmail.toLowerCase() !== "all") {
-        bookings = bookings.filter((item) =>
-          item.hostId?.email?.toLowerCase().includes(hostEmail.toLowerCase()),
-        );
-      }
-
-      if (search) {
-        const s = search.toLowerCase();
-        bookings = bookings.filter(
-          (b) =>
-            b.propertyId?.title?.toLowerCase().includes(s) ||
-            b.userId?.firstName.toLowerCase().includes(s) ||
-            b.userId?.lastName.toLowerCase().includes(s) ||
-            (b.userId?.firstName + " " + b.userId?.lastName)
-              .toLowerCase()
-              .includes(s),
-        );
-      }
-
-      bookings = bookings.slice(skip, skip + limit);
-      res.json({ success: true, data: bookings, total: total });
+    const afterLookup = [];
+    const titleTerm = title && title.toLowerCase() !== "all" ? searchRegex(title) : null;
+    if (titleTerm) afterLookup.push({ $match: { "propertyId.title": { $regex: titleTerm } } });
+    const hostTerm = hostEmail && hostEmail.toLowerCase() !== "all" ? searchRegex(hostEmail) : null;
+    if (hostTerm) afterLookup.push({ $match: { "hostId.email": { $regex: hostTerm } } });
+    const term = searchRegex(search);
+    if (term) {
+      afterLookup.push({
+        $match: {
+          $or: [
+            { "propertyId.title": { $regex: term } },
+            { "userId.firstName": { $regex: term } },
+            { "userId.lastName": { $regex: term } },
+            {
+              $expr: {
+                $regexMatch: {
+                  input: { $concat: [{ $ifNull: ["$userId.firstName", ""] }, " ", { $ifNull: ["$userId.lastName", ""] }] },
+                  regex: term,
+                },
+              },
+            },
+          ],
+        },
+      });
     }
+
+    const lookups = [
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "userId" } },
+      { $unwind: { path: "$userId", preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: "users", localField: "hostId", foreignField: "_id", as: "hostId" } },
+      { $unwind: { path: "$hostId", preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: "listingproperties", localField: "propertyId", foreignField: "_id", as: "propertyId" } },
+      { $unwind: { path: "$propertyId", preserveNullAndEmptyArrays: true } },
+    ];
+    const secretProjection = {};
+    for (const k of Object.keys(USER_SECRET_PROJECTION)) {
+      secretProjection[`userId.${k}`] = 0;
+      secretProjection[`hostId.${k}`] = 0;
+    }
+    for (const k of Object.keys(ListingProperty.EMBEDDING_PROJECTION)) secretProjection[`propertyId.${k}`] = 0;
+
+    const [result] = await Booking.aggregate([
+      { $match: filter },
+      ...lookups,
+      ...afterLookup,
+      {
+        $facet: {
+          data: [{ $sort: sort }, ...pageStages({ skip, limit }), { $project: secretProjection }],
+          count: [{ $count: "count" }],
+        },
+      },
+    ]);
+    const total = result.count[0]?.count || 0;
+    res.json({ success: true, data: result.data, ...listMeta({ page, limit, total, sortKey }) });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -815,17 +840,19 @@ exports.getActiveBookings = async (req, res) => {
   }
 };
 
+// The host picker of the admin pages: one { host, hostEmail } per host with
+// an active listing (it used to return every active listing document).
 exports.getAllHostEmails = async (req, res) => {
-  const emails = await ListingProperty.find({
-    status: "active",
-  });
-  if (!emails) {
-    return res
-      .status(404)
-      .json({ success: false, message: "Host email not found" });
+  const rows = await ListingProperty.find({ status: "active" }).select("host hostEmail").sort({ hostEmail: 1 }).lean();
+  const seen = new Set();
+  const data = [];
+  for (const r of rows) {
+    const key = String(r.host || r.hostEmail || "");
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    data.push({ _id: r._id, host: r.host, hostEmail: r.hostEmail });
   }
-
-  res.status(200).json({ success: true, data: emails });
+  res.status(200).json({ success: true, data });
 };
 exports.getAllUserBookings = async (req, res) => {
   try {
@@ -1197,14 +1224,27 @@ exports.testPdf = async (req, res) => {
     });
   }
 };
+// Sortable columns of the admin Booking-history table (one row per guest).
+const ADMIN_GUEST_HISTORY_SORT = {
+  totalBookings: "totalBookings",
+  totalAmountSpent: "totalAmountSpent",
+  totalReviews: "totalReviews",
+  lastCheckIn: "lastCheckIn",
+  guest: "userId.firstName",
+  email: "userId.email",
+};
+
+// GET /booking/users-by-host — confirmed bookings grouped by guest. Search,
+// sort and paging happen in the pipeline; without ?page= / ?limit= the whole
+// list is returned as before (the admin page paginates now).
 exports.getBookingsByHostGroupByUsers = async (req, res) => {
   try {
     const { search, from, to, title, hostId } = req.query;
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("mys", hostId);
-    }
-
-    // 1. Build filter
+    const { page, limit, skip, sort, sortKey } = parseListQuery(req.query, {
+      sortable: ADMIN_GUEST_HISTORY_SORT,
+      defaultSort: "-totalBookings",
+      defaultLimit: 0,
+    });
     const filter = {
       source: "local",
       action: "user",
@@ -1216,75 +1256,67 @@ exports.getBookingsByHostGroupByUsers = async (req, res) => {
     } else {
       date = parseMDYToUTC(from, to);
     }
-    filter.checkIn = {};
-    if (from) filter.checkIn.$gte = date.from;
-    if (to) filter.checkIn.$lte = date.to;
-
-    if (hostId && hostId.toLowerCase() != "all") {
-      filter.userId = new mongoose.Types.ObjectId(hostId);
+    if (from || to) {
+      filter.checkIn = {};
+      if (from) filter.checkIn.$gte = date.from;
+      if (to) filter.checkIn.$lte = date.to;
     }
-    // const date = parseMDYToUTC(from, to);
-    // if (from || to) {
-    //   filter.checkIn = {};
-    //   if (from) filter.checkIn.$gte = new Date(date.from);
-    //   if (to) filter.checkIn.$lte = new Date(date.to);
-    // }
-
-    // 2. Aggregation pipeline
-    let bookings = await Booking.aggregate([
+    // ?hostId= is the HOST whose guests are listed (the admin picks a host
+    // e-mail); it used to be applied to userId, so the picker never matched.
+    if (hostId && hostId.toLowerCase() != "all") {
+      if (!mongoose.Types.ObjectId.isValid(String(hostId))) return res.json({ success: true, data: [], ...listMeta({ page, limit, total: 0, sortKey }) });
+      filter.hostId = new mongoose.Types.ObjectId(hostId);
+    }
+    const afterLookup = [];
+    const titleTerm = title && title.toLowerCase() !== "all" ? searchRegex(title) : null;
+    if (titleTerm) afterLookup.push({ $match: { "propertyId.title": { $regex: titleTerm } } });
+    const term = searchRegex(search);
+    if (term) {
+      afterLookup.push({
+        $match: {
+          $or: [
+            { "propertyId.title": { $regex: term } },
+            { "userId.firstName": { $regex: term } },
+            { "userId.lastName": { $regex: term } },
+            { "userId.email": { $regex: term } },
+            {
+              $expr: {
+                $regexMatch: {
+                  input: { $concat: [{ $ifNull: ["$userId.firstName", ""] }, " ", { $ifNull: ["$userId.lastName", ""] }] },
+                  regex: term,
+                },
+              },
+            },
+          ],
+        },
+      });
+    }
+    const [result] = await Booking.aggregate([
       { $match: filter },
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "userId" } },
+      { $unwind: { path: "$userId", preserveNullAndEmptyArrays: true } },
+      { $lookup: { from: "listingproperties", localField: "propertyId", foreignField: "_id", pipeline: [{ $project: { title: 1 } }], as: "propertyId" } },
+      { $unwind: { path: "$propertyId", preserveNullAndEmptyArrays: true } },
+      ...afterLookup,
       {
         $group: {
-          _id: "$userId",
+          _id: "$userId._id",
           totalBookings: { $sum: 1 },
           totalAmountSpent: { $sum: "$price" },
-
-          totalReviews: {
-            $sum: {
-              $cond: [
-                {
-                  $or: [{ $eq: ["$reviewed", true] }],
-                },
-                1,
-                0,
-              ],
-            },
-          },
-          // keep refs for populate
-          userId: { $first: "$userId" },
+          totalReviews: { $sum: { $cond: [{ $eq: ["$reviewed", true] }, 1, 0] } },
+          lastCheckIn: { $max: "$checkIn" },
+          userId: { $first: { _id: "$userId._id", firstName: "$userId.firstName", lastName: "$userId.lastName", email: "$userId.email", averageRating: "$userId.averageRating", kyc: "$userId.kyc" } },
         },
       },
-      { $sort: { totalBookings: -1 } }, // sort inside pipeline
+      {
+        $facet: {
+          data: [{ $sort: sort }, ...pageStages({ skip, limit })],
+          count: [{ $count: "count" }],
+        },
+      },
     ]);
-
-    // 3. Populate refs
-    bookings = await Booking.populate(bookings, [
-      { path: "userId", select: "firstName lastName email averageRating kyc" },
-      { path: "hostId", select: "email" },
-      { path: "propertyId", select: "title" },
-    ]);
-
-    // 4. Apply JS filters after populate
-    if (title && title.toLowerCase() !== "all") {
-      bookings = bookings.filter((item) =>
-        item.propertyId?.title?.toLowerCase().includes(title.toLowerCase()),
-      );
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("p3", bookings);
-    }
-    if (search) {
-      const s = search.toLowerCase();
-      bookings = bookings.filter(
-        (b) =>
-          b.propertyId?.title?.toLowerCase().includes(s) ||
-          `${b.userId?.firstName} ${b.userId?.lastName}`
-            .toLowerCase()
-            .includes(s),
-      );
-    }
-
-    res.json({ success: true, data: bookings });
+    const total = result.count[0]?.count || 0;
+    res.json({ success: true, data: result.data, ...listMeta({ page, limit, total, sortKey }) });
   } catch (error) {
     console.error("Error fetching bookings:", error);
     res.status(500).json({ success: false, error: error.message });

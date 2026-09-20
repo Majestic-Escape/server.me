@@ -461,6 +461,29 @@ test("legacy public text is masked on read: profile about/languages/firstName an
   assert.match(host2.body.data.about, /Morjim/);
 });
 
+test("legacy text with an emoji before the identifier, a right-to-left override or format controls is masked on read and refused on write", async () => {
+  const E = String.fromCodePoint(0x1f4de); // telephone receiver
+  const RLO = String.fromCodePoint(0x202e), PDF = String.fromCodePoint(0x202c), LRE = String.fromCodePoint(0x202a);
+  const legacyHost = await h.makeUser({ role: "host", firstName: "Sunny", about: E + " 9876543210" });
+  const legacyListing = await h.makeListing(legacyHost, { title: "Palm villa", description: "Bookings: " + RLO + "0123456789" + PDF + " or whats" + LRE + "app", customRules: [E + " 98765 43210"] });
+  const pub = await h.api("GET", `/properties/${legacyListing._id}`);
+  assert.equal(pub.status, 200);
+  const body = JSON.stringify(pub.body);
+  assert.doesNotMatch(body, /9876543210|0123456789|98765|43210|app/);
+  assert.match(pub.body.data.description, /•••/);
+  assert.match(pub.body.data.customRules[0], /•••/);
+  const host = await h.api("GET", `/hostData/${legacyHost._id}`, { token: GT });
+  assert.doesNotMatch(JSON.stringify(host.body), /9876543210/);
+  assert.match(host.body.data.about, /•••/);
+  // the same text is refused when written through the API
+  const hostToken = h.userToken(legacyHost);
+  const refused = await h.api("PUT", `/properties/update-listing-property/${legacyListing._id}?submit=false&status=active`, { token: hostToken, body: { description: E + " call 9876543210" } });
+  assert.equal(refused.status, 422);
+  assert.equal(refused.body.code, "CONTACT_INFO_NOT_ALLOWED");
+  const still = await ListingProperty().findById(legacyListing._id).lean();
+  assert.notEqual(still.description, E + " call 9876543210");
+});
+
 // ---------------------------------------------------------------------------
 // Backstop filter
 // ---------------------------------------------------------------------------

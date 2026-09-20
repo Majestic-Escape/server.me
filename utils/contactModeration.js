@@ -1,6 +1,6 @@
 // GENERATED FILE — do not edit by hand.
 // Contact-information detector, emitted from majestic-chat
-// packages/shared/src/moderation/patterns.ts (commit c5da05a) by
+// packages/shared/src/moderation/patterns.ts (commit a30fa86) by
 // packages/shared/scripts/emit-contact-moderation-cjs.js. The TypeScript
 // source is the only implementation; tests/batch-s/contact-moderation.test.js
 // asserts the shared golden corpus (tests/batch-s/fixtures/contact-vectors.json)
@@ -236,7 +236,7 @@ function rewriteTokens(pieces) {
         let e = k;
         while (e + 1 < tokens.length && tokens[e + 1].text.length === 1 && !replaced.has(e + 1)) {
             const gap = pieces.slice(tokens[e].end, tokens[e + 1].start).map((x) => x.s).join('');
-            if (!/^ ?[.@]? ?$/.test(gap) || gap.length === 0)
+            if (!/^\s?[.@]?\s?$/.test(gap) || gap.length === 0)
                 break;
             e++;
         }
@@ -877,13 +877,18 @@ function crossBoundaryException(joined, h) {
 }
 function detectJoined(parts, separator, options, candidateIndex) {
     const offsets = [];
-    const boundaries = [];
+    const boundaries = []; // glued sentence boundaries
+    const glued = []; // every glued boundary
     let joined = '';
     parts.forEach((p, i) => {
         if (i) {
-            joined += separator;
-            if (!separator && sentenceBoundary(parts[i - 1], p))
-                boundaries.push(joined.length);
+            const sep = typeof separator === 'function' ? separator(i) : separator;
+            joined += sep;
+            if (!sep) {
+                glued.push(joined.length);
+                if (sentenceBoundary(parts[i - 1], p))
+                    boundaries.push(joined.length);
+            }
         }
         offsets.push(joined.length);
         joined += p;
@@ -891,7 +896,12 @@ function detectJoined(parts, separator, options, candidateIndex) {
     const candidateStart = candidateIndex !== undefined ? offsets[candidateIndex] : options.candidateStart;
     const res = detectContact(joined, { ...options, candidateStart });
     const spansBoundary = (h) => boundaries.some((b) => h.start < b && h.end > b);
-    const hits = boundaries.length ? res.hits.filter((h) => !(spansBoundary(h) && crossBoundaryException(joined, h))) : res.hits;
+    const spansGlue = (h) => glued.some((b) => h.start < b && h.end > b);
+    // A bare "@" accepted as its own message must not turn every following word
+    // into a handle ("@" + "thanks"): a handle assembled across a glued boundary
+    // needs a digit, an underscore or a dot in it, like a real one.
+    const looseHandleAcrossGlue = (h) => h.pattern === PatternType.SOCIAL && /^@[a-z]+$/.test(h.match) && spansGlue(h);
+    const hits = res.hits.filter((h) => !(boundaries.length && spansBoundary(h) && crossBoundaryException(joined, h)) && !(glued.length && looseHandleAcrossGlue(h)));
     const boundary = candidateStart ?? 0;
     const candidateHits = hits.filter((h) => h.end > boundary);
     const kinds = [...new Set(candidateHits.map((h) => h.pattern))];
@@ -928,12 +938,27 @@ function mergeResults(a, b) {
  * without a separator (so "rahul" / "@gmail.com" or "rahulvilla" / ".in"
  * form one identifier).
  */
+// Variants of one resource: every part separated (a line break), everything
+// glued (an identifier spread over many parts), and each single boundary glued
+// with the rest separated — gluing everything also glues the parts AROUND a
+// two-part split ("rahul" + "@ybl" + "rest 56789" → "rahul@yblrest", an
+// invalid handle), so the pairwise variants are what catch a split next to
+// other text. The pairwise pass covers the newest PAIRWISE_BOUNDARIES boundaries.
+const PAIRWISE_BOUNDARIES = 30;
 function detectContactInParts(parts, options = {}, candidateIndex) {
     const separated = detectJoined(parts, PART_SEPARATOR, options, candidateIndex);
     if (parts.length < 2)
         return separated;
-    const glued = detectJoined(parts, '', options, candidateIndex);
-    return mergeResults(separated, glued);
+    let merged = mergeResults(separated, detectJoined(parts, '', options, candidateIndex));
+    const firstBoundary = Math.max(1, parts.length - PAIRWISE_BOUNDARIES);
+    const relevant = parts.map((p) => isContextRelevant(p));
+    for (let b = firstBoundary; b < parts.length; b++) {
+        // two plain-prose parts cannot form an identifier when glued (the all-glued pass still covers spelled-out runs)
+        if (!relevant[b - 1] && !relevant[b])
+            continue;
+        merged = mergeResults(merged, detectJoined(parts, (i) => (i === b ? '' : PART_SEPARATOR), options, candidateIndex));
+    }
+    return merged;
 }
 /** Mask every part of one resource, with fragments split across parts included. */
 function maskContactInfoParts(parts, options = {}) {

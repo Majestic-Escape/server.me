@@ -116,6 +116,12 @@ app.use(
 );
 app.use(bodyParser.json({ limit: "50mb" }));
 
+// Contact lock-down backstop: every non-admin JSON response is sanitised
+// (counterpart users → public fields, own record → no secrets, listings →
+// no owner-only fields, no payment customer details) and fails closed.
+const { piiResponseFilter } = require("./middleware/piiResponseFilter");
+app.use(piiResponseFilter);
+
 // Global error handler middleware
 app.use((error, req, res, next) => {
   if (error instanceof SyntaxError && error.status === 413) {

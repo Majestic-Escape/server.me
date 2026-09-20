@@ -22,13 +22,15 @@ const PHOTO = "https://majestic-escape-host-properties.blr1.cdn.digitaloceanspac
 async function main() {
   process.env.E2E_PORT = "5005";
   await h.start();
-  const HOST = await h.makeUser({ role: "host", firstName: "Hosty", email: "host@test.local" });
-  const GUEST = await h.makeUser({ firstName: "Test", lastName: "User", email: "guest@test.local", phoneNumber: "9999999999" });
+  // Canary values (contact lock-down): the counterpart's last name, email and
+  // phone are searched for by VALUE in browser-side responses, DOM and storage.
+  const HOST = await h.makeUser({ role: "host", firstName: "Hosty", lastName: "Zyqvoxhost", email: "host@test.local", phoneNumber: "9812345602", about: "Hosting since 2019, love the sea" });
+  const GUEST = await h.makeUser({ firstName: "Test", lastName: "Zyqvoxguest", email: "guest@test.local", phoneNumber: "9812345601" });
   const listing = await h.makeListing(HOST, {
     title: "E2E Villa",
     description: "Seeded listing for the Batch S end-to-end run",
     photos: [PHOTO],
-    address: { city: "Panaji", state: "Goa", country: "India", district: "North Goa" },
+    address: { street: "House No 72, Holiday Street", city: "Panaji", state: "Goa", country: "India", district: "North Goa", pincode: "403001", latitude: 15.4909, longitude: 73.8278 },
     propertyType: "villa",
     placeType: "entire",
     amenities: [],
@@ -84,7 +86,7 @@ async function main() {
       await inventory.reserveNights({ propertyId: L._id, nights: inventory.nightsBetween(checkIn, checkOut), bookingId: _id, kind: action === "host" ? "block" : "booking" });
       await inventory.finalizeNights({ bookingId: _id, nights: inventory.nightsBetween(checkIn, checkOut) });
     }
-    const b = await Booking.create({ _id, userId: user._id, hostId: L.host, propertyId: L._id, action, source: "local", checkIn, checkOut, nights, guests: 2, adults: 2, children: 0, infants: 0, guestData: { adults: [{ name: `${user.firstName} ${user.lastName}`, age: 30 }], children: [] }, price: quote.total, subTotal: quote.subTotal, currency: "INR", cancellationPolicy: "flexible", status, paymentStatus, quote: { basePrice: quote.basePrice, nights, subTotalPaise: quote.subTotalPaise, serviceFeePaise: quote.serviceFeePaise, gstPaise: quote.gstPaise, totalPaise: quote.totalPaise, currency: "INR" }, holdExpiresAt: null, notifications: { paidAt: new Date(), confirmedAt: status === "confirmed" ? new Date() : null } });
+    const b = await Booking.create({ _id, userId: user._id, hostId: L.host, propertyId: L._id, action, source: "local", checkIn, checkOut, nights, guests: 2, adults: 2, children: 0, infants: 0, guestData: { adults: [{ name: `${user.firstName} Traveller`, age: 30 }], children: [] }, price: quote.total, subTotal: quote.subTotal, currency: "INR", cancellationPolicy: "flexible", status, paymentStatus, quote: { basePrice: quote.basePrice, nights, subTotalPaise: quote.subTotalPaise, serviceFeePaise: quote.serviceFeePaise, gstPaise: quote.gstPaise, totalPaise: quote.totalPaise, currency: "INR" }, holdExpiresAt: null, notifications: { paidAt: new Date(), confirmedAt: status === "confirmed" ? new Date() : null } });
     if (paymentStatus === "paid" || paymentStatus === "refunded") {
       const order = await h.razorpay().orders.create({ amount: quote.totalPaise, currency: "INR", receipt: `bk_${_id}` });
       const pay = h.razorpay().__registerPayment({ id: `pay_seed_${_id}`, order_id: order.id, amount: order.amount, currency: "INR", status: "captured", method: "upi" });
@@ -173,7 +175,8 @@ async function main() {
       let body = "";
       for await (const c of req) body += c;
       const json = body ? JSON.parse(body) : {};
-      if (req.url === "/seed") return res.end(JSON.stringify(seed));
+      // tokens are re-minted per request so long-running browser sessions never hit the 1 h expiry
+      if (req.url === "/seed") return res.end(JSON.stringify({ ...seed, guestToken: h.userToken(GUEST), hostToken: h.userToken(HOST), guestBToken: h.userToken(GUEST_B), hostBToken: h.userToken(HOST_B), adminToken: h.adminToken(ADMIN) }));
       if (req.url === "/register-payment") {
         const order = h.razorpay().__mock.orders.get(json.orderId);
         if (!order) { res.statusCode = 404; return res.end(JSON.stringify({ error: "unknown order" })); }

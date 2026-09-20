@@ -1,5 +1,6 @@
 require("dotenv").config();
 const User = require("../models/User");
+const { nameProblem, CONTACT_INFO_NOT_ALLOWED } = require("../utils/publicTextPolicy");
 const { generateOTP, sendOTP } = require("../utils/otpUtils");
 const { sendWelcomeMail } = require("../utils/sendWelcomeMail");
 const jwt = require("jsonwebtoken");
@@ -16,6 +17,19 @@ const requestOTP = async (req, res) => {
   // Read outside the try: the catch echoes `email`/`phoneNumber`.
   const { firstName, lastName, phoneNumber, email, dob } = req.body || {};
   try {
+    // Contact lock-down: a name is shown to the other party, so it may not
+    // carry a phone number, an email, a handle or a link.
+    const nameError = nameProblem(firstName, "First name") || nameProblem(lastName, "Last name");
+    if (nameError) {
+      return res.status(422).json({
+        requestType: "REGISTRATION_OTP_REQUEST",
+        success: false,
+        code: CONTACT_INFO_NOT_ALLOWED,
+        message: nameError,
+        statusCode: 422,
+        fields: [nameProblem(firstName, "First name") ? "firstName" : "lastName"],
+      });
+    }
 
     // Check if user already exists
     const existingUser = await User.findOne({

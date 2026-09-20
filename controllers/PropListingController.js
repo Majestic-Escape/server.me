@@ -4,6 +4,7 @@ const {
   sanitizeProperties,
   SAFE_HOST_SELECT,
 } = require("../utils/sanitizeResponse");
+const { checkListingWrite, refusePublicText, LISTING_TEXT_SELECT, checkListingImages, refuseImages } = require("../utils/publicTextPolicy");
 const { notifyListingChanged } = require("../services/listingChanged");
 
 // Host dashboard stage card. Used to read req.params.email on a route that
@@ -148,6 +149,11 @@ exports.getAdminPListingById = async (req, res) => {
 };
 exports.createPListing = async (req, res) => {
   try {
+    // Contact lock-down (admins included): no contact details / exact address in public text
+    const policy = checkListingWrite(null, req.body);
+    if (!policy.ok) return refusePublicText(res, policy);
+    const images = checkListingImages(null, req.body);
+    if (!images.ok) return refuseImages(res, images);
     const newListing = new ListingProperty(req.body);
     const savedListing = await newListing.save();
     if (savedListing.status === "active") await notifyListingChanged([savedListing._id], "admin-create"); // PUBLIC_CHANGE only when created live
@@ -162,7 +168,11 @@ exports.createPListing = async (req, res) => {
 exports.updatePListing = async (req, res) => {
   const { id } = req.params;
   try {
-    const before = await ListingProperty.findById(id).select("status").lean();
+    const before = await ListingProperty.findById(id).select(`status ${LISTING_TEXT_SELECT}`).lean();
+    const policy = checkListingWrite(before, req.body);
+    if (!policy.ok) return refusePublicText(res, policy);
+    const images = checkListingImages(before, req.body);
+    if (!images.ok) return refuseImages(res, images);
     const updatedListing = await ListingProperty.findByIdAndUpdate(
       id,
       req.body,

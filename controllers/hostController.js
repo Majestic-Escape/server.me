@@ -6,7 +6,9 @@ const User = require("../models/User");
 const { parseMDYToUTC } = require("../utils/convertDate");
 const axios = require("axios");
 const { encrypt } = require("../utils/encrypt");
-const { sanitizeHost, SAFE_HOST_SELECT } = require("../utils/sanitizeResponse");
+const authz = require("../middleware/authz");
+const { sanitizeHost, SAFE_HOST_SELECT, PUBLIC_USER_SELECT, SELF_USER_SELECT, toPublicUser, toSelfUser, listingAddressTokens } = require("../utils/sanitizeResponse");
+const { maskContactInfo } = require("../utils/contactModeration");
 const razorpay = new Razorpay({
   key_id: process.env.RAZORPAY_KEY_ID,
   key_secret: process.env.RAZORPAY_KEY_SECRET,
@@ -217,17 +219,19 @@ exports.getBankDetails = async (req, res) => {
 // Get a single host and their properties
 exports.getHostById = async (req, res) => {
   try {
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log(req.params.hostId);
-    }
-    const host = await User.findById(req.params.hostId);
+    // Contact lock-down: the caller's own record minus secrets (the membership
+    // popup reads hostOffer); anyone else gets the public projection, with
+    // `about` masked against every address this host has listed.
+    const actor = await authz.resolveActor(req);
+    const self = actor && authz.sameId(actor.id, req.params.hostId);
+    const host = await User.findById(req.params.hostId).select(authz.isAdmin(actor) ? "" : self ? SELF_USER_SELECT : PUBLIC_USER_SELECT).lean();
     if (!host) {
       return res.status(404).json({ message: "Host not found" });
     }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log(host);
-    }
-    res.status(200).json({ success: true, data: host });
+    if (authz.isAdmin(actor)) return res.status(200).json({ success: true, data: host });
+    if (self) return res.status(200).json({ success: true, data: toSelfUser(host) });
+    const listings = await ListingProperty.find({ host: host._id }).select("address line1 line2").lean();
+    res.status(200).json({ success: true, data: toPublicUser(host, { fallbackName: "Host", addressTokens: listings.map(listingAddressTokens) }) });
   } catch (error) {
     res.status(500).json({ message: "Error fetching host", error });
   }
@@ -269,7 +273,7 @@ exports.getHostReviewsById = async (req, res) => {
       })
       .populate({
         path: "user",
-        select: "firstName lastName",
+        select: "firstName lastName profilePicture",
       })
       .lean();
 
@@ -281,6 +285,11 @@ exports.getHostReviewsById = async (req, res) => {
           r.content?.toLowerCase().includes(s) ||
           `${r.user?.firstName} ${r.user?.lastName}`.toLowerCase().includes(s)
       );
+    }
+    // Contact lock-down (public endpoint): reviewer first name + photo only, text masked
+    for (const r of reviews) {
+      if (r.user && typeof r.user === "object") r.user = toPublicUser(r.user, { fallbackName: "Guest" });
+      if (typeof r.content === "string") r.content = maskContactInfo(r.content);
     }
 
     if (property && property !== "all") {

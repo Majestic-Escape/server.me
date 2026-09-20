@@ -662,9 +662,14 @@ test("uploads: metadata (incl. GPS) is stripped, orientation baked, formats kept
   form.append("images", new Blob([withGps], { type: "image/jpeg" }), "villa.jpg");
   const res = await fetch(`${h.baseUrl()}/uploads/`, { method: "POST", headers: { authorization: `Bearer ${HT}` }, body: form });
   assert.equal(res.status, 200);
-  const stored = require("../../services/storage").__mock.uploaded.at(-1);
+  const storageSvc = require("../../services/storage");
+  const stored = storageSvc.__mock.uploaded.filter((o) => !storageSvc.isVariantKey(o.key)).at(-1);
   assert.ok(stored.key.endsWith("villa.jpg"));
   assert.equal(stored.contentType, "image/jpeg");
+  // the display variants stored with it are re-encodes of the clean master: no metadata either
+  const variant = storageSvc.__mock.objects.get(storageSvc.variantKey(stored.key, 640));
+  assert.ok(variant, "w640 variant stored");
+  assert.equal(await hasMetadata(variant.body), false, "variant carries no metadata");
   const qrForm = new FormData();
   qrForm.append("file", new Blob([qrPng], { type: "image/png" }), "me.png");
   const qrRes = await fetch(`${h.baseUrl()}/uploads/profile?userId=${H._id}`, { method: "POST", headers: { authorization: `Bearer ${HT}` }, body: qrForm });

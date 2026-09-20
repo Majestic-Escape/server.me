@@ -18,8 +18,17 @@ after    browser → <bucket>.blr1.cdn.digitaloceanspaces.com/<master key>/v1/w<
 
 | object | key | content | cache |
 |---|---|---|---|
-| master | `listings/<ownerId>/<uuid>-<name>.<ext>` (legacy: `<timestamp>-<name>`) | `sanitizeImage()` output — metadata stripped, orientation baked, QR-checked, ≤ 6000 px, JPEG q85 / PNG / WebP q85 | `public, max-age=31536000, immutable` |
+| master | `listings/<ownerId>/<uuid>-<name>.<ext>` (legacy: `<timestamp>-<name>`) | `sanitizeImage()` output — metadata stripped, orientation baked, QR-checked, ≤ 6000 px, JPEG q85 / PNG / WebP q85 | `public, max-age=31536000, s-maxage=86400, immutable` |
 | variant | `<master key>/v1/w<width>.webp`, width ∈ 160 320 640 960 1280 1600 1920 2560 3840 | WebP from the master: Lanczos, never wider than the master, aspect and alpha kept, no metadata | same |
+
+Browsers keep an object for a year (`max-age`, `immutable`); the CDN edge
+re-checks the origin daily (`s-maxage` — the Spaces CDN honours it,
+measured: an object deleted at the origin stopped being served at the edge
+when `s-maxage` elapsed). So a deleted photo leaves every edge within 24 h
+even without a purge, and with a DigitalOcean API token (CDN scope) in
+`DO_API_TOKEN` the API purges the deleted objects at once
+(`storage.purgeCdn`). Before this change masters had no `Cache-Control` and
+relied on the Space's edge TTL setting.
 
 * The database stores the **master URL only** (`ListingProperty.photos[]`,
   `User.profilePicture`); variant URLs are derived, identically, by this API

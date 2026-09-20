@@ -238,6 +238,126 @@
       "masked": "•••"
     },
     {
+      "id": "emoji-prefix-phone",
+      "text": "😀 my number 9876543210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "😀 my number •••"
+    },
+    {
+      "id": "emoji-prefix-phone-bare",
+      "text": "🙏 9876543210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "🙏 •••"
+    },
+    {
+      "id": "emoji-prefix-email",
+      "text": "😀 rahul@gmail.com",
+      "expected": "blocked",
+      "kinds": [
+        "EMAIL"
+      ],
+      "masked": "😀 •••"
+    },
+    {
+      "id": "emoji-prefix-social",
+      "text": "😀 whatsapp me",
+      "expected": "blocked",
+      "kinds": [
+        "WHATSAPP"
+      ],
+      "masked": "😀 ••• me"
+    },
+    {
+      "id": "emoji-multi-prefix-phone",
+      "text": "😀😀😀 9876543210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "😀😀😀 •••"
+    },
+    {
+      "id": "emoji-modifier-split-phone",
+      "text": "👍🏽 call 98765 43210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "👍🏽 call •••"
+    },
+    {
+      "id": "emoji-flag-intl-phone",
+      "text": "🇮🇳 +91 98765 43210",
+      "expected": "blocked",
+      "kinds": [
+        "INDIAN_PHONE"
+      ],
+      "masked": "🇮🇳 •••"
+    },
+    {
+      "id": "emoji-between-halves",
+      "text": "call 98765 😀 43210",
+      "expected": "blocked",
+      "kinds": [
+        "SPLIT_PHONE"
+      ],
+      "masked": "call ••• 😀 •••"
+    },
+    {
+      "id": "emoji-zwj-domain",
+      "text": "👨‍👩‍👧 rahulvilla.in",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "👨‍👩‍👧 •••"
+    },
+    {
+      "id": "emoji-prefix-upi",
+      "text": "😀 my upi is rahul@ybl",
+      "expected": "blocked",
+      "kinds": [
+        "UPI"
+      ],
+      "masked": "😀 my ••• is •••"
+    },
+    {
+      "id": "emoji-prefix-off-platform",
+      "text": "😀 pay via gpay",
+      "expected": "blocked",
+      "kinds": [
+        "OFF_PLATFORM"
+      ],
+      "masked": "😀 pay via •••"
+    },
+    {
+      "id": "emoji-prefix-clean",
+      "text": "😀 nice place, 2 adults",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "😀 nice place, 2 adults"
+    },
+    {
+      "id": "emoji-prefix-time-clean",
+      "text": "😀😀 see you at 6 pm",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "😀😀 see you at 6 pm"
+    },
+    {
+      "id": "emoji-suffix-clean",
+      "text": "thanks a lot 👍🏽",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "thanks a lot 👍🏽"
+    },
+    {
       "id": "phone-11-digits",
       "text": "98765432101",
       "expected": "blocked",
@@ -2323,6 +2443,88 @@
         "•••",
         "•••",
         "•••"
+      ]
+    },
+    {
+      "id": "seq-emoji-row-then-phone",
+      "messages": [
+        "😀",
+        "a",
+        "Hi Hosty, is the villa free next weekend?",
+        "call me on 9876543210"
+      ],
+      "blockedAt": [
+        3
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "😀",
+        "a",
+        "Hi Hosty, is the villa free next weekend?",
+        "call me on •••"
+      ]
+    },
+    {
+      "id": "seq-emoji-rows-split-phone",
+      "messages": [
+        "😀 first five 98765",
+        "🙏",
+        "last five 43210"
+      ],
+      "blockedAt": [
+        2
+      ],
+      "statuses": [
+        "clean",
+        "clean",
+        "blocked"
+      ],
+      "masked": [
+        "😀 first five •••",
+        "🙏",
+        "last five •••"
+      ]
+    },
+    {
+      "id": "seq-emoji-clean-after-fragment",
+      "messages": [
+        "😀 arriving at 6",
+        "ok 👍",
+        "2 adults"
+      ],
+      "blockedAt": [],
+      "statuses": [
+        "clean",
+        "clean",
+        "clean"
+      ],
+      "masked": [
+        "😀 arriving at 6",
+        "ok 👍",
+        "2 adults"
+      ]
+    },
+    {
+      "id": "seq-emoji-accepted-phone-row-does-not-poison",
+      "messages": [
+        "call me on 9876543210 😀",
+        "hello there, nice place"
+      ],
+      "blockedAt": [
+        0
+      ],
+      "statuses": [
+        "blocked",
+        "clean"
+      ],
+      "masked": [
+        "call me on ••• 😀",
+        "hello there, nice place"
       ]
     },
     {

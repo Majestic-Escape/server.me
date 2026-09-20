@@ -582,7 +582,7 @@ exports.getRevenueFilter = async (req, res) => {
           populate: {
             path: "userId",
             model: "User",
-            select: "firstName lastName", // whatever fields you want
+            select: "firstName", // the guest is shown by first name only (contact lock-down)
           },
         },
         {
@@ -615,14 +615,12 @@ exports.getRevenueFilter = async (req, res) => {
 
     if (search) {
       const s = search.toLowerCase();
+      // the host searches by title or the guest's first name (a lastName would crash the
+      // optional chain on a deleted user and is never shown to the host anyway)
       bookings = bookings.filter(
         (b) =>
           b.propertyId?.title?.toLowerCase().includes(s) ||
-          b.bookingId?.userId?.firstName.toLowerCase().includes(s) ||
-          b.bookingId?.userId?.lastName.toLowerCase().includes(s) ||
-          (b.bookingId?.userId?.firstName + " " + b.bookingId?.userId?.lastName)
-            .toLowerCase()
-            .includes(s),
+          (b.bookingId?.userId?.firstName || "").toLowerCase().includes(s),
       );
     }
 

@@ -306,6 +306,19 @@ test("an unpaid (created) booking and a paid request-to-book awaiting the host n
   assert.deepEqual(leaks(list.body, "host"), []);
 });
 
+test("GET /properties/user-properties/:email lists a host's listings only for that host (or an admin): another user gets 403, so an e-mail cannot be probed for listings", async () => {
+  const own = await h.api("GET", `/properties/user-properties/${encodeURIComponent(H.email)}`, { token: HT });
+  assert.equal(own.status, 200, JSON.stringify(own.body).slice(0, 120));
+  const foreign = await h.api("GET", `/properties/user-properties/${encodeURIComponent(H.email)}`, { token: GT });
+  assert.equal(foreign.status, 403, JSON.stringify(foreign.body).slice(0, 120));
+  const unknown = await h.api("GET", `/properties/user-properties/${encodeURIComponent("nobody@canary.test")}`, { token: GT });
+  assert.equal(unknown.status, 403, "unknown and foreign e-mails answer the same");
+  const admin = await h.api("GET", `/properties/user-properties/${encodeURIComponent(H.email)}`, { token: AT });
+  assert.equal(admin.status, 200);
+  const anon = await h.api("GET", `/properties/user-properties/${encodeURIComponent(H.email)}`);
+  assert.equal(anon.status, 401);
+});
+
 test("traveller names at checkout follow the name policy (they reach the host's guest list)", async () => {
   const listing = await h.makeListing(H);
   const bad = await h.api("POST", "/booking/", { token: GT, body: h.bookingBody(listing, { checkIn: h.day(800), checkOut: h.day(802), guestData: { adults: [{ name: "Rahul 9876543210", age: 30 }], children: [] } }) });

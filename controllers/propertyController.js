@@ -990,6 +990,8 @@ const ADMIN_LISTING_SORT = {
   status: "status",
   kycStatus: "kycStatus",
   hostEmail: "host.email",
+  hostKyc: "host.kyc",
+  hostBank: "host.bank",
   createdAt: "createdAt",
   updatedAt: "updatedAt",
 };

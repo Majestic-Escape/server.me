@@ -212,6 +212,7 @@ function resetEmails() {
 
 module.exports = {
   start, stop, api, sleep, baseUrl,
+  appInstance: () => started && started.app,
   makeUser, userToken, makeAdmin, adminToken, makeListing, day, bookingBody,
   razorpay, payoutGateway, signature, sentEmails, resetEmails,
 };

@@ -12,7 +12,7 @@ async function sendEmail(recipientEmail, templateId, params, attachments = []) {
   // Test seam (never set in a deployment): record instead of sending.
   if (process.env.EMAIL_DISABLED === "1") {
     sendEmail.sent = sendEmail.sent || [];
-    sendEmail.sent.push({ recipientEmail, templateId: Number(templateId), attachments: attachments.length });
+    sendEmail.sent.push({ recipientEmail, templateId: Number(templateId), attachments: attachments.length, params });
     return { skipped: true, recipientEmail, templateId };
   }
   // Prepare the request payload for Brevo API

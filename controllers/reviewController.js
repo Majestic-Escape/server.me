@@ -1,9 +1,12 @@
 const Review = require("../models/Review");
+const { PUBLIC_USER_SELECT, toPublicUser, listingAddressTokens } = require("../utils/sanitizeResponse");
+const { maskContactInfo } = require("../utils/contactModeration");
 const Booking = require("../models/Booking");
 const ListingProperty = require("../models/ListingProperty");
 const { notifyListingChanged } = require("../services/listingChanged");
 const authz = require("../middleware/authz");
 const { rejectInvalidId } = require("../middleware/validateObjectId");
+const { checkPublicText, refusePublicText, addressTokensOf } = require("../utils/publicTextPolicy");
 const jwt = require("jsonwebtoken");
 const secret = process.env.JWT_SECRET;
 const mongoose = require("mongoose");
@@ -230,6 +233,11 @@ exports.submitReview = async (req, res) => {
     const actor = await authz.resolveActor(req);
     if (!actor || String(booking.userId) !== actor.id) return authz.forbid(res);
 
+    // Contact lock-down: a public review may not carry contact details or the listing's exact address
+    const reviewedListing = await ListingProperty.findById(booking.propertyId).select("address line1 line2").lean();
+    const policy = checkPublicText([{ field: "content", text: typeof content === "string" ? content : "" }], { addressTokens: addressTokensOf(reviewedListing) });
+    if (!policy.ok) return refusePublicText(res, policy);
+
     // 2️⃣ Create review
     await Review.create({
       bookingId: booking._id,
@@ -353,6 +361,10 @@ exports.submitHostReview = async (req, res) => {
         message: "Review for this booking already exists",
       });
     }
+
+    // Contact lock-down: a host's review of a guest is public text too
+    const hostReviewPolicy = checkPublicText([{ field: "content", text: typeof content === "string" ? content : "" }], { addressTokens: addressTokensOf(booking.propertyId) });
+    if (!hostReviewPolicy.ok) return refusePublicText(res, hostReviewPolicy);
 
     // 2) Create and save review
     const review = new HostReview({
@@ -635,14 +647,25 @@ exports.getPropertyReview = async (req, res) => {
     const skipValue = parseInt(req.query.skip) || 0;
     const ObjectId = require("mongoose").Types.ObjectId;
     const id = new ObjectId(`${req.params.propertyId}`);
+    // Contact lock-down: the reviewer is a counterpart to everyone reading the
+    // public page — first name and photo only; the review text is masked
+    // against contact details and the listing's own exact address.
+    const listing = await ListingProperty.findById(id).select("address line1 line2").lean();
+    const addressTokens = listing ? listingAddressTokens(listing) : null;
     const review = await Review.find({
       property: id,
       hideStatus: { $nin: ["accept"] },
     })
-      .populate("user")
+      .populate({ path: "user", select: PUBLIC_USER_SELECT })
       .limit(limitValue)
       .skip(skipValue)
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
+    const detect = addressTokens && (addressTokens.numbers.length || addressTokens.grams.length) ? { address: addressTokens } : {};
+    for (const r of review) {
+      if (r.user && typeof r.user === "object") r.user = toPublicUser(r.user, { fallbackName: "Guest" });
+      if (typeof r.content === "string") r.content = maskContactInfo(r.content, detect);
+    }
 
     res.status(200).json({
       success: true,

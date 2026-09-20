@@ -1,4 +1,6 @@
 const User = require("../models/User");
+const authz = require("../middleware/authz");
+const { PUBLIC_USER_SELECT, SELF_USER_SELECT, toPublicUser, toSelfUser, publicFirstName } = require("../utils/sanitizeResponse");
 const ListingProperty = require("../models/ListingProperty");
 const { sendHostNotification } = require("../utils/sendEmail");
 
@@ -440,11 +442,15 @@ exports.bulkAction = async (req, res) => {
 exports.getSingleHostById = async (req, res) => {
   try {
     const { id } = req.params;
-    const host = await User.findById(id);
+    // Contact lock-down: own record minus secrets; anyone else → public projection.
+    const actor = await authz.resolveActor(req);
+    const self = actor && authz.sameId(actor.id, id);
+    const host = await User.findById(id).select(authz.isAdmin(actor) ? "" : self ? SELF_USER_SELECT : PUBLIC_USER_SELECT).lean();
     if (!host) {
       return res.status(404).json({ message: "Host not found" });
     }
-    res.status(200).json(host);
+    if (authz.isAdmin(actor)) return res.status(200).json(host);
+    res.status(200).json(self ? toSelfUser(host) : toPublicUser(host, { fallbackName: "Host" }));
   } catch (error) {
     res
       .status(500)
@@ -470,17 +476,28 @@ exports.getHostById = async (req, res) => {
       host: host._id,
     });
 
-    const hostData = {
-      id: host._id,
-      firstName: host.firstName,
-      lastName: host.lastName,
-      email: host.email,
-      properties: listingsCount,
-      rating: host.rating || 0,
-      totalEarnings: host.totalEarnings || 0,
-      joinDate: host.createdAt,
-      status: host.status.active ? "Active" : "Inactive",
-    };
+    const actor = await authz.resolveActor(req);
+    const privileged = authz.isAdmin(actor) || (actor && authz.sameId(actor.id, host._id));
+    const hostData = privileged
+      ? {
+          id: host._id,
+          firstName: host.firstName,
+          lastName: host.lastName,
+          email: host.email,
+          properties: listingsCount,
+          rating: host.rating || 0,
+          totalEarnings: host.totalEarnings || 0,
+          joinDate: host.createdAt,
+          status: host.status.active ? "Active" : "Inactive",
+        }
+      : {
+          // Contact lock-down: a counterpart sees the public profile only
+          id: host._id,
+          firstName: publicFirstName(host.firstName, "Host"),
+          properties: listingsCount,
+          rating: host.rating || 0,
+          joinDate: host.createdAt,
+        };
 
     res.status(200).json(hostData);
   } catch (error) {

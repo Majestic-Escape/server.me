@@ -279,7 +279,7 @@ function generateBookingGuestListHTML(bookingData) {
           
           <div class="info-item">
             <div class="info-label">Booked By</div>
-            <div class="info-value">${(bookingData?.userId?.firstName || "Guest") + " " + (bookingData?.userId?.lastName || "")}</div>
+            <div class="info-value">${bookingData?.userId?.firstName || "Guest"}</div>
           </div>
           
           <div class="info-item">

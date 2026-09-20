@@ -844,6 +844,29 @@
       "masked": "St. Xavier church is 2 km away, e.g. approx. 10 min by car, Rs. 500"
     },
     {
+      "id": "fp-numbered-list-tld",
+      "text": "A fine of Rs. 2000 shall be exacted.\n\n12.As the candles placed in the apartment are decorative, do not light them.",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "A fine of Rs. 2000 shall be exacted.\n\n12.As the candles placed in the apartment are decorative, do not light them."
+    },
+    {
+      "id": "fp-numbered-list-in",
+      "text": "Rules: 1.No smoking 2.In case of damage the deposit is forfeited 3.It is a family place",
+      "expected": "clean",
+      "kinds": [],
+      "masked": "Rules: 1.No smoking 2.In case of damage the deposit is forfeited 3.It is a family place"
+    },
+    {
+      "id": "domain-numeric-label-letters",
+      "text": "see 24x7villa.in for photos",
+      "expected": "blocked",
+      "kinds": [
+        "URL"
+      ],
+      "masked": "see ••• for photos"
+    },
+    {
       "id": "fp-time-dot",
       "text": "meet at 5.30 pm at the cafe",
       "expected": "clean",
@@ -1569,6 +1592,54 @@
       "masked": {
         "title": "Beach villa",
         "description": "3 bedrooms, 2 km from Baga"
+      }
+    },
+    {
+      "id": "fields-sentence-boundary-tld",
+      "fields": {
+        "description": "Perfect for guests who appreciate a clean and peaceful environment.",
+        "rules": "No guests allowed"
+      },
+      "expected": "clean",
+      "masked": {
+        "description": "Perfect for guests who appreciate a clean and peaceful environment.",
+        "rules": "No guests allowed"
+      }
+    },
+    {
+      "id": "fields-sentence-boundary-at",
+      "fields": {
+        "description": "The noise of the downtown is not heard in the apartment at all.",
+        "rules": "No outsiders"
+      },
+      "expected": "clean",
+      "masked": {
+        "description": "The noise of the downtown is not heard in the apartment at all.",
+        "rules": "No outsiders"
+      }
+    },
+    {
+      "id": "fields-lowercase-continuation-domain",
+      "fields": {
+        "title": "rahulvilla.",
+        "description": "in has all the details"
+      },
+      "expected": "blocked",
+      "masked": {
+        "title": "•••",
+        "description": "••• has all the details"
+      }
+    },
+    {
+      "id": "fields-glued-email-tld",
+      "fields": {
+        "about": "write to rahul@rahulvilla",
+        "languages": ".in"
+      },
+      "expected": "blocked",
+      "masked": {
+        "about": "write to •••",
+        "languages": "•••"
       }
     }
   ],

@@ -141,7 +141,8 @@ Verdict table (`services/kycVerdict.js`): `http_response_code === 200` and `resu
 
 | Action | anon | other user | listing host | admin | Notes |
 |---|---|---|---|---|---|
-| `DELETE /properties/admin/:id` | 401 | 403 | 403 | 200 | only `status:"processing"`; `Booking`/`BookingNight`/`Payment`/`HostPayout`/`Review`/`HostReview` rows block (409 `LISTING_HAS_DEPENDENTS`); `ExternalCalendar`/`BookingInterest` rows are cleanup; one transaction with the audit row; after commit: dependent sweep + Spaces photo removal (objects still referenced anywhere are kept), outcomes on the audit row, `scripts/repair-deleted-listings.js` finishes interrupted work |
+| `DELETE /properties/admin/:id` | 401 | 403 | 403 | 200 | only `status:"processing"` or `"incomplete"` (drafts); `Booking`/`BookingNight`/`Payment`/`HostPayout`/`Review`/`HostReview` rows block (409 `LISTING_HAS_DEPENDENTS`); `ExternalCalendar`/`BookingInterest` rows are cleanup; one transaction with the audit row; after commit: dependent sweep + Spaces photo removal (objects still referenced anywhere are kept), outcomes on the audit row, `scripts/repair-deleted-listings.js` finishes interrupted work |
+| `DELETE /properties/host/:id` | 401 | 404 | 200 / 404 | 200 | the host's own `incomplete` draft or `processing` submission only (a foreign or unknown id → 404, no oracle); same blockers and cleanup as the admin route; audit row `actorKind:"host"`
 | `POST /prop-listing/` | 401 | 403 | 403 | 200 | |
 | `PUT /prop-listing/:id` | 401 | 403 | 403 | 200 | |
 | `DELETE /prop-listing/:id`, `POST /prop-listing/bulk-action` | 404 | 404 | 404 | 404 | routes removed |

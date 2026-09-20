@@ -549,4 +549,8 @@ test("uploads: authenticated, owner-bound keys, profile picture only on own acco
   assert.equal((await del(HT, `${BUCKET()}listings/${H._id}%2Fmine.jpg`)).status, 200, "%2F is the same object as / and the owner segment still matches");
   assert.deepEqual(storage().__mock.deleted, [`listings/${H._id}/mine.jpg`]);
   assert.equal((await h.api("POST", "/uploads/generate-presigned-url", { token: HT, body: { fileName: "x", fileType: "image/png" } })).status, 403);
+  // the raw direct-to-bucket path is retired for admins too: every public image goes through the sanitiser
+  const presigned = await h.api("POST", "/uploads/generate-presigned-url", { token: AT, body: { fileName: "x", fileType: "image/png" } });
+  assert.equal(presigned.status, 410, JSON.stringify(presigned.body));
+  assert.equal(presigned.body.code, "UPLOAD_PATH_RETIRED");
 });

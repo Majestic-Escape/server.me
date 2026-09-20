@@ -112,7 +112,7 @@ Verdict table (`services/kycVerdict.js`): `http_response_code === 200` and `resu
 | `POST /` (listing photos) | 401 | 200 | 200 | 200 | keys `listings/<actorId>/<uuid>-<name>` (owner-bound, unique) |
 | `POST /profile?userId=` | 401 | 403 | 200 | 200 | keys `profiles/<userId>/<uuid>-<name>` |
 | `DELETE /delete {url}` | 401 | 403 | 200 | 200 | own upload / own listing photo / own profile picture; foreign reference to the same object → 409 `OBJECT_IN_USE`; legacy unreferenced keys admin-only; non-bucket or path-confusing URLs → 400 `INVALID_KEY` |
-| `POST /generate-presigned-url` | 401 | 403 | 403 | 200 | dead (`SPACE_NAME` unset) |
+| `POST /generate-presigned-url` | 401 | 403 | 403 | 410 | retired (`UPLOAD_PATH_RETIRED`): a presigned PUT would bypass the image sanitiser; no shipped client uses it |
 
 ## Bank details & hosts (`/api/v1/hostData`, `/api/v1/hosts`)
 
@@ -241,6 +241,14 @@ the corpus, copy it here, re-pin both suites, and re-emit the mirror with
 Never hand-edit `utils/contactModeration.js`.
 
 ## Images
+Every public image reference (listing `photos[]`, `profilePicture`) must be an
+object of our bucket (`utils/publicTextPolicy.js` `checkListingImages` /
+`checkProfileImage`, `422 IMAGE_NOT_ALLOWED { fields }`): those went through the
+sanitiser or the legacy script, and a foreign host would otherwise see every
+viewer's address. Only entries new to the resource are judged, so a legacy
+reference never blocks an unrelated edit. The presigned direct-to-bucket route
+is retired (`410 UPLOAD_PATH_RETIRED`).
+
 `services/imageSanitizer.js`: uploads are decoded, re-encoded without metadata
 (EXIF GPS!), orientation baked, QR codes refused (`422 IMAGE_NOT_ALLOWED`),
 non-images refused (`400 INVALID_IMAGE`). Legacy objects: `scripts/strip-image-metadata.js`

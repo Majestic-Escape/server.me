@@ -25,7 +25,7 @@ const BookingNight = require("../models/BookingNight");
 const { utcDay } = require("../services/inventory");
 const { catalogueCache } = require("../utils/httpCache");
 const { CARD_PROJECTION, pageParams, escapeRegex } = require("../utils/listingProjection");
-const { checkListingWrite, refusePublicText, LISTING_TEXT_SELECT } = require("../utils/publicTextPolicy");
+const { checkListingWrite, refusePublicText, LISTING_TEXT_SELECT, checkListingImages, refuseImages } = require("../utils/publicTextPolicy");
 const { notifyListingChanged } = require("../services/listingChanged");
 // Host fields the approve / delist / update handlers read for their emails
 // and responses — never the whole user document.
@@ -1654,6 +1654,8 @@ exports.createListingProperty = async (req, res) => {
     // Contact lock-down: public text may not carry contact details or the exact address
     const policy = checkListingWrite(null, propertyData);
     if (!policy.ok) return refusePublicText(res, policy);
+    const images = checkListingImages(null, propertyData);
+    if (!images.ok) return refuseImages(res, images);
 
     const property = new ListingProperty({
       ...propertyData,
@@ -1681,6 +1683,8 @@ exports.adminUpdateListingProperty = async (req, res) => {
     // licence to publish contact details or the exact address.
     const policy = checkListingWrite(before, req.body);
     if (!policy.ok) return refusePublicText(res, policy);
+    const images = checkListingImages(before, req.body);
+    if (!images.ok) return refuseImages(res, images);
     const property = await ListingProperty.findOneAndUpdate(
       { _id: id },
       { $set: req.body },
@@ -1739,6 +1743,8 @@ exports.updateListingProperty = async (req, res) => {
     // so a number split across fields or across saves is refused too.
     const policy = checkListingWrite(before, req.body);
     if (!policy.ok) return refusePublicText(res, policy);
+    const images = checkListingImages(before, req.body);
+    if (!images.ok) return refuseImages(res, images);
     const property = await ListingProperty.findOneAndUpdate(
       { _id: id },
       { $set: req.body },

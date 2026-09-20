@@ -6,7 +6,6 @@
 // own the object (own upload, own listing's photo, own profile picture) or
 // be an admin, and refuses — even for owners — while anyone else's listing or
 // profile still references the same object (legacy keys can collide).
-const s3 = require("../config/digitalOcean.config");
 const User = require("../models/User");
 const ListingProperty = require("../models/ListingProperty");
 const authz = require("../middleware/authz");
@@ -113,25 +112,16 @@ exports.deleteImages = async (req, res) => {
   }
 };
 
+// Retired (contact lock-down): a presigned PUT lets raw bytes reach the public
+// bucket without services/imageSanitizer.js (EXIF GPS, QR codes). No shipped
+// client uses it (admin.site and the site upload through POST /uploads); it
+// answers 410 so it cannot be revived by setting an environment variable.
 exports.generatePresignedUrl = (req, res) => {
-  try {
-    const { fileName, fileType } = req.body;
-    const params = {
-      Bucket: process.env.SPACE_NAME,
-      Key: `uploads/${Date.now()}_${fileName}`,
-      ContentType: fileType,
-      ACL: "public-read",
-      Expires: 60 * 15,
-    };
-    s3.getSignedUrl("putObject", params, (err, url) => {
-      if (err) {
-        console.error("Presigned URL error:", err && err.message);
-        return res.status(500).json({ error: "Error generating presigned URL" });
-      }
-      res.json({ url });
-    });
-  } catch (error) {
-    console.error("Controller error:", error && error.message);
-    res.status(500).json({ error: "Internal server error" });
-  }
+  res.status(410).json({
+    success: false,
+    code: "UPLOAD_PATH_RETIRED",
+    message: "Direct-to-bucket uploads are retired: upload through POST /api/v1/uploads so the image is sanitised",
+    statusCode: 410,
+  });
 };
+

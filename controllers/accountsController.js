@@ -1,5 +1,5 @@
 const User = require("../models/User");
-const { checkPublicText, refusePublicText, addressTokensOf } = require("../utils/publicTextPolicy");
+const { checkPublicText, refusePublicText, addressTokensOf, checkProfileImage, refuseImages } = require("../utils/publicTextPolicy");
 const ListingProperty = require("../models/ListingProperty");
 
 // GET /api/profile - fetch user profile using email
@@ -88,6 +88,9 @@ exports.updateProfile = async (req, res) => {
       { addressTokens: listings.map(addressTokensOf) }
     );
     if (!policy.ok) return refusePublicText(res, policy);
+    // a profile picture must be one of our (sanitised) bucket objects
+    const image = checkProfileImage(user, body);
+    if (!image.ok) return refuseImages(res, image);
 
     user.dob = dob;
     user.phoneNumber = cleanString(phoneNumber, 20);

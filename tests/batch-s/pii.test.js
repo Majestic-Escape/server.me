@@ -467,6 +467,40 @@ test("every User schema path is classified as public, self-only or secret", () =
 // ---------------------------------------------------------------------------
 // Images
 // ---------------------------------------------------------------------------
+test("public image references must be our bucket's (sanitised) objects: foreign, javascript: and data: URLs are refused for listings and profile pictures; legacy references survive unrelated edits", async () => {
+  const OURS = `https://${process.env.DO_SPACES_BUCKET}.${process.env.REGION}.digitaloceanspaces.com/listings/${H._id}/room.jpg`;
+  const CDN = `https://${process.env.DO_SPACES_BUCKET}.${process.env.REGION}.cdn.digitaloceanspaces.com/listings/${H._id}/pool.jpg`;
+  const listing = await h.makeListing(H, { photos: [OURS] });
+  for (const url of ["https://evil.example.com/tracker.jpg", "http://evil.example.com/x.png", `https://${process.env.DO_SPACES_BUCKET}.${process.env.REGION}.digitaloceanspaces.com.evil.com/x.jpg`, "javascript:alert(1)", "data:image/png;base64,AAAA", "//evil.example.com/x.jpg"]) {
+    const r = await h.api("PUT", `/properties/update-listing-property/${listing._id}?submit=false&status=active`, { token: HT, body: { photos: [OURS, url] } });
+    assert.equal(r.status, 422, `${url}: ${r.status} ${JSON.stringify(r.body).slice(0, 120)}`);
+    assert.equal(r.body.code, "IMAGE_NOT_ALLOWED");
+    assert.deepEqual(r.body.fields, ["photos"]);
+    const stored = await ListingProperty().findById(listing._id).lean();
+    assert.deepEqual(stored.photos, [OURS], "nothing saved");
+    // admin writers are not exempt
+    const a = await h.api("PUT", `/prop-listing/${listing._id}`, { token: AT, body: { photos: [url] } });
+    assert.equal(a.status, 422, `admin ${url}: ${a.status}`);
+  }
+  const ok = await h.api("PUT", `/properties/update-listing-property/${listing._id}?submit=false&status=active`, { token: HT, body: { photos: [OURS, CDN] } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body).slice(0, 200));
+  // a legacy foreign reference already stored keeps working when the host edits something else
+  await ListingProperty().updateOne({ _id: listing._id }, { $set: { photos: ["https://images.unsplash.com/legacy.jpg", OURS] } });
+  const keep = await h.api("PUT", `/properties/update-listing-property/${listing._id}?submit=false&status=active`, { token: HT, body: { photos: ["https://images.unsplash.com/legacy.jpg", OURS], description: "A calm villa two minutes from the beach, ideal for families." } });
+  assert.equal(keep.status, 200, JSON.stringify(keep.body).slice(0, 200));
+  const add = await h.api("PUT", `/properties/update-listing-property/${listing._id}?submit=false&status=active`, { token: HT, body: { photos: ["https://images.unsplash.com/legacy.jpg", OURS, "https://images.unsplash.com/new.jpg"] } });
+  assert.equal(add.status, 422, "a NEW foreign reference is still refused");
+  // profile pictures
+  const bad = await h.api("PUT", `/accounts?email=${encodeURIComponent(G.email)}`, { token: GT, body: { firstName: G.firstName, lastName: G.lastName, dob: "1990-01-01", phoneNumber: G.phoneNumber, profilePicture: "https://evil.example.com/me.jpg" } });
+  assert.equal(bad.status, 422, JSON.stringify(bad.body).slice(0, 200));
+  assert.deepEqual(bad.body.fields, ["profilePicture"]);
+  const good = await h.api("PUT", `/accounts?email=${encodeURIComponent(G.email)}`, { token: GT, body: { firstName: G.firstName, lastName: G.lastName, dob: "1990-01-01", phoneNumber: G.phoneNumber, profilePicture: `https://${process.env.DO_SPACES_BUCKET}.${process.env.REGION}.digitaloceanspaces.com/profiles/${G._id}/me.jpg` } });
+  assert.equal(good.status, 200, JSON.stringify(good.body).slice(0, 200));
+  // the presigned direct-to-bucket path is retired for everyone
+  const presigned = await h.api("POST", "/uploads/generate-presigned-url", { token: AT, body: { fileName: "x.jpg", fileType: "image/jpeg" } });
+  assert.equal(presigned.status, 410);
+});
+
 test("uploads: metadata (incl. GPS) is stripped, orientation baked, formats kept, QR refused, non-images refused", async () => {
   const sharp = require("sharp");
   const { hasMetadata, sanitizeImage } = require("../../services/imageSanitizer");

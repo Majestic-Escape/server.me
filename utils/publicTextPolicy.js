@@ -83,7 +83,7 @@ function nameProblem(value, label) {
 
 module.exports = { checkPublicText, refusePublicText, addressTokensOf, listingTextParts, nameProblem, CONTACT_INFO_NOT_ALLOWED, REASON };
 
-const LISTING_TEXT_SELECT = "title description customRules safetyFeatures address line1 line2";
+const LISTING_TEXT_SELECT = "title description customRules safetyFeatures address line1 line2 photos";
 
 /**
  * Check a listing write on its resulting document: `existing` (may be null
@@ -99,3 +99,56 @@ function checkListingWrite(existing, patch) {
 
 module.exports.checkListingWrite = checkListingWrite;
 module.exports.LISTING_TEXT_SELECT = LISTING_TEXT_SELECT;
+
+// ---------------------------------------------------------------------------
+// Public image references (contact lock-down). Every public image must be an
+// object of our bucket: those go through services/imageSanitizer.js (no EXIF
+// GPS, no QR codes) or the legacy image script. A foreign URL would bypass the
+// sanitiser and let a third-party host see every viewer's address. Only
+// entries that are NEW for the resource are judged, so a legacy reference
+// never blocks an unrelated edit.
+// ---------------------------------------------------------------------------
+const storage = require("../services/storage");
+const IMAGE_NOT_ALLOWED = "IMAGE_NOT_ALLOWED";
+
+function isOurImageUrl(url) {
+  return typeof url === "string" && storage.keyFromUrl(url) !== null;
+}
+
+/**
+ * @param {Object|null} existing stored resource (listing or user), if any
+ * @param {Object} patch request body
+ * @param {Array<{ field: string, list?: boolean }>} fields image fields to judge
+ */
+function checkImageRefs(existing, patch, fields) {
+  const base = existing ? (typeof existing.toObject === "function" ? existing.toObject() : existing) : {};
+  const body = patch && typeof patch === "object" ? patch : {};
+  const bad = [];
+  for (const { field, list } of fields) {
+    if (body[field] === undefined || body[field] === null || body[field] === "") continue;
+    const incoming = list ? (Array.isArray(body[field]) ? body[field] : [body[field]]) : [body[field]];
+    const present = new Set(list ? (Array.isArray(base[field]) ? base[field] : []) : base[field] ? [base[field]] : []);
+    if (incoming.some((u) => !present.has(u) && !isOurImageUrl(u))) bad.push(field);
+  }
+  return { ok: bad.length === 0, fields: bad };
+}
+
+const checkListingImages = (existing, patch) => checkImageRefs(existing, patch, [{ field: "photos", list: true }]);
+const checkProfileImage = (existing, patch) => checkImageRefs(existing, patch, [{ field: "profilePicture" }]);
+
+function refuseImages(res, result) {
+  return res.status(422).json({
+    success: false,
+    code: IMAGE_NOT_ALLOWED,
+    message: "Images must be uploaded through the site — links to images hosted elsewhere are not allowed",
+    statusCode: 422,
+    fields: result.fields,
+  });
+}
+
+module.exports.checkImageRefs = checkImageRefs;
+module.exports.checkListingImages = checkListingImages;
+module.exports.checkProfileImage = checkProfileImage;
+module.exports.refuseImages = refuseImages;
+module.exports.isOurImageUrl = isOurImageUrl;
+module.exports.IMAGE_NOT_ALLOWED = IMAGE_NOT_ALLOWED;

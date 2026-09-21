@@ -21,7 +21,7 @@ const mongoose = require("mongoose");
 const sharp = require("sharp");
 const jsQR = require("jsqr");
 const storage = require("../services/storage");
-const { sanitizeImage } = require("../services/imageSanitizer");
+const { sanitizeImage, stripJpegMetadataLossless } = require("../services/imageSanitizer");
 
 const args = process.argv.slice(2);
 const opt = (name) => {
@@ -84,7 +84,7 @@ async function inspect(buffer) {
   } catch {
     /* undecodable raster: reported as invalid below */
   }
-  return { hasMeta, hasGps, qr, qrPayload, format: meta.format };
+  return { hasMeta, hasGps, qr, qrPayload, format: meta.format, orientation: meta.orientation || 1 };
 }
 
 async function main() {
@@ -128,19 +128,25 @@ async function main() {
     if (info.hasMeta || info.qr) flagged.push({ owner: ref.owner, key: storage.keyFromUrl(ref.url), gps: info.hasGps, qr: info.qr, qrPayload: info.qrPayload });
     if (APPLY && info.hasMeta) {
       const key = storage.keyFromUrl(ref.url);
-      const clean = await sanitizeImage(bytes, `image/${info.format}`).catch(() => null);
+      // An upright JPEG is cleaned losslessly (metadata segments dropped,
+      // pixels byte-identical); anything else goes through the sanitiser.
+      const lossless = info.format === "jpeg" ? stripJpegMetadataLossless(bytes, info.orientation) : null;
+      let clean = null;
+      if (lossless && !(await inspect(lossless)).hasMeta) clean = { buffer: lossless, mimetype: "image/jpeg", lossless: true };
+      else clean = await sanitizeImage(bytes, `image/${info.format}`).catch(() => null);
       if (!clean) {
         stats.invalid += 1;
         continue;
       }
       await storage.putObject(key, clean.buffer, clean.mimetype);
       stats.rewritten += 1;
+      if (clean.lossless) stats.lossless = (stats.lossless || 0) + 1;
       const after = await fetchBytes(ref.url).catch(() => null);
       if (after && (await inspect(after)).hasMeta) stats.cdnStale += 1;
     }
   }
   console.log(`[images] scanned ${stats.scanned}, with metadata ${stats.withMetadata}, with GPS ${stats.withGps}, with QR ${stats.qr}, invalid/unreachable ${stats.invalid}`);
-  if (APPLY) console.log(`[images] rewritten ${stats.rewritten}; CDN still serving old bytes for ${stats.cdnStale} (purge the CDN cache)`);
+  if (APPLY) console.log(`[images] rewritten ${stats.rewritten} (${stats.lossless || 0} losslessly — pixels untouched); CDN still serving old bytes for ${stats.cdnStale} (purge the CDN cache)`);
   for (const f of flagged) console.log(`  · ${f.owner} ${f.key}${f.gps ? " GPS" : ""}${f.qr ? ` QR (${f.qrPayload})` : ""}`);
   if (invalid.length) {
     const byClass = {};

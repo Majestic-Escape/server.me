@@ -166,6 +166,43 @@ async function makeVariants(master, { widths = VARIANT_WIDTHS, onVariant, limitI
   return { variants, errors, master: { width: meta.width, height: meta.height, format: meta.format } };
 }
 
+/**
+ * Lossless metadata strip for a baseline/progressive JPEG: every APP1 (EXIF,
+ * XMP), APP13 (IPTC/Photoshop) and COM segment is dropped, the JFIF header
+ * (APP0), the ICC profile (APP2) and every coding segment are copied
+ * untouched — the pixels stay byte-identical, so a legacy master can be
+ * cleaned without a second lossy encode. Returns null when the buffer is not
+ * a JPEG or the EXIF orientation is not upright (then the pixels must be
+ * rotated — the re-encoding sanitiser handles that case).
+ */
+function stripJpegMetadataLossless(buffer, orientation = 1) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) return null;
+  if (orientation && orientation !== 1) return null;
+  const out = [Buffer.from([0xff, 0xd8])];
+  let i = 2;
+  while (i + 4 <= buffer.length) {
+    if (buffer[i] !== 0xff) return null; // not a well-formed marker stream
+    const marker = buffer[i + 1];
+    if (marker === 0xd8 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01 || marker === 0xff) {
+      // standalone markers / padding
+      out.push(buffer.subarray(i, i + 2));
+      i += 2;
+      continue;
+    }
+    if (marker === 0xda) {
+      // start of scan: everything from here to the end is entropy-coded data (+ EOI); copy verbatim
+      out.push(buffer.subarray(i));
+      return Buffer.concat(out);
+    }
+    const len = buffer.readUInt16BE(i + 2);
+    if (len < 2 || i + 2 + len > buffer.length) return null;
+    const drop = marker === 0xe1 || marker === 0xed || marker === 0xfe || (marker >= 0xe3 && marker <= 0xef && marker !== 0xee);
+    if (!drop) out.push(buffer.subarray(i, i + 2 + len));
+    i += 2 + len;
+  }
+  return null;
+}
+
 /** True when a buffer carries EXIF/XMP/IPTC/ICC metadata (used by tests and the scan script). */
 async function hasMetadata(buffer) {
   const meta = await sharp(buffer).metadata();
@@ -178,4 +215,4 @@ function outputName(originalname, extension) {
   return `${base}.${extension}`;
 }
 
-module.exports = { sanitizeImage, makeVariants, hasMetadata, outputName, ImageRejected, MAX_INPUT_PIXELS, variantQuality, variantWebp, VARIANT_EFFORT };
+module.exports = { sanitizeImage, makeVariants, stripJpegMetadataLossless, hasMetadata, outputName, ImageRejected, MAX_INPUT_PIXELS, variantQuality, variantWebp, VARIANT_EFFORT };

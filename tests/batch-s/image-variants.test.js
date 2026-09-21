@@ -525,3 +525,31 @@ test("cost: uploads add no Mongo operations beyond the actor read; documents kee
   await User().updateOne({ _id: H._id }, { $unset: { profilePicture: 1 } });
   storage().resetMock();
 });
+
+// Legacy masters keep their pixels: an upright JPEG is cleaned by dropping
+// the metadata segments only (byte-identical entropy-coded data), and a
+// photo whose EXIF orientation is not upright is refused here so the
+// re-encoding sanitiser (which bakes the rotation) handles it.
+test("lossless JPEG metadata strip: EXIF/GPS/XMP/IPTC/comments gone, pixels byte-identical, ICC kept, rotated or non-JPEG refused", async () => {
+  const sharp = require("sharp");
+  const { stripJpegMetadataLossless, hasMetadata } = sanitizer();
+  const tagged = await sharp(PHOTO).withMetadata({ orientation: 1, exif: { IFD0: { Make: "Canary Cam", ImageDescription: "private note" }, GPS: { GPSLatitudeRef: "N", GPSLatitude: "15/1 32/1 40/1", GPSLongitudeRef: "E", GPSLongitude: "73/1 45/1 46/1" } } }).jpeg({ quality: 90 }).toBuffer();
+  assert.equal(await hasMetadata(tagged), true);
+  const clean = stripJpegMetadataLossless(tagged, 1);
+  assert.ok(clean && clean.length < tagged.length);
+  assert.equal(await hasMetadata(clean), false);
+  assert.ok(!clean.includes(Buffer.from("GPS")) && !clean.includes(Buffer.from("Canary")) && !clean.includes(Buffer.from("private note")));
+  const [a, b] = await Promise.all([sharp(tagged).raw().toBuffer(), sharp(clean).raw().toBuffer()]);
+  assert.ok(a.equals(b), "decoded pixels are identical");
+  const m = await sharp(clean).metadata();
+  assert.equal(m.format, "jpeg");
+  assert.deepEqual([m.width, m.height], [3000, 2000]);
+  assert.equal(stripJpegMetadataLossless(await sharp(PHOTO).withMetadata({ orientation: 6 }).jpeg().toBuffer(), 6), null, "not upright → the sanitiser path");
+  assert.equal(stripJpegMetadataLossless(await sharp(PHOTO).png().toBuffer(), 1), null, "PNG → the sanitiser path");
+  assert.equal(stripJpegMetadataLossless(Buffer.from("%PDF-1.4"), 1), null);
+  // an ICC profile is a colour instruction, not metadata: it survives
+  const withIcc = await sharp(PHOTO).withMetadata({ icc: "srgb", exif: { IFD0: { Make: "Canary" } } }).jpeg().toBuffer();
+  const cleanIcc = stripJpegMetadataLossless(withIcc, 1);
+  assert.equal(!!(await sharp(cleanIcc).metadata()).icc, !!(await sharp(withIcc).metadata()).icc);
+  assert.equal(await hasMetadata(cleanIcc), false);
+});

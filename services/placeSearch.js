@@ -20,6 +20,7 @@ const { approximateLocation } = require("../utils/sanitizeResponse");
 const { escapeRegex } = require("../utils/listingProjection");
 
 // What one active listing contributes to search: location fields only.
+const CITY_POP = 100000;
 const LOCATION_PROJECTION = {
   _id: 1,
   createdAt: 1,
@@ -96,17 +97,23 @@ function classify(doc) {
   let districtId = null;
   let talukaId = null;
   let liveName = null;
+  let wardKey = null;
   const localities = new Set();
   for (const field of ["city", "district"]) {
     const text = a[field];
     const norm = normalizePlaceText(text);
     if (!norm) continue;
     const cands = places.lookupExact(norm, { stateId });
-    const locs = cands.filter(places.isLocality);
+    // A name that is both a taluka / district and a small same-named village
+    // ("Bardez") means the area, as it does in search; the stay is then
+    // placed by its point like any other area-only address.
+    const admin = cands.some((p) => p.t === "district" || p.t === "taluka");
+    const locs = cands.filter((p) => places.isLocality(p) && (!admin || (p.p || 0) >= CITY_POP));
     if (locs.length) {
       localities.add(pickNearest(locs, point).id);
       continue;
     }
+    if (!cands.length && field === "district" && looksLikePlaceName(text)) wardKey = norm; // "Bouta Waddo"
     const district = cands.find((p) => p.t === "district");
     const taluka = cands.find((p) => p.t === "taluka");
     const state = cands.find((p) => p.t === "state");
@@ -117,6 +124,7 @@ function classify(doc) {
     // village the gazetteer lacks is findable the moment it goes live.
     if (!cands.length && field === "city" && looksLikePlaceName(text)) liveName = String(text).trim();
   }
+  const textLocalities = [...localities];
   if (point) {
     const admin = places.nearestSettlement(point, { stateId, maxKm: ADMIN_INFER_KM });
     if (admin) {
@@ -139,11 +147,38 @@ function classify(doc) {
     districtId = districtId || p.d || null;
     talukaId = talukaId || p.k || null;
   }
-  if (liveName) localities.add(liveId(stateId, normalizePlaceText(liveName)));
-  const cls = { id, point, stateId, districtId, talukaId, localities, liveName, raw: { city: a.city, district: a.district, state: a.state, pincode: a.pincode } };
+  if (liveName) {
+    const lid = liveId(stateId, normalizePlaceText(liveName));
+    localities.add(lid);
+    textLocalities.push(lid);
+  }
+  const cls = { id, point, stateId, districtId, talukaId, localities, textLocalities, wardKey, liveName, raw: { city: a.city, district: a.district, state: a.state, pincode: a.pincode } };
   if (memo.size >= MEMO_MAX) memo.clear();
   memo.set(key, cls);
   return { ...cls, createdAt: doc.createdAt };
+}
+
+/**
+ * Classify every active listing, then link wards: an area name the
+ * gazetteer lacks ("Bouta Waddo") that another listing in the same state
+ * pairs with a real village ("Assagao") belongs to that village too — so a
+ * stay saved as city "Goa", district "Bouta Waddo" is found under Assagao.
+ */
+function classifyAll(docs) {
+  const inv = docs.map(classify);
+  const wards = new Map(); // "<state>|<ward>" -> Set of locality ids named in text
+  for (const c of inv) {
+    if (!c.wardKey || !c.textLocalities.length) continue;
+    const k = `${c.stateId}|${c.wardKey}`;
+    if (!wards.has(k)) wards.set(k, new Set());
+    for (const id of c.textLocalities) wards.get(k).add(id);
+  }
+  if (!wards.size) return inv;
+  return inv.map((c) => {
+    if (!c.wardKey || c.textLocalities.length) return c;
+    const linked = wards.get(`${c.stateId}|${c.wardKey}`);
+    return linked ? { ...c, localities: new Set([...c.localities, ...linked]) } : c;
+  });
 }
 
 /** Live places (unknown villages named by active listings) with centroids. */
@@ -358,6 +393,7 @@ module.exports = {
   NEARBY_MAX_KM,
   OFFSET_TOLERANCE_KM,
   classify,
+  classifyAll,
   livePlaces,
   countPlaces,
   inPlace,

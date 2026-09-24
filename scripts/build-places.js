@@ -211,11 +211,24 @@ async function main() {
     out.push({ id: k.id, n, a: aliasesFor(k, n, o.aliases || []), t: "taluka", s: stateIdOf(k.a1), d: dg ? `gn:${dg}` : undefined, lat: round(k.lat, 4), lng: round(k.lng, 4), p: k.pop || undefined });
   }
 
+  // Unpopulated points that only repeat their own taluka / district name
+  // ("Bardez" near Colvale) are labels for the area, not villages: as a
+  // locality they would capture area-only addresses.
+  const areaNames = new Set();
+  for (const d of districts.values()) areaNames.add(`${d.a1}|${compactKey(normalizePlaceText(d.ascii.replace(/\s+district$/i, "")))}`);
+  for (const k of talukas.values()) areaNames.add(`${k.a1}|${compactKey(normalizePlaceText(k.ascii))}`);
+  let areaLabels = 0;
+
   // One locality per (district, name): GeoNames repeats some settlements.
   const byKey = new Map();
   for (const p of localities) {
     const sid = stateIdOf(p.a1);
     if (!sid) continue;
+    const curated = include.has(p.id) || popularIds.has(p.id) || !!(ov.names || {})[p.id];
+    if (!p.pop && !curated && areaNames.has(`${p.a1}|${compactKey(normalizePlaceText(p.ascii))}`)) {
+      areaLabels++;
+      continue;
+    }
     const o = (ov.names || {})[p.id] || {};
     const n = o.name || p.ascii;
     const key = `${p.a1}.${p.a2}|${compactKey(normalizePlaceText(n))}`;
@@ -255,6 +268,7 @@ async function main() {
   fs.writeFileSync(OUT, json + "\n");
   const counts = out.reduce((m, p) => ((m[p.t] = (m[p.t] || 0) + 1), m), {});
   const gz = require("zlib").gzipSync(json).length;
+  console.log(`skipped ${areaLabels} unpopulated area-label points`);
   console.log(`wrote ${path.relative(ROOT, OUT)}: ${stateOut.length} states, ${JSON.stringify(counts)}; ${(json.length / 1024).toFixed(0)} KB raw, ${(gz / 1024).toFixed(0)} KB gzip`);
 }
 

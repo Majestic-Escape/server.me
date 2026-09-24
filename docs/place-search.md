@@ -30,6 +30,12 @@ in the host wizard and were present on every active listing.
      release needed for a new village);
    - otherwise (text says only "Goa", a taluka, junk) the listing belongs to
      its nearest settlement within 5 km and every settlement within 1.5 km;
+   - a name that is both a taluka/district and a small village ("Bardez") is
+     read as the area; unpopulated GeoNames points that only repeat their
+     area name are dropped at build time;
+   - wards: an unknown letters-only area name ("Bouta Waddo") that another
+     listing in the same state pairs with a real village ("Assagao") links
+     to that village too (numbered names like "Sector 2" never link);
    - district / taluka come from the text or from the nearest settlement;
    - big towns (50k+) also claim listings inside their radius
      (≈ 1.5 + 1.2·√(pop/10k) km, +0.35 km privacy tolerance) **in the same

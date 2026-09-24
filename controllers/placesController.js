@@ -11,7 +11,7 @@ exports.getPlacesIndex = async (req, res) => {
   try {
     if (!catalogueCache(req, res)) return;
     const docs = await ListingProperty.find({ status: "active" }).select(placeSearch.LOCATION_PROJECTION).lean();
-    const inv = docs.map(placeSearch.classify);
+    const inv = placeSearch.classifyAll(docs);
     const live = placeSearch.livePlaces(inv);
     res.json(placeSearch.clientIndex(placeSearch.countPlaces(inv, live), live));
   } catch (error) {

@@ -349,6 +349,28 @@ test("countstays and the suggestion index use the same rules; the index carries 
 });
 
 // ---------------------------------------------------------------------------
+test("wards and area names: a shared unknown ward joins its village; a taluka-named city is the taluka", async () => {
+  const S = placeSearch();
+  const P = places();
+  // city "Bardez" is the taluka, not GeoNames' small "Bardez" point: placed by its coordinates
+  const bardezVillage = P.lookupExact("bardez").find((p) => p.t !== "taluka");
+  const cls = S.classify({ _id: new mongoose.Types.ObjectId(), address: { city: "Bardez", district: "Bardez", state: "Goa", latitude: 15.64, longitude: 73.83 } });
+  assert.equal(cls.talukaId, "gn:12681788", "Bardez taluka");
+  assert.ok(!bardezVillage || !cls.localities.has(bardezVillage.id), "not the same-named village point");
+  assert.ok(cls.localities.size > 0, "a real settlement near its point");
+  // a ward shared with a listing that names its village (letters only: a
+  // numbered "Sector 2" / "Phase-2" never links two stays)
+  const named = await h.makeListing(HOST, { title: "Ward Named Stay", address: addr("Kochi", "Pandyadi Waddo", 9.955, 76.26, "Kerala") });
+  const unnamed = await h.makeListing(HOST, { title: "Ward Unnamed Stay", address: addr("Kerala", "Pandyadi Waddo", 10.2, 76.45, "Kerala") });
+  try {
+    assert.deepEqual(sorted(titles(await q({ location: "kochi" }))), ["Ward Named Stay", "Ward Unnamed Stay"]);
+  } finally {
+    await ListingProperty().deleteMany({ _id: { $in: [named._id, unnamed._id] } });
+  }
+  assert.deepEqual(titles(await q({ location: "kochi" })), [], "gone with them");
+});
+
+// ---------------------------------------------------------------------------
 test("cost: ≤ 3 ops in every mode (with dates), ≤ 2 without; the edge caches date-less searches only", async () => {
   const cases = [
     [{ location: "panaji", from: "2027-06-10", to: "2027-06-11" }, 3],

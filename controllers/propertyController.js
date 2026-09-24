@@ -109,7 +109,7 @@ exports.getCustomSearch = async (req, res) => {
         },
       },
     ]);
-    const inv = (facets ? facets.inv : []).map(placeSearch.classify);
+    const inv = placeSearch.classifyAll(facets ? facets.inv : []);
     const openIds = new Set((facets ? facets.open : []).map((d) => String(d._id)));
     const live = placeSearch.livePlaces(inv);
     let counts = null;
@@ -203,7 +203,7 @@ exports.getPropertyCount = async (req, res) => {
     // the home card "Panjim" counts listings saved as "Panaji"; a name the
     // gazetteer does not know keeps the old exact city match. One read.
     const docs = await ListingProperty.find({ status: "active" }).select(placeSearch.LOCATION_PROJECTION).lean();
-    const inv = docs.map(placeSearch.classify);
+    const inv = placeSearch.classifyAll(docs);
     const live = placeSearch.livePlaces(inv);
     const extra = [...live.values()];
     const result = cities.map((name) => {

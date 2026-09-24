@@ -193,6 +193,7 @@ connectDB();
 const authRoutes = require("./routes/authRoutes");
 const accountsRoutes = require("./routes/accountsRoutes");
 const propertyRoutes = require("./routes/propertyRoutes");
+const placesRoutes = require("./routes/placesRoutes");
 const blogRoutes = require("./routes/blogRoutes");
 const registerRoutes = require("./routes/registerRoutes");
 const propListingRoutes = require("./routes/propListingRoutes");
@@ -230,6 +231,7 @@ app.get("/", (req, res) => {
 app.use("/api/v1/register", registerRoutes);
 app.use("/api/v1/login", loginRoutes);
 app.use("/api/v1/properties", propertyRoutes);
+app.use("/api/v1/places", placesRoutes);
 app.use("/api/v1/blogs", blogRoutes);
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/prop-listing", propListingRoutes);

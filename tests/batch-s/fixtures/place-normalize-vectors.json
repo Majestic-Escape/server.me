@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "vectors": [
+    {
+      "input": "Panaji",
+      "normalized": "panaji",
+      "compact": "panaji"
+    },
+    {
+      "input": "  PANAJI  ",
+      "normalized": "panaji",
+      "compact": "panaji"
+    },
+    {
+      "input": "Panají",
+      "normalized": "panaji",
+      "compact": "panaji"
+    },
+    {
+      "input": "Pañjim",
+      "normalized": "panjim",
+      "compact": "panjim"
+    },
+    {
+      "input": "Vasco-da-Gama",
+      "normalized": "vasco da gama",
+      "compact": "vascodagama"
+    },
+    {
+      "input": "Vasco da Gama",
+      "normalized": "vasco da gama",
+      "compact": "vascodagama"
+    },
+    {
+      "input": "J&K",
+      "normalized": "j and k",
+      "compact": "jandk"
+    },
+    {
+      "input": "Jammu & Kashmir",
+      "normalized": "jammu and kashmir",
+      "compact": "jammuandkashmir"
+    },
+    {
+      "input": "Narendra Nagar",
+      "normalized": "narendra nagar",
+      "compact": "narendranagar"
+    },
+    {
+      "input": "Narendranagar",
+      "normalized": "narendranagar",
+      "compact": "narendranagar"
+    },
+    {
+      "input": "Dona Paula",
+      "normalized": "dona paula",
+      "compact": "donapaula"
+    },
+    {
+      "input": "Colva, Goa",
+      "normalized": "colva goa",
+      "compact": "colvagoa"
+    },
+    {
+      "input": "North  Goa",
+      "normalized": "north goa",
+      "compact": "northgoa"
+    },
+    {
+      "input": "Old-Goa",
+      "normalized": "old goa",
+      "compact": "oldgoa"
+    },
+    {
+      "input": "St. Xavier's",
+      "normalized": "st xaviers",
+      "compact": "stxaviers"
+    },
+    {
+      "input": "Margão",
+      "normalized": "margao",
+      "compact": "margao"
+    },
+    {
+      "input": "Mapuçá",
+      "normalized": "mapuca",
+      "compact": "mapuca"
+    },
+    {
+      "input": "candolim beach",
+      "normalized": "candolim beach",
+      "compact": "candolimbeach"
+    },
+    {
+      "input": "near baga",
+      "normalized": "near baga",
+      "compact": "nearbaga"
+    },
+    {
+      "input": "123 Main",
+      "normalized": "123 main",
+      "compact": "123main"
+    },
+    {
+      "input": "<script>alert(1)</script>",
+      "normalized": "script alert 1 script",
+      "compact": "scriptalert1script"
+    },
+    {
+      "input": "a​b",
+      "normalized": "a b",
+      "compact": "ab"
+    },
+    {
+      "input": "ＰＡＮＡＪＩ",
+      "normalized": "panaji",
+      "compact": "panaji"
+    },
+    {
+      "input": "पणजी",
+      "normalized": "",
+      "compact": ""
+    },
+    {
+      "input": "",
+      "normalized": "",
+      "compact": ""
+    },
+    {
+      "input": "   ",
+      "normalized": "",
+      "compact": ""
+    },
+    {
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "normalized": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "compact": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "input": "Baga/Calangute",
+      "normalized": "baga calangute",
+      "compact": "bagacalangute"
+    },
+    {
+      "input": "Arpora (North Goa)",
+      "normalized": "arpora north goa",
+      "compact": "arporanorthgoa"
+    },
+    {
+      "input": "O'Brien Town",
+      "normalized": "obrien town",
+      "compact": "obrientown"
+    },
+    {
+      "input": "Café Goa",
+      "normalized": "cafe goa",
+      "compact": "cafegoa"
+    },
+    {
+      "input": "Kodaikānāl",
+      "normalized": "kodaikanal",
+      "compact": "kodaikanal"
+    },
+    {
+      "input": "Dharamsālā",
+      "normalized": "dharamsala",
+      "compact": "dharamsala"
+    },
+    {
+      "input": "Vasco\tda\nGama",
+      "normalized": "vasco da gama",
+      "compact": "vascodagama"
+    },
+    {
+      "input": "%20panaji",
+      "normalized": "20panaji",
+      "compact": "20panaji"
+    },
+    {
+      "input": "panaji%2C goa",
+      "normalized": "panaji 2c goa",
+      "compact": "panaji2cgoa"
+    }
+  ]
+}

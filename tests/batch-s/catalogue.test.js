@@ -162,7 +162,8 @@ test("cards: envelopes unchanged, card fields present, sensitive fields absent, 
   assert.equal((await raw("/properties/dynamic?limit=4")).json.properties[0].title, "Card 6", "legacy twin behaves identically");
 
   const s = await raw("/properties/search-properties?location=Panaji&limit=4");
-  assert.deepEqual(Object.keys(s.json).sort(), ["data", "pagination"]);
+  // place search adds the (additive) `search` block: how the query was read
+  assert.deepEqual(Object.keys(s.json).sort(), ["data", "pagination", "search"]);
   assert.deepEqual(Object.keys(s.json.pagination).sort(), ["totalCount", "totalPages"]);
   assert.deepEqual(s.json.data.map((p) => p.title), ["Card 6", "Card 5", "Card 4", "Card 3"]);
   const s2 = await raw("/properties/search-properties?location=Panaji&limit=4&page=2");

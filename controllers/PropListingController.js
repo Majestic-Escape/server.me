@@ -8,6 +8,9 @@ const {
 const authz = require("../middleware/authz");
 const { checkListingWrite, refusePublicText, LISTING_TEXT_SELECT, checkListingImages, refuseImages } = require("../utils/publicTextPolicy");
 const { notifyListingChanged } = require("../services/listingChanged");
+const { escapeRegex } = require("../utils/listingProjection");
+
+const LISTING_STATUSES = ["incomplete", "processing", "inactive", "active"];
 
 // Host dashboard stage card. Used to read req.params.email on a route that
 // has no :email param, so the filter was { email: undefined } — which
@@ -52,8 +55,18 @@ exports.getListingStatus = async (req, res) => {
 
 exports.getAllPListings = async (req, res) => {
   const { page, status, sortBy, searchTerm, hostEmail } = req.query;
+  // One string per parameter: `status[$ne]=x` / `searchTerm[]=` never
+  // reach the query as operators.
+  for (const [name, value] of Object.entries({ page, status, sortBy, searchTerm, hostEmail })) {
+    if (value !== undefined && typeof value !== "string") {
+      return res.status(400).json({ success: false, code: "INVALID_PARAM", message: `${name} must be a single value`, statusCode: 400 });
+    }
+  }
+  if (status && status !== "all" && !LISTING_STATUSES.includes(status)) {
+    return res.status(400).json({ success: false, code: "INVALID_PARAM", message: "unknown status", statusCode: 400 });
+  }
   const limit = 10; // Items per page
-  const skip = page ? (parseInt(page) - 1) * limit : 0;
+  const skip = page ? (Math.max(parseInt(page, 10) || 1, 1) - 1) * limit : 0;
 
   try {
     let query = { status: { $ne: "incomplete" } };
@@ -61,18 +74,21 @@ exports.getAllPListings = async (req, res) => {
       query.status = status;
     }
     if (searchTerm) {
+      // Literal, bounded text — was a raw regex (ReDoS / match-anything).
+      const term = escapeRegex(searchTerm.trim().slice(0, 100));
       query.$or = [
-        { title: { $regex: searchTerm, $options: "i" } },
-        { "address.city": { $regex: searchTerm, $options: "i" } },
+        { title: { $regex: term, $options: "i" } },
+        { "address.city": { $regex: term, $options: "i" } },
       ];
     }
+    let own = false;
     if (hostEmail) {
       // Contact lock-down: only the host themselves (or an admin) may list by
       // e-mail — otherwise a known address revealed whether it belongs to a
       // host and which listings are theirs.
       const actor = req.actor || null;
-      const own = actor && actor.kind === "user" && actor.user && actor.user.email &&
-        String(actor.user.email).toLowerCase() === String(hostEmail).trim().toLowerCase();
+      own = !!(actor && actor.kind === "user" && actor.user && actor.user.email &&
+        String(actor.user.email).toLowerCase() === String(hostEmail).trim().toLowerCase());
       if (!authz.isAdmin(actor) && !own) {
         return res.status(actor ? 403 : 401).json({
           success: false,
@@ -82,6 +98,12 @@ exports.getAllPListings = async (req, res) => {
         });
       }
       query.hostEmail = hostEmail;
+    }
+    // Drafts, listings in review and delisted ones are not public: anyone
+    // but an admin or the host listing their own sees active listings only
+    // (anonymous `?status=incomplete` used to list every draft).
+    if (!own && !authz.isAdmin(req.actor || null)) {
+      query.status = "active";
     }
 
     let sortQuery = {};

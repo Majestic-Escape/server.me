@@ -371,6 +371,90 @@ test("wards and area names: a shared unknown ward joins its village; a taluka-na
 });
 
 // ---------------------------------------------------------------------------
+test("names and keywords: a guest who remembers the stay but not the place; type + place; masked titles are not searchable", async () => {
+  const mk = (title, propertyType, a, extra = {}) => h.makeListing(HOST, { title, propertyType, address: a, amenities: ["wifi"], ...extra });
+  const dev = await mk("Dev Bhoomi Retreat - Classic Tent", "tent", addr("Dharamshala", "Dari", 32.19, 76.33, "Himachal Pradesh"), { amenities: ["wifi", "mountain_view"] });
+  const casa = await mk("Casa Singh: Luxury 4BHK Villa call 9876543210", "villa", addr("Morjim", "Morjim", 15.64, 73.74), { amenities: ["pool", "wifi"] });
+  const rev = await mk("Revathi Resorts - Standard Room", "hotel", addr("Narendra Nagar", "Narendra Nagar", 30.2, 78.32, "Uttarakhand"));
+  const ids = [dev, casa, rev].map((x) => x._id);
+  try {
+    const first = async (location) => {
+      const r = await q({ location, limit: "50" });
+      return { mode: r.json.search.mode, place: r.json.search.place && r.json.search.place.name, type: r.json.search.propertyType, reason: r.json.search.reason, titles: titles(r) };
+    };
+    // the name, partly, with a typo, words run together, words from title + place
+    for (const location of ["Dev Bhoomi Retreat", "dev bhoo", "devbhoomi", "dev bhomi retreat", "classic tent", "Retreat Himachal", "dev bhoomi dharamshala"]) {
+      const r = await first(location);
+      assert.equal(r.mode, "text", location);
+      assert.equal(r.titles[0], "Dev Bhoomi Retreat - Classic Tent", location);
+    }
+    assert.equal((await first("casa singh")).titles[0], "Casa Singh: Luxury 4BHK Villa call •••", "found by name, shown masked");
+    assert.deepEqual((await first("pool villa goa")).titles, ["Casa Singh: Luxury 4BHK Villa call •••"], "type + amenity + state words");
+    assert.deepEqual((await first("luxury 4bhk")).titles.length, 1);
+    // type + place
+    let r = await first("Tent in Dharamshala");
+    assert.deepEqual([r.mode, r.place, r.type, r.titles], ["place", "Dharamshala", "tent", ["Dev Bhoomi Retreat - Classic Tent"]]);
+    r = await first("Hotel in Narendra Nagar");
+    assert.deepEqual([r.mode, r.place, r.type, r.titles], ["place", "Narendranagar", "hotel", ["Revathi Resorts - Standard Room"]]);
+    r = await first("Villa in Morjim");
+    assert.deepEqual([r.place, r.type, r.titles], ["Morjim", "villa", ["Casa Singh: Luxury 4BHK Villa call •••"]]);
+    r = await first("villas in goa");
+    assert.deepEqual([r.place, r.type, r.titles], ["Goa", "villa", ["Casa Singh: Luxury 4BHK Villa call •••"]], "only villas, only Goa");
+    r = await first("morjim villas");
+    assert.deepEqual([r.place, r.type], ["Morjim", "villa"]);
+    r = await first("villas");
+    assert.deepEqual([r.mode, r.type, r.titles.length], ["all", "villa", 1]);
+    r = await first("villa in morjm");
+    assert.deepEqual([r.place, r.type], ["Morjim", "villa"], "typo in the place");
+    r = await first("hotel in panaji");
+    assert.deepEqual([r.mode, r.place, r.reason], ["nearby", "Panaji", "filters"], "Panaji has stays, no hotel: nearest hotels");
+    assert.ok(r.titles.every((t) => t === "Revathi Resorts - Standard Room") || r.titles.length === 0, "nearby keeps the type");
+    // precedence: places first, typos in places still corrected
+    assert.equal((await first("morjim")).mode, "place");
+    assert.deepEqual([(await first("panjm")).place, (await first("panjm")).mode], ["Panaji", "place"]);
+    // a phone number (or half) hidden in a title is not a search key
+    for (const location of ["9876543210", "98765", "543210"]) assert.deepEqual((await first(location)).titles, [], location);
+    // an explicit type chip wins over a type word in the text
+    const chip = await q({ location: "villa in morjim", propertyType: "hotel" });
+    assert.equal(chip.json.search.propertyType, null);
+    assert.deepEqual(titles(chip), []);
+    // dates: the name matches but the stay is booked → empty with the reason
+    await BookingNight().create({ propertyId: dev._id, date: new Date(Date.UTC(2027, 7, 1)), bookingId: new mongoose.Types.ObjectId(), kind: "block", expiresAt: null });
+    const booked = await q({ location: "dev bhoomi", from: "2027-08-01", to: "2027-08-02" });
+    assert.deepEqual([booked.json.search.mode, booked.json.search.reason, titles(booked)], ["text", "dates", []]);
+
+    // stay-name suggestions
+    const sug = async (qs) => raw(`/places/stays?${qs}`);
+    let sres = await sug("q=dev%20bhoo");
+    assert.equal(sres.status, 200);
+    assert.deepEqual(sres.json.stays, [{ id: String(dev._id), title: "Dev Bhoomi Retreat - Classic Tent", type: "tent", label: "Dharamshala, Himachal Pradesh" }]);
+    assert.equal(sres.headers["cdn-cache-control"], "public, s-maxage=300, stale-while-revalidate=120");
+    assert.equal(sres.headers["vercel-cache-tag"], "listings");
+    sres = await sug("q=casa");
+    assert.equal(sres.json.stays[0].title, "Casa Singh: Luxury 4BHK Villa call •••", "masked like the card");
+    assert.ok(!sres.text.includes("9876543210") && !/"latitude"|"street"|hostEmail/.test(sres.text));
+    assert.deepEqual((await sug("q=goa")).json.stays, [], "a place alone is not a name match");
+    assert.deepEqual((await sug("q=de")).json.stays, [], "under 3 letters");
+    assert.deepEqual((await sug("q=98765")).json.stays, []);
+    for (const bad of ["q[]=x", "q[$ne]=x", "q=" + "x".repeat(101), ""]) assert.equal((await sug(bad)).status, 400, bad);
+    startCounting();
+    await sug("q=revathi");
+    const sops = stopCounting();
+    assert.ok(sops.length <= 2, sops.join(", "));
+    startCounting();
+    await sug("q=zz");
+    assert.equal(stopCounting().length, 0, "short queries never reach the database");
+    // inactive stays are never suggested
+    await ListingProperty().updateOne({ _id: rev._id }, { $set: { status: "inactive" } });
+    assert.deepEqual((await sug("q=revathi")).json.stays, []);
+    assert.deepEqual(titles(await q({ location: "revathi resorts" })), []);
+  } finally {
+    await ListingProperty().deleteMany({ _id: { $in: ids } });
+    await BookingNight().deleteMany({ propertyId: { $in: ids } });
+  }
+});
+
+// ---------------------------------------------------------------------------
 test("cost: ≤ 3 ops in every mode (with dates), ≤ 2 without; the edge caches date-less searches only", async () => {
   const cases = [
     [{ location: "panaji", from: "2027-06-10", to: "2027-06-11" }, 3],

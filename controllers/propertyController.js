@@ -114,7 +114,7 @@ exports.getCustomSearch = async (req, res) => {
     const live = placeSearch.livePlaces(inv);
     let counts = null;
     const stays = (id) => (counts || (counts = placeSearch.countPlaces(inv, live))).get(id) || 0;
-    const scope = placeSearch.resolveScope({ placeId: params.placeId, point: params.point, location: params.location }, { live, stays, inv });
+    const scope = placeSearch.resolveScope({ placeId: params.placeId, point: params.point, location: params.location, explicitType: !!params.filter.propertyType }, { live, stays, inv });
     const { rows, search } = placeSearch.plan(scope, { inv, openIds, booked });
     search.query = params.location || null;
 

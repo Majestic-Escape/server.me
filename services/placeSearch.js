@@ -18,8 +18,12 @@ const places = require("../utils/places");
 const { normalizePlaceText, compactKey } = require("../utils/placeText");
 const { approximateLocation } = require("../utils/sanitizeResponse");
 const { escapeRegex } = require("../utils/listingProjection");
+const { boundedEditDistance } = require("../utils/placeText");
+const { maskContactInfo } = require("../utils/contactModeration");
+const { extractPropertyType, typeWords, CONNECTORS } = require("../utils/propertyTypes");
 
-// What one active listing contributes to search: location fields only.
+// What one active listing contributes to search: location fields, plus the
+// title / type / amenities for keyword search ("Dev Bhoomi Retreat").
 const CITY_POP = 100000;
 const LOCATION_PROJECTION = {
   _id: 1,
@@ -30,6 +34,9 @@ const LOCATION_PROJECTION = {
   "address.pincode": 1,
   "address.latitude": 1,
   "address.longitude": 1,
+  title: 1,
+  propertyType: 1,
+  amenities: 1,
 };
 const NEARBY_MAX_KM = 250; // nearest-stays fallback / near-me cut-off
 const BIG_TOWN_POP = 50000; // towns whose radius also claims neighbourhoods
@@ -84,7 +91,7 @@ function classify(doc) {
   const a = doc.address || {};
   const lat = a.latitude;
   const lng = a.longitude;
-  const key = `${id}|${a.city}|${a.district}|${a.state}|${a.pincode}|${lat}|${lng}`;
+  const key = `${id}|${a.city}|${a.district}|${a.state}|${a.pincode}|${lat}|${lng}|${doc.title}|${doc.propertyType}|${Array.isArray(doc.amenities) ? doc.amenities.join(",") : ""}`;
   const hit = memo.get(key);
   if (hit) return { ...hit, createdAt: doc.createdAt };
 
@@ -153,9 +160,78 @@ function classify(doc) {
     textLocalities.push(lid);
   }
   const cls = { id, point, stateId, districtId, talukaId, localities, textLocalities, wardKey, liveName, raw: { city: a.city, district: a.district, state: a.state, pincode: a.pincode } };
+  Object.assign(cls, keywordFields(doc, cls));
   if (memo.size >= MEMO_MAX) memo.clear();
   memo.set(key, cls);
   return { ...cls, createdAt: doc.createdAt };
+}
+
+// Words a listing can be found by. The title is taken as the public card
+// shows it (contact details masked) and tokens with 3+ digits are dropped,
+// so a phone number (or half of one) hidden in a title can never be found
+// by searching for it.
+function keywordFields(doc, cls) {
+  const title = maskContactInfo(String(doc.title || "").slice(0, 200));
+  const titleNorm = normalizePlaceText(title);
+  const titleTokens = titleNorm.split(" ").filter((t) => t && !/\d{3,}/.test(t));
+  const words = new Set(titleTokens);
+  const add = (text) => {
+    for (const t of normalizePlaceText(text).split(" ")) if (t && !/\d{3,}/.test(t)) words.add(t);
+  };
+  for (const w of typeWords(doc.propertyType)) words.add(w);
+  add(cls.raw.city);
+  add(cls.raw.district);
+  add(cls.raw.state);
+  for (const id of [...cls.localities, cls.talukaId, cls.districtId, cls.stateId]) placeWords(id, add);
+  if (cls.liveName) add(cls.liveName);
+  if (Array.isArray(doc.amenities)) for (const x of doc.amenities.slice(0, 60)) add(String(x).replace(/_/g, " "));
+  const titleNormKept = titleTokens.join(" ");
+  return { titleNorm: titleNormKept, titleCompact: titleNormKept.replace(/ /g, ""), titleTokens, words, propertyType: String(doc.propertyType || "").toLowerCase() };
+}
+
+function placeWords(id, add) {
+  const p = id && places.placeById(id);
+  if (!p) return;
+  add(p.n);
+  for (const alias of p.a || []) add(alias);
+}
+
+// What was typed, as keyword tokens: connectors ("in", "stay") and single
+// characters dropped, at most 8.
+function keywordTokens(norm) {
+  return String(norm || "").split(" ").filter((t) => t.length >= 2 && !CONNECTORS.has(t)).slice(0, 8);
+}
+
+// Every token must match a word of the listing (as a prefix, so partial
+// typing works; or one typo in a title word of 5+ letters). Best first:
+// 0 the phrase is in the title, 1 every token is in the title, 2 mixed
+// (title / type / location / amenities), 3 no title word at all.
+function keywordScore(c, tokens, phrase) {
+  if (!tokens.length) return -1;
+  let inTitle = 0;
+  for (const q of tokens) {
+    let titleHit = c.titleTokens.some((w) => w.startsWith(q));
+    if (!titleHit && q.length >= 5) {
+      titleHit =
+        c.titleCompact.includes(q) || // words typed together: "devbhoomi"
+        c.titleTokens.some((w) => w[0] === q[0] && Math.abs(w.length - q.length) <= 1 && boundedEditDistance(q, w, 1) <= 1);
+    }
+    if (titleHit) {
+      inTitle++;
+      continue;
+    }
+    let hit = false;
+    for (const w of c.words) {
+      if (w.startsWith(q)) {
+        hit = true;
+        break;
+      }
+    }
+    if (!hit) return -1;
+  }
+  if (phrase && c.titleNorm.includes(phrase)) return 0;
+  if (inTitle === tokens.length) return 1;
+  return inTitle ? 2 : 3;
 }
 
 /**
@@ -177,7 +253,10 @@ function classifyAll(docs) {
   return inv.map((c) => {
     if (!c.wardKey || c.textLocalities.length) return c;
     const linked = wards.get(`${c.stateId}|${c.wardKey}`);
-    return linked ? { ...c, localities: new Set([...c.localities, ...linked]) } : c;
+    if (!linked) return c;
+    const words = new Set(c.words);
+    for (const id of linked) placeWords(id, (text) => normalizePlaceText(text).split(" ").forEach((t) => t && words.add(t)));
+    return { ...c, localities: new Set([...c.localities, ...linked]), words };
   });
 }
 
@@ -252,7 +331,7 @@ function countPlaces(classes, live) {
  *   placeId (authoritative) > lat,lng ("near me") > location text > everything.
  * An unknown placeId (renamed village, stale link) falls back to the text.
  */
-function resolveScope({ placeId, point, location }, { live, stays, inv = [] }) {
+function resolveScope({ placeId, point, location, explicitType = false }, { live, stays, inv = [] }) {
   const extra = [...live.values()];
   // "stays within 50 km" — breaks typo ties towards where the stays are
   const nearStock = (p) => Number.isFinite(p.lat) && inv.some((c) => c.point && places.distanceKm(c.point, p) <= 50);
@@ -265,7 +344,28 @@ function resolveScope({ placeId, point, location }, { live, stays, inv = [] }) {
   }
   if (point) return { kind: "near", point };
   if (location) {
-    const r = places.resolveQuery(location, { extra, stays, nearStock });
+    const opts = { extra, stays, nearStock };
+    // 1. a place, exactly ("panjim", "North Goa", "Colva, Goa")
+    const exact = places.resolveQuery(location, { ...opts, fuzzy: false });
+    if (exact && exact.place) return { kind: "place", place: exact.place, corrected: false, alternatives: exact.alternatives || [] };
+    // 2. a property type and a place ("tent in dharamshala", "north goa villas", "villas")
+    const norm = normalizePlaceText(location);
+    const typed = explicitType ? null : extractPropertyType(norm);
+    if (typed && !typed.rest) return { kind: "all", propertyType: typed.type };
+    if (typed) {
+      const r = places.resolveQuery(typed.rest, { ...opts, fuzzy: false });
+      if (r && r.place) return { kind: "place", place: r.place, propertyType: typed.type, corrected: false, alternatives: r.alternatives || [] };
+    }
+    // 3. a stay by its name or words ("Dev Bhoomi Retreat", "classic tent", "pool villa goa")
+    const tokens = keywordTokens(norm);
+    const phrase = tokens.join(" ");
+    if (tokens.length && inv.some((c) => keywordScore(c, tokens, phrase) >= 0)) return { kind: "keyword", query: location, tokens, phrase };
+    // 4. a typo in a place, with or without a type ("villa in morjm", "panjm")
+    if (typed) {
+      const r = places.resolveQuery(typed.rest, opts);
+      if (r && r.place) return { kind: "place", place: r.place, propertyType: typed.type, corrected: r.corrected, alternatives: r.alternatives || [] };
+    }
+    const r = places.resolveQuery(location, opts);
     if (r && r.place) return { kind: "place", place: r.place, corrected: r.corrected, alternatives: r.alternatives || [] };
     return {
       kind: "text",
@@ -317,8 +417,23 @@ function publicLive(p) {
  * empty (never because a later page is), and keeps every other filter.
  */
 function plan(scope, { inv, openIds, booked }) {
-  const available = (c) => openIds.has(c.id) && !booked.has(c.id);
-  const meta = { mode: scope.kind, query: null, place: null, corrected: false, alternatives: [], reason: null, nearestKm: null, suggestions: [] };
+  // a type named in the text ("villas in goa") filters like the type chip
+  const typeOk = scope.propertyType ? (c) => c.propertyType === scope.propertyType : () => true;
+  const open = (c) => openIds.has(c.id) && typeOk(c);
+  const available = (c) => open(c) && !booked.has(c.id);
+  const meta = { mode: scope.kind, query: null, place: null, propertyType: scope.propertyType || null, corrected: false, alternatives: [], reason: null, nearestKm: null, suggestions: [] };
+  if (scope.kind === "keyword") {
+    meta.mode = "text";
+    meta.query = scope.query;
+    const scored = [];
+    for (const c of inv) {
+      const s = keywordScore(c, scope.tokens, scope.phrase);
+      if (s >= 0) scored.push([c, s]);
+    }
+    const rows = scored.filter(([c]) => available(c)).sort((x, y) => x[1] - y[1] || newestFirst(x[0], y[0])).map(([c]) => c);
+    if (!rows.length) meta.reason = scored.some(([c]) => openIds.has(c.id)) ? "dates" : "filters";
+    return { rows, search: meta };
+  }
   if (scope.kind === "all") {
     return { rows: inv.filter(available).sort(newestFirst), search: meta };
   }
@@ -350,7 +465,7 @@ function plan(scope, { inv, openIds, booked }) {
   const rows = inside.filter(available).sort(newestFirst);
   if (rows.length) return { rows, search: { ...meta, mode: "place" } };
   meta.mode = "nearby";
-  meta.reason = !inside.length ? "no_inventory" : !inside.some((c) => openIds.has(c.id)) ? "filters" : "dates";
+  meta.reason = !inside.length ? "no_inventory" : !inside.some((c) => open(c)) ? "filters" : "dates";
   const origin = Number.isFinite(place.lat) && Number.isFinite(place.lng) ? { lat: place.lat, lng: place.lng } : null;
   const near = origin ? byDistance(origin, inv.filter((c) => available(c) && !inPlace(c, place))) : [];
   meta.nearestKm = near.length ? near[0].distanceKm : null;
@@ -394,6 +509,8 @@ module.exports = {
   OFFSET_TOLERANCE_KM,
   classify,
   classifyAll,
+  keywordTokens,
+  keywordScore,
   livePlaces,
   countPlaces,
   inPlace,

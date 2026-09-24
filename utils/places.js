@@ -257,7 +257,7 @@ function fuzzyHits(c, budget, extra) {
  * `stays(id)` the active-listing count, `nearStock(place)` whether stays
  * exist near it — both only break ties between otherwise equal candidates.
  */
-function resolveQuery(text, { extra = [], stays = null, nearStock = null } = {}) {
+function resolveQuery(text, { extra = [], stays = null, nearStock = null, fuzzy = true } = {}) {
   const norm = normalizePlaceText(text);
   if (!norm) return null;
   const ctx = { stays, nearStock };
@@ -294,6 +294,7 @@ function resolveQuery(text, { extra = [], stays = null, nearStock = null } = {})
     if (heads.length) return pick(heads, compactKey(h), false);
   }
 
+  if (!fuzzy) return null;
   // Typo tolerance: the best candidate within the edit budget, only when it
   // clearly wins (a single place, or one with stays / near stays / curated
   // where the others have none, or ten times the population).

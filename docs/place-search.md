@@ -71,10 +71,35 @@ in the host wizard and were present on every active listing.
    measured from each listing's **public approximate point**
    (`approximateLocation`), so search reveals nothing the stay page doesn't.
 
+## Names and keywords (a guest remembers the stay, not the place)
+Order in which typed text is read (`services/placeSearch.resolveScope`):
+1. an exact place ("panjim", "North Goa", "Colva, Goa");
+2. a property type and a place ("tent in dharamshala", "north goa villas",
+   "villas") — the type filters like the type chip (`utils/propertyTypes.js`:
+   villa/villas, hotel/resort, apartment/flat, guest house, farm stay,
+   camp/glamping → tent, …), and the nearby fallback keeps it;
+3. a stay by its name or words ("Dev Bhoomi Retreat", "dev bhoo",
+   "devbhoomi", "classic tent", "pool villa goa", "luxury 4bhk"): every
+   word must match the listing's title, type, location names or amenities
+   (prefix; one typo allowed in title words of 5+ letters); ranked phrase in
+   title > all words in title > mixed, then newest;
+4. a typo in a place ("panjm", "villa in morjm");
+5. the legacy literal match / PIN code, with "did you mean".
+Titles are searched in their public, contact-masked form and tokens with 3+
+digits are never search keys, so a phone number (or part of one) hidden in a
+title cannot be found by searching for it.
+
+`GET /places/stays?q=` — up to 5 stays whose NAME matches what is being
+typed (title required to match; a place alone is the destination list's
+job), titles exactly as the card shows them. Edge-cached per query; nothing
+under 3 letters touches the database; ≤ 2 small reads per cache miss. The
+site asks after a 250 ms pause, so typing a name costs a few requests, not
+one per keystroke.
+
 ## API contract (additive)
 `GET /properties/search-properties` — new optional params `placeId`, `lat`,
 `lng`; response `{ data, pagination, search }` where
-`search = { mode, query, place:{id,name,type,label}|null, corrected,
+`search = { mode, query, place:{id,name,type,label}|null, propertyType, corrected,
 alternatives[], reason|null, nearestKm|null, suggestions[] }` and cards carry
 `distanceKm` in `nearby` / `near` mode. Old clients (current site build,
 mobile prototype) send `location` and get better results in the same shape.

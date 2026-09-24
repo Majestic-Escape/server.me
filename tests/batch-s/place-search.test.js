@@ -401,7 +401,8 @@ test("resolver: exact, qualified, generic words, typos only when unambiguous; no
   assert.ok(P.resolveQuery("aurangabad").alternatives.length >= 1, "namesakes offered");
 
   const fixture = path.join(__dirname, "fixtures", "place-normalize-vectors.json");
-  const sha = crypto.createHash("sha256").update(fs.readFileSync(fixture)).digest("hex");
+  // line endings normalised: git may check the file out with CRLF on Windows
+  const sha = crypto.createHash("sha256").update(fs.readFileSync(fixture, "utf8").replace(/\r\n/g, "\n")).digest("hex");
   // Pinned: the customer site asserts the same file (user.website
   // src/lib/places/__fixtures__). Change both or neither.
   assert.equal(sha, "e1bc35da8ac20d7f4c5604a0bd5707e7f452a44df48907c0ced8ea52cbd9c7d2");

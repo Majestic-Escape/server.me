@@ -23,12 +23,15 @@ const {
 // Batch P — public catalogue: card projection, edge-cache policy, change
 // notifications and the authoritative night ledger for date searches.
 const BookingNight = require("../models/BookingNight");
-const { utcDay } = require("../services/inventory");
 const { catalogueCache } = require("../utils/httpCache");
-const { CARD_PROJECTION, pageParams, escapeRegex } = require("../utils/listingProjection");
+const { CARD_PROJECTION, pageParams } = require("../utils/listingProjection");
 const { checkListingWrite, refusePublicText, LISTING_TEXT_SELECT, checkListingImages, refuseImages } = require("../utils/publicTextPolicy");
 const { notifyListingChanged } = require("../services/listingChanged");
 const authz = require("../middleware/authz");
+// Place-aware search (docs/place-search.md).
+const places = require("../utils/places");
+const placeSearch = require("../services/placeSearch");
+const { parseSearchQuery, refuseSearchParam, SearchParamError } = require("../utils/searchParams");
 
 // Host listing writes were `$set: req.body`: a host could activate their own
 // listing (no admin review), mark it KYC-complete / bank-verified, unban it,
@@ -66,280 +69,82 @@ function stripHostImmutableFields(body) {
 // Host fields the approve / delist / update handlers read for their emails
 // and responses — never the whole user document.
 const HOST_CONTACT_SELECT = "firstName lastName phoneNumber kyc bank";
-// exports.getCustomSearch = async (req, res) => {
-//   try {
-//     const { location, from, to, guests, propertyType } = req.query;
-
-//     const checkin = new Date(from);
-//     const checkout = new Date(to);
-
-//     const bookings = await Booking.find({
-//       $or: [
-//         {
-//           checkIn: { $lte: checkout },
-//           checkOut: { $gte: checkin },
-//         }, // overlapping condition
-//       ],
-//     }).select("propertyId"); // only fetch propertyId
-
-//     process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
-//   console.log("big big", propertyType);
-// }
-//     // 2. Collect booked property IDs
-//     const bookedPropertyIds = bookings.map((b) => b.propertyId);
-
-//     function filter(users) {
-//       return users.filter((property) => {
-//         const matchesSearch =
-//           property?.address?.district
-//             ?.toLowerCase()
-//             .includes(location.toLowerCase()) ||
-//           property?.address?.city
-//             ?.toLowerCase()
-//             .includes(location.toLowerCase()) ||
-//           (property?.address?.state)
-//             .toLowerCase()
-//             .includes(location.toLowerCase());
-
-//         const checkProperty = property?.propertyType
-//           ?.toLowerCase()
-//           .includes(propertyType?.toLowerCase());
-
-//         return matchesSearch && checkProperty;
-//       });
-//     }
-
-//     if (!guests) {
-//       const availableHousing = await ListingProperty.find({
-//         _id: { $nin: bookedPropertyIds },
-//         status: "active",
-//         // optional filter for guest capacity
-//       });
-
-//       const final = filter(availableHousing);
-//       res.status(200).json({ success: true, data: final });
-//     } else {
-//       // 3. Find properties that are NOT booked in this date range
-//       const availableProperties = await ListingProperty.find({
-//         _id: { $nin: bookedPropertyIds },
-//         status: "active",
-//         guests: { $gte: guests }, // optional filter for guest capacity
-//       });
-//       const final = filter(availableProperties);
-//       res.status(200).json({ success: true, data: final });
-//     }
-//     // 4. Return available properties
-//   } catch (error) {
-//     res.status(400).json({ success: false, error: error.message });
-//   }
-// };
 
 exports.getCustomSearch = async (req, res) => {
+  let params;
   try {
-    const {
-      location,
-      from,
-      to,
-      guests,
-      propertyType,
-      minPrice,
-      maxPrice,
-      placeType,
-      beds,
-      bedrooms,
-      bathrooms,
-      checkinType,
-      bookingType,
-      pets,
-      amenities,
-    } = req.query;
-
+    params = parseSearchQuery(req.query);
+  } catch (error) {
+    if (error instanceof SearchParamError) return refuseSearchParam(res, error);
+    throw error;
+  }
+  try {
     // Cacheable at the edge unless dates are involved: availability moves
     // with bookings, which the listing tags do not cover.
-    if (!catalogueCache(req, res, { cacheable: !(from && to) })) return;
-    // Build the base filter with status always active
-    let filter = { status: "active" };
+    if (!catalogueCache(req, res, { cacheable: !(params.from && params.to) })) return;
 
-    // Initialize bookedPropertyIds as empty array (will be populated if dates are provided)
-    let bookedPropertyIds = [];
-
-    if (placeType) {
-      if (placeType.toLowerCase() == "entire_place") {
-        filter.placeType = "entire";
-      } else if (placeType.toLowerCase() == "room") {
-        filter.placeType = "room";
-      } else {
-        filter.placeType = { $in: ["entire", "room"] };
-      }
+    // Authoritative availability (Batch S night ledger): a listing is
+    // unavailable when any of the requested nights is held — by a paid or
+    // still-valid unpaid booking, a host block or an iCal import. Expired
+    // holds and cancelled bookings hold no nights.
+    let booked = new Set();
+    if (params.nightFrom && params.nightTo && params.nightTo > params.nightFrom) {
+      const ids = await BookingNight.distinct("propertyId", {
+        date: { $gte: params.nightFrom, $lt: params.nightTo },
+        $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+      });
+      booked = new Set(ids.map(String));
     }
 
-    if (minPrice && maxPrice) {
-      filter.basePrice = { $gte: minPrice, $lte: maxPrice };
-    }
-
-    if (beds) {
-      filter.beds = parseInt(beds);
-    }
-
-    if (bathrooms) {
-      filter.bathrooms = parseInt(bathrooms);
-    }
-
-    if (bedrooms) {
-      filter.bedrooms = parseInt(bedrooms);
-    }
-
-    if (bookingType) {
-      filter["bookingType.instantBook"] = true;
-    }
-
-    if (checkinType) {
-      filter.occupancy = "self-check-in";
-    }
-
-    if (pets) {
-      filter.selectedRules = "no_pets";
-    }
-
-    if (amenities) {
-      filter.amenities = { $in: amenities };
-    }
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("amenities", filter);
-    }
-    // 1. Handle date filtering only if both from and to are provided
-    if (from && to) {
-      const checkin = new Date(from);
-      const checkout = new Date(to);
-
-      // Validate dates
-      if (isNaN(checkin.getTime()) || isNaN(checkout.getTime())) {
-        return res.status(400).json({
-          success: false,
-          error: "Invalid date format",
-        });
-      }
-
-      // Authoritative availability (Batch S night ledger): a listing is
-      // unavailable when any of the requested nights is held — by a paid or
-      // still-valid unpaid booking, a host block or an iCal import. Expired
-      // holds and cancelled bookings hold no nights, so they no longer hide
-      // listings the way the old overlapping-Booking scan did.
-      const nightFrom = utcDay(checkin);
-      const nightTo = utcDay(checkout);
-      if (nightFrom && nightTo && nightTo > nightFrom) {
-        bookedPropertyIds = await BookingNight.distinct("propertyId", {
-          date: { $gte: nightFrom, $lt: nightTo },
-          $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
-        });
-        filter._id = { $nin: bookedPropertyIds };
-      }
-    }
-
-    // 2. Handle guest capacity filtering (if provided)
-    if (guests) {
-      filter.guests = { $gte: parseInt(guests) };
-    }
-
-    // 3. Handle property type filtering (if provided)
-    if (
-      propertyType &&
-      propertyType !== "null" &&
-      propertyType !== "undefined"
-    ) {
-      filter.propertyType = {
-        $regex: new RegExp(escapeRegex(propertyType), "i"),
-      };
-    }
-    // const totalCount = await ListingProperty.countDocuments(filter);
-    // // 4. Find properties based on the built filter
-    // const availableProperties = await ListingProperty.find(filter)
-    //   .skip(skip)
-    //   .limit(limit);
-
-    // 5. Handle location filtering (if provided) - using JavaScript filter for more complex matching
-    // let filteredProperties = availableProperties;
-
-    // if (location && location !== "null" && location !== "undefined") {
-    //   filteredProperties = availableProperties.filter((property) => {
-    //     const propertyLocation = property.address || {};
-    //     return (
-    //       (propertyLocation.title &&
-    //         propertyLocation.district
-    //           .toLowerCase()
-    //           .replace(/\s+/g, "")
-    //           .trim()
-    //           .includes(location.toLowerCase())
-    //           .replace(/\s+/g, "")
-    //           .trim()) ||
-    //       (propertyLocation.city &&
-    //         propertyLocation.city
-    //           .toLowerCase()
-    //           .replace(/\s+/g, "")
-    //           .trim()
-    //           .includes(location.toLowerCase().replace(/\s+/g, "").trim())) ||
-    //       (propertyLocation.state &&
-    //         propertyLocation.state
-    //           .toLowerCase()
-    //           .replace(/\s+/g, "")
-    //           .trim()
-    //           .includes(location.toLowerCase().replace(/\s+/g, "").trim())) ||
-    //       (propertyLocation.district &&
-    //         propertyLocation.district
-    //           .toLowerCase()
-    //           .replace(/\s+/g, "")
-    //           .trim()
-    //           .includes(location.toLowerCase().replace(/\s+/g, "").trim()))
-    //     );
-    //   });
-    // }
-    if (location && location !== "null" && location !== "undefined") {
-      const loc = escapeRegex(location);
-      filter.$or = [
-        { "address.district": { $regex: loc, $options: "i" } },
-        { "address.city": { $regex: loc, $options: "i" } },
-        { "address.state": { $regex: loc, $options: "i" } },
-      ];
-    }
-    const paging = pageParams(req.query, 16);
-    const [totalCount, availableProperties] = await Promise.all([
-      ListingProperty.countDocuments(filter),
-      ListingProperty.find(filter)
-        .select(CARD_PROJECTION)
-        .sort({ createdAt: -1, _id: -1 }) // newest first, deterministic pages
-        .skip(paging.skip)
-        .limit(paging.limit)
-        .lean(),
+    // One aggregate: every active listing's location (to place it, to know
+    // whether a place has stays at all and to find the nearest ones) and the
+    // ids that pass the non-date filters. Strict, nearby, near-me and text
+    // modes all run on this single result, so a search is at most 3 ops.
+    const [facets] = await ListingProperty.aggregate([
+      { $match: { status: "active" } },
+      {
+        $facet: {
+          inv: [{ $project: placeSearch.LOCATION_PROJECTION }],
+          open: [{ $match: params.filter }, { $project: { _id: 1 } }],
+        },
+      },
     ]);
+    const inv = placeSearch.classifyAll(facets ? facets.inv : []);
+    const openIds = new Set((facets ? facets.open : []).map((d) => String(d._id)));
+    const live = placeSearch.livePlaces(inv);
+    let counts = null;
+    const stays = (id) => (counts || (counts = placeSearch.countPlaces(inv, live))).get(id) || 0;
+    const scope = placeSearch.resolveScope({ placeId: params.placeId, point: params.point, location: params.location, explicitType: !!params.filter.propertyType }, { live, stays, inv });
+    const { rows, search } = placeSearch.plan(scope, { inv, openIds, booked });
+    search.query = params.location || null;
 
-    // Sanitize properties to remove hostEmail and other sensitive data
-    const sanitizedProperties = sanitizeProperties(availableProperties);
+    const paging = pageParams(req.query, 16);
+    const pageRows = rows.slice(paging.skip, paging.skip + paging.limit);
+    let data = [];
+    if (pageRows.length) {
+      const docs = await ListingProperty.find({ _id: { $in: pageRows.map((r) => r.id) }, status: "active" })
+        .select(CARD_PROJECTION)
+        .lean();
+      const byId = new Map(docs.map((d) => [String(d._id), d]));
+      data = pageRows
+        .map((r) => {
+          const doc = byId.get(r.id);
+          if (!doc) return null; // deactivated between the two reads
+          const card = sanitizeProperty(doc);
+          if (typeof r.distanceKm === "number") card.distanceKm = r.distanceKm;
+          return card;
+        })
+        .filter(Boolean);
+    }
 
     res.json({
-      data: sanitizedProperties,
+      data,
       pagination: {
-        totalCount,
-        totalPages: Math.ceil(totalCount / paging.limit),
+        totalCount: rows.length,
+        totalPages: Math.ceil(rows.length / paging.limit),
       },
+      search,
     });
-
-    // res.status(200).json({
-    //   success: true,
-    //   data: filteredProperties,
-    //   pagination: {
-    //     totalCount: totalCount,
-    //     page: Number(page),
-    //     limit: Number(limit),
-    //     totalPages: Math.ceil(totalCount / limit),
-    //   },
-    //   filtersApplied: {
-    //     location: !!location,
-    //     dates: !!(from && to),
-    //     guests: !!guests,
-    //     propertyType: !!propertyType,
-    //   },
-    // });
   } catch (error) {
     console.error("Search error:", error);
     res.status(400).json({
@@ -386,7 +191,7 @@ exports.getCustomSearch = async (req, res) => {
 exports.getPropertyCount = async (req, res) => {
   try {
     const { city } = req.query;
-    const cities = typeof city === "string" ? city.split(",").filter((c) => c.trim()) : [];
+    const cities = typeof city === "string" ? city.split(",").map((c) => c.trim()).filter(Boolean).slice(0, 50) : [];
     if (cities.length === 0) {
       return res.status(400).json({
         success: false,
@@ -394,38 +199,20 @@ exports.getPropertyCount = async (req, res) => {
       });
     }
     if (!catalogueCache(req, res)) return;
-    const normalizedCities = cities.map((city) => city.trim().toLowerCase());
-    const counts = await ListingProperty.aggregate([
-      {
-        $match: {
-          status: "active",
-        },
-      },
-      // Only the city travels through the pipeline, not whole listings.
-      { $project: { "address.city": 1 } },
-      {
-        $addFields: {
-          cityLower: { $toLower: "$address.city" },
-        },
-      },
-      {
-        $match: {
-          cityLower: { $in: normalizedCities },
-        },
-      },
-      {
-        $group: {
-          _id: "$cityLower",
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-    const result = normalizedCities.map((city) => {
-      const found = counts.find((c) => c._id === city);
-      return {
-        city,
-        count: found ? found.count : 0,
-      };
+    // A name counts the stays IN that place (same rules as the search), so
+    // the home card "Panjim" counts listings saved as "Panaji"; a name the
+    // gazetteer does not know keeps the old exact city match. One read.
+    const docs = await ListingProperty.find({ status: "active" }).select(placeSearch.LOCATION_PROJECTION).lean();
+    const inv = placeSearch.classifyAll(docs);
+    const live = placeSearch.livePlaces(inv);
+    const extra = [...live.values()];
+    const result = cities.map((name) => {
+      const lower = name.toLowerCase();
+      const r = places.resolveQuery(name, { extra });
+      if (r && r.place && !r.corrected) {
+        return { city: lower, count: inv.filter((c) => placeSearch.inPlace(c, r.place)).length };
+      }
+      return { city: lower, count: inv.filter((c) => typeof c.raw.city === "string" && c.raw.city.trim().toLowerCase() === lower).length };
     });
 
     return res.status(200).json({

@@ -116,6 +116,15 @@ test("strict: a place returns exactly its stays — aliases, case, spaces, typos
     assert.equal(r.json.search.mode, "place", location);
     assert.deepEqual(sorted(titles(r)), want, location);
   }
+  for (const location of ["Goa, India", "goa state"]) {
+    assert.equal((await q({ location })).json.search.place.id, "st:goa", location);
+  }
+  // a PIN code (text mode) matches the listings with that PIN
+  const pin = await q({ location: "403 001", limit: "50" });
+  assert.equal(pin.json.search.mode, "text");
+  assert.equal(pin.json.pagination.totalCount, 11, "every active stay with PIN 403001");
+  assert.ok(!titles(pin).includes("Calangute Cottage"), "no PIN, no match");
+  assert.deepEqual(titles(await q({ location: "999999" })), []);
   const goa = await q({ location: "goa", limit: "50" });
   assert.equal(goa.json.search.place.type, "state");
   assert.equal(goa.json.pagination.totalCount, 11, "every active Goa stay, nothing else");

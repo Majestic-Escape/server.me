@@ -12,8 +12,8 @@ const { normalizePlaceText, compactKey, boundedEditDistance, fuzzyBudget } = req
 const LOCALITY_TYPES = new Set(["city", "town", "village", "area", "beach", "island", "live"]);
 const GRID = 0.25; // degrees per spatial-index cell (~27 km)
 const CITY_POP = 100000;
-// Words people add around a place name: "candolim beach", "near baga".
-const GENERIC_WORDS = new Set(["beach", "beaches", "city", "town", "village", "district", "taluka", "area", "near", "in", "the"]);
+// Words people add around a place name: "candolim beach", "near baga", "goa, india".
+const GENERIC_WORDS = new Set(["beach", "beaches", "city", "town", "village", "district", "taluka", "area", "near", "in", "the", "state", "india"]);
 
 let idx = null;
 

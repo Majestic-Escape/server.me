@@ -41,7 +41,8 @@ in the host wizard and were present on every active listing.
    `location` text:
    - exact name/alias ("panjim", "Vasco", "Madgaon", "Bombay", "Coorg"),
      space-insensitive ("vascodagama"), diacritics folded;
-   - generic words stripped ("candolim beach", "near baga");
+   - generic words stripped ("candolim beach", "near baga", "Goa, India");
+   - a 6-digit PIN code ("403001", "403 001") matches the listings with that PIN;
    - parent-qualified ("Colva, Goa", "panaji north goa");
    - ties: state > own-name over alias-only > 100k+ city > district/taluka >
      smaller locality > has stays > stays within 50 km > curated > population;

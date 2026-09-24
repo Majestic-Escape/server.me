@@ -26,6 +26,7 @@ const LOCATION_PROJECTION = {
   "address.city": 1,
   "address.district": 1,
   "address.state": 1,
+  "address.pincode": 1,
   "address.latitude": 1,
   "address.longitude": 1,
 };
@@ -82,7 +83,7 @@ function classify(doc) {
   const a = doc.address || {};
   const lat = a.latitude;
   const lng = a.longitude;
-  const key = `${id}|${a.city}|${a.district}|${a.state}|${lat}|${lng}`;
+  const key = `${id}|${a.city}|${a.district}|${a.state}|${a.pincode}|${lat}|${lng}`;
   const hit = memo.get(key);
   if (hit) return { ...hit, createdAt: doc.createdAt };
 
@@ -139,7 +140,7 @@ function classify(doc) {
     talukaId = talukaId || p.k || null;
   }
   if (liveName) localities.add(liveId(stateId, normalizePlaceText(liveName)));
-  const cls = { id, point, stateId, districtId, talukaId, localities, liveName, raw: { city: a.city, district: a.district, state: a.state } };
+  const cls = { id, point, stateId, districtId, talukaId, localities, liveName, raw: { city: a.city, district: a.district, state: a.state, pincode: a.pincode } };
   if (memo.size >= MEMO_MAX) memo.clear();
   memo.set(key, cls);
   return { ...cls, createdAt: doc.createdAt };
@@ -288,9 +289,14 @@ function plan(scope, { inv, openIds, booked }) {
   }
   if (scope.kind === "text") {
     meta.query = scope.query;
+    // a 6-digit PIN code matches the listing PIN; anything else is the
+    // legacy literal substring match on city / district / state
+    const compactQuery = scope.query.replace(/\s+/g, "");
+    const pin = /^\d{6}$/.test(compactQuery) ? compactQuery : null; // "403001" or "403 001"
     const rx = new RegExp(escapeRegex(scope.query), "i");
     const test = (v) => typeof v === "string" && rx.test(v);
-    const rows = inv.filter((c) => available(c) && (test(c.raw.city) || test(c.raw.district) || test(c.raw.state))).sort(newestFirst);
+    const match = pin ? (c) => String(c.raw.pincode || "").trim() === pin : (c) => test(c.raw.city) || test(c.raw.district) || test(c.raw.state);
+    const rows = inv.filter((c) => available(c) && match(c)).sort(newestFirst);
     if (!rows.length) meta.suggestions = (scope.suggestions || (scope.suggest ? scope.suggest() : [])).map(publicLive);
     return { rows, search: meta };
   }

@@ -1,0 +1,749 @@
+{
+  "_comment": "Hand-curated input to scripts/build-places.js. States use stable slug ids (st:<slug>) whose names match the host wizard's INDIA_STATES_AND_UT list; everything else is keyed by GeoNames id (gn:<geonameid>), which never changes between dumps. Edit here, then rebuild — never edit places.json by hand.",
+  "states": [
+    {
+      "id": "st:andhra-pradesh",
+      "name": "Andhra Pradesh",
+      "a1": "02",
+      "aliases": [
+        "AP"
+      ]
+    },
+    {
+      "id": "st:arunachal-pradesh",
+      "name": "Arunachal Pradesh",
+      "a1": "30",
+      "aliases": []
+    },
+    {
+      "id": "st:assam",
+      "name": "Assam",
+      "a1": "03",
+      "aliases": []
+    },
+    {
+      "id": "st:bihar",
+      "name": "Bihar",
+      "a1": "34",
+      "aliases": []
+    },
+    {
+      "id": "st:chhattisgarh",
+      "name": "Chhattisgarh",
+      "a1": "37",
+      "aliases": [
+        "Chattisgarh",
+        "Chhatisgarh"
+      ]
+    },
+    {
+      "id": "st:goa",
+      "name": "Goa",
+      "a1": "33",
+      "aliases": []
+    },
+    {
+      "id": "st:gujarat",
+      "name": "Gujarat",
+      "a1": "09",
+      "aliases": []
+    },
+    {
+      "id": "st:haryana",
+      "name": "Haryana",
+      "a1": "10",
+      "aliases": []
+    },
+    {
+      "id": "st:himachal-pradesh",
+      "name": "Himachal Pradesh",
+      "a1": "11",
+      "aliases": [
+        "Himachal",
+        "HP"
+      ]
+    },
+    {
+      "id": "st:jharkhand",
+      "name": "Jharkhand",
+      "a1": "38",
+      "aliases": []
+    },
+    {
+      "id": "st:karnataka",
+      "name": "Karnataka",
+      "a1": "19",
+      "aliases": []
+    },
+    {
+      "id": "st:kerala",
+      "name": "Kerala",
+      "a1": "13",
+      "aliases": []
+    },
+    {
+      "id": "st:madhya-pradesh",
+      "name": "Madhya Pradesh",
+      "a1": "35",
+      "aliases": [
+        "MP"
+      ]
+    },
+    {
+      "id": "st:maharashtra",
+      "name": "Maharashtra",
+      "a1": "16",
+      "aliases": []
+    },
+    {
+      "id": "st:manipur",
+      "name": "Manipur",
+      "a1": "17",
+      "aliases": []
+    },
+    {
+      "id": "st:meghalaya",
+      "name": "Meghalaya",
+      "a1": "18",
+      "aliases": []
+    },
+    {
+      "id": "st:mizoram",
+      "name": "Mizoram",
+      "a1": "31",
+      "aliases": []
+    },
+    {
+      "id": "st:nagaland",
+      "name": "Nagaland",
+      "a1": "20",
+      "aliases": []
+    },
+    {
+      "id": "st:odisha",
+      "name": "Odisha",
+      "a1": "21",
+      "aliases": [
+        "Orissa"
+      ]
+    },
+    {
+      "id": "st:punjab",
+      "name": "Punjab",
+      "a1": "23",
+      "aliases": []
+    },
+    {
+      "id": "st:rajasthan",
+      "name": "Rajasthan",
+      "a1": "24",
+      "aliases": []
+    },
+    {
+      "id": "st:sikkim",
+      "name": "Sikkim",
+      "a1": "29",
+      "aliases": []
+    },
+    {
+      "id": "st:tamil-nadu",
+      "name": "Tamil Nadu",
+      "a1": "25",
+      "aliases": [
+        "TN"
+      ]
+    },
+    {
+      "id": "st:telangana",
+      "name": "Telangana",
+      "a1": "40",
+      "aliases": [
+        "Telengana"
+      ]
+    },
+    {
+      "id": "st:tripura",
+      "name": "Tripura",
+      "a1": "26",
+      "aliases": []
+    },
+    {
+      "id": "st:uttar-pradesh",
+      "name": "Uttar Pradesh",
+      "a1": "36",
+      "aliases": [
+        "UP"
+      ]
+    },
+    {
+      "id": "st:uttarakhand",
+      "name": "Uttarakhand",
+      "a1": "39",
+      "aliases": [
+        "Uttaranchal"
+      ]
+    },
+    {
+      "id": "st:west-bengal",
+      "name": "West Bengal",
+      "a1": "28",
+      "aliases": [
+        "Bengal"
+      ]
+    },
+    {
+      "id": "st:andaman-and-nicobar-islands",
+      "name": "Andaman and Nicobar Islands",
+      "a1": "01",
+      "aliases": [
+        "Andaman",
+        "Andaman & Nicobar",
+        "Andaman and Nicobar"
+      ]
+    },
+    {
+      "id": "st:chandigarh",
+      "name": "Chandigarh",
+      "a1": "05",
+      "aliases": []
+    },
+    {
+      "id": "st:dadra-and-nagar-haveli-and-daman-and-diu",
+      "name": "Dadra and Nagar Haveli and Daman and Diu",
+      "a1": "52",
+      "aliases": [
+        "Daman and Diu",
+        "Dadra and Nagar Haveli",
+        "Daman",
+        "Diu"
+      ]
+    },
+    {
+      "id": "st:delhi",
+      "name": "Delhi",
+      "a1": "07",
+      "aliases": [
+        "NCT of Delhi",
+        "National Capital Territory of Delhi"
+      ]
+    },
+    {
+      "id": "st:jammu-and-kashmir",
+      "name": "Jammu and Kashmir",
+      "a1": "12",
+      "aliases": [
+        "J&K",
+        "Jammu & Kashmir",
+        "Kashmir"
+      ]
+    },
+    {
+      "id": "st:ladakh",
+      "name": "Ladakh",
+      "a1": "41",
+      "aliases": []
+    },
+    {
+      "id": "st:lakshadweep",
+      "name": "Lakshadweep",
+      "a1": "14",
+      "aliases": []
+    },
+    {
+      "id": "st:puducherry",
+      "name": "Puducherry",
+      "a1": "22",
+      "aliases": [
+        "Pondicherry"
+      ]
+    }
+  ],
+  "names": {
+    "gn:1260607": {
+      "name": "Panaji",
+      "aliases": [
+        "Panjim",
+        "Pangim",
+        "Ponnje"
+      ]
+    },
+    "gn:1253367": {
+      "aliases": [
+        "Vasco",
+        "Vasco-da-Gama"
+      ]
+    },
+    "gn:1264588": {
+      "name": "Margao",
+      "aliases": [
+        "Madgaon",
+        "Margão"
+      ]
+    },
+    "gn:1268022": {
+      "name": "Canacona",
+      "aliases": [
+        "Chaudi",
+        "Chauri",
+        "Kankon"
+      ]
+    },
+    "gn:1255844": {
+      "name": "Siolim",
+      "aliases": [
+        "Solim"
+      ]
+    },
+    "gn:1259437": {
+      "name": "Palolem",
+      "aliases": [
+        "Pololem"
+      ]
+    },
+    "gn:11903108": {
+      "name": "Old Goa",
+      "aliases": [
+        "Velha Goa",
+        "Old Goa City"
+      ]
+    },
+    "gn:11071418": {
+      "name": "Divar",
+      "aliases": [
+        "Divar Island",
+        "Divadi"
+      ]
+    },
+    "gn:1254726": {
+      "name": "Tiracol",
+      "aliases": [
+        "Terekhol"
+      ]
+    },
+    "gn:1264793": {
+      "name": "Lonavala",
+      "aliases": [
+        "Lonavla"
+      ]
+    },
+    "gn:1272832": {
+      "name": "Dharamshala",
+      "aliases": [
+        "Dharamsala",
+        "Bhagsu"
+      ]
+    },
+    "gn:1261806": {
+      "aliases": [
+        "Narendra Nagar"
+      ]
+    },
+    "gn:1264627": {
+      "name": "McLeod Ganj",
+      "aliases": [
+        "Mcleodganj"
+      ]
+    },
+    "gn:1279027": {
+      "name": "Alibaug",
+      "aliases": [
+        "Alibag"
+      ]
+    },
+    "gn:1266426": {
+      "aliases": [
+        "Coorg"
+      ]
+    },
+    "gn:1268731": {
+      "aliases": [
+        "Kachchh",
+        "Kachh"
+      ]
+    },
+    "gn:1275339": {
+      "aliases": [
+        "Bombay"
+      ]
+    },
+    "gn:1275004": {
+      "aliases": [
+        "Calcutta"
+      ]
+    },
+    "gn:1264527": {
+      "aliases": [
+        "Madras"
+      ]
+    },
+    "gn:1277333": {
+      "aliases": [
+        "Bangalore"
+      ]
+    },
+    "gn:1270642": {
+      "aliases": [
+        "Gurgaon"
+      ]
+    },
+    "gn:1254163": {
+      "aliases": [
+        "Trivandrum"
+      ]
+    },
+    "gn:1273874": {
+      "aliases": [
+        "Cochin"
+      ]
+    },
+    "gn:1253405": {
+      "aliases": [
+        "Banaras",
+        "Benares",
+        "Kashi"
+      ]
+    },
+    "gn:1278994": {
+      "aliases": [
+        "Allahabad"
+      ]
+    },
+    "gn:1262321": {
+      "aliases": [
+        "Mysore"
+      ]
+    },
+    "gn:1253102": {
+      "aliases": [
+        "Vizag"
+      ]
+    },
+    "gn:1253993": {
+      "aliases": [
+        "Udhagamandalam",
+        "Ootacamund"
+      ]
+    },
+    "gn:1278985": {
+      "aliases": [
+        "Alleppey"
+      ]
+    },
+    "gn:1259425": {
+      "aliases": [
+        "Pondicherry",
+        "Pondy"
+      ]
+    },
+    "gn:1254832": {
+      "name": "Tawang",
+      "aliases": [
+        "Tawang Town"
+      ]
+    },
+    "gn:1262117": {
+      "name": "Nainital",
+      "aliases": [
+        "Naini Tal"
+      ]
+    },
+    "gn:1267154": {
+      "name": "Khajuraho",
+      "aliases": []
+    },
+    "gn:1273467": {
+      "name": "Darjeeling",
+      "aliases": [
+        "Darjiling"
+      ]
+    },
+    "gn:1279396": {
+      "name": "Mount Abu",
+      "aliases": [
+        "Abu"
+      ]
+    },
+    "gn:1263997": {
+      "name": "Mahabalipuram",
+      "aliases": [
+        "Mamallapuram"
+      ]
+    }
+  },
+  "include": [
+    "gn:1264627",
+    "gn:1261806",
+    "gn:1271064",
+    "gn:1259437",
+    "gn:11903108",
+    "gn:11071418"
+  ],
+  "exclude": [],
+  "redirects": {},
+  "popular": [
+    {
+      "name": "Manali",
+      "state": "st:himachal-pradesh"
+    },
+    {
+      "name": "Kasol",
+      "state": "st:himachal-pradesh"
+    },
+    {
+      "name": "Shimla",
+      "state": "st:himachal-pradesh"
+    },
+    {
+      "name": "Mcleodganj",
+      "state": "st:himachal-pradesh"
+    },
+    {
+      "name": "Dalhousie",
+      "state": "st:himachal-pradesh"
+    },
+    {
+      "name": "Kasauli",
+      "state": "st:himachal-pradesh"
+    },
+    {
+      "name": "Dharamsala",
+      "state": "st:himachal-pradesh"
+    },
+    {
+      "name": "Rishikesh",
+      "state": "st:uttarakhand"
+    },
+    {
+      "name": "Mussoorie",
+      "state": "st:uttarakhand"
+    },
+    {
+      "name": "Nainital",
+      "state": "st:uttarakhand"
+    },
+    {
+      "name": "Ramnagar",
+      "state": "st:uttarakhand"
+    },
+    {
+      "name": "Narendranagar",
+      "state": "st:uttarakhand"
+    },
+    {
+      "name": "Almora",
+      "state": "st:uttarakhand"
+    },
+    {
+      "name": "Udaipur",
+      "state": "st:rajasthan"
+    },
+    {
+      "name": "Jaisalmer",
+      "state": "st:rajasthan"
+    },
+    {
+      "name": "Pushkar",
+      "state": "st:rajasthan"
+    },
+    {
+      "name": "Mount Abu",
+      "state": "st:rajasthan"
+    },
+    {
+      "name": "Sawai Madhopur",
+      "state": "st:rajasthan"
+    },
+    {
+      "name": "Jodhpur",
+      "state": "st:rajasthan"
+    },
+    {
+      "name": "Jaipur",
+      "state": "st:rajasthan"
+    },
+    {
+      "name": "Kanota",
+      "state": "st:rajasthan"
+    },
+    {
+      "name": "Alibag",
+      "state": "st:maharashtra"
+    },
+    {
+      "name": "Lonavla",
+      "state": "st:maharashtra"
+    },
+    {
+      "name": "Mahabaleshwar",
+      "state": "st:maharashtra"
+    },
+    {
+      "name": "Matheran",
+      "state": "st:maharashtra"
+    },
+    {
+      "name": "Panchgani",
+      "state": "st:maharashtra"
+    },
+    {
+      "name": "Igatpuri",
+      "state": "st:maharashtra"
+    },
+    {
+      "name": "Nashik",
+      "state": "st:maharashtra"
+    },
+    {
+      "name": "Gokarna",
+      "state": "st:karnataka"
+    },
+    {
+      "name": "Hampi",
+      "state": "st:karnataka"
+    },
+    {
+      "name": "Madikeri",
+      "state": "st:karnataka"
+    },
+    {
+      "name": "Chikmagalur",
+      "state": "st:karnataka"
+    },
+    {
+      "name": "Munnar",
+      "state": "st:kerala"
+    },
+    {
+      "name": "Varkala",
+      "state": "st:kerala"
+    },
+    {
+      "name": "Kovalam",
+      "state": "st:kerala"
+    },
+    {
+      "name": "Alappuzha",
+      "state": "st:kerala"
+    },
+    {
+      "name": "Kumarakom",
+      "state": "st:kerala"
+    },
+    {
+      "name": "Kumily",
+      "state": "st:kerala"
+    },
+    {
+      "name": "Ooty",
+      "state": "st:tamil-nadu"
+    },
+    {
+      "name": "Kodaikanal",
+      "state": "st:tamil-nadu"
+    },
+    {
+      "name": "Coonoor",
+      "state": "st:tamil-nadu"
+    },
+    {
+      "name": "Yercaud",
+      "state": "st:tamil-nadu"
+    },
+    {
+      "name": "Mamallapuram",
+      "state": "st:tamil-nadu"
+    },
+    {
+      "name": "Auroville",
+      "state": "st:tamil-nadu"
+    },
+    {
+      "name": "Darjeeling",
+      "state": "st:west-bengal"
+    },
+    {
+      "name": "Gangtok",
+      "state": "st:sikkim"
+    },
+    {
+      "name": "Shillong",
+      "state": "st:meghalaya"
+    },
+    {
+      "name": "Leh",
+      "state": "st:ladakh"
+    },
+    {
+      "name": "Gulmarg",
+      "state": "st:jammu-and-kashmir"
+    },
+    {
+      "name": "Pahalgam",
+      "state": "st:jammu-and-kashmir"
+    },
+    {
+      "name": "Srinagar",
+      "state": "st:jammu-and-kashmir"
+    },
+    {
+      "name": "Agra",
+      "state": "st:uttar-pradesh"
+    },
+    {
+      "name": "Varanasi",
+      "state": "st:uttar-pradesh"
+    },
+    {
+      "name": "Ayodhya",
+      "state": "st:uttar-pradesh"
+    },
+    {
+      "name": "Lucknow",
+      "state": "st:uttar-pradesh"
+    },
+    {
+      "name": "Khajuraho",
+      "state": "st:madhya-pradesh"
+    },
+    {
+      "name": "Pachmarhi",
+      "state": "st:madhya-pradesh"
+    },
+    {
+      "name": "Ujjain",
+      "state": "st:madhya-pradesh"
+    },
+    {
+      "name": "Bhuj",
+      "state": "st:gujarat"
+    },
+    {
+      "name": "Dwarka",
+      "state": "st:gujarat"
+    },
+    {
+      "name": "Somnath",
+      "state": "st:gujarat"
+    },
+    {
+      "name": "Diu",
+      "state": "st:dadra-and-nagar-haveli-and-daman-and-diu"
+    },
+    {
+      "name": "Daman",
+      "state": "st:dadra-and-nagar-haveli-and-daman-and-diu"
+    },
+    {
+      "name": "Tawang",
+      "state": "st:arunachal-pradesh"
+    },
+    {
+      "name": "Port Blair",
+      "state": "st:andaman-and-nicobar-islands"
+    },
+    {
+      "name": "Puducherry",
+      "state": "st:puducherry"
+    }
+  ]
+}

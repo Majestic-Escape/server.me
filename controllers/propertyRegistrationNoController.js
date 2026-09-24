@@ -1,4 +1,5 @@
 const PropertyRegistrationNo = require("../models/PropertyRegistrationNo");
+const { escapeRegex } = require("../utils/listingProjection");
 
 exports.getAll = async (req, res) => {
   try {
@@ -25,14 +26,22 @@ exports.saveProperties = async (req, res) => {
 
 exports.checkRegistrationNoExists = async (req, res) => {
   try {
-    const { registrationNo } = req.params;
+    const registrationNo = String(req.params.registrationNo || "").trim();
+    // A literal, bounded match: the number used to be a raw regex, so ".*"
+    // "existed" and passed the Goa registration check.
+    if (!registrationNo || registrationNo.length > 64) {
+      return res.status(404).json({
+        exists: false,
+        message: "Registration not found. Ensure number starts with HOT",
+      });
+    }
 
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("registrationNo: ", req.params);
     }
 
     const property = await PropertyRegistrationNo.findOne({
-      registrationNo: { $regex: new RegExp(`^${registrationNo}$`, "i") },
+      registrationNo: { $regex: new RegExp(`^${escapeRegex(registrationNo)}$`, "i") },
     });
     if (property) {
       return res.status(200).json({ exists: true, property });

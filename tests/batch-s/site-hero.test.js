@@ -106,14 +106,14 @@ test("draft: desktop and mobile — JPEG master + AVIF/WebP renditions at the de
   const draft = d.body.state.draft.desktop;
   assert.equal(draft.width, 2000);
   assert.equal(draft.height, 771);
-  assert.deepEqual(draft.renditions.map((r) => r.width), [640, 960, 1280, 1600, 1920, 2000]);
+  assert.deepEqual(draft.renditions.map((r) => r.width), [960, 1280, 1600, 1920, 2000]);
   assert.match(draft.lqip, /^data:image\/webp;base64,/);
   assert.ok(draft.lqip.length <= 600);
   assert.ok(d.body.opToken, "a fresh token for the next action");
   const masterKey = storage().keyFromUrl(draft.url);
   assert.match(masterKey, /^site\/hero\/desktop\/[0-9a-f-]{36}\.jpg$/);
   const keys = objects().sort();
-  assert.equal(keys.length, 1 + 6 * 2, keys.join("\n"));
+  assert.equal(keys.length, 1 + 5 * 2, keys.join("\n"));
   for (const k of keys) {
     const o = storage().__mock.objects.get(k);
     assert.equal(o.cacheControl, storage().IMMUTABLE_CACHE_CONTROL);

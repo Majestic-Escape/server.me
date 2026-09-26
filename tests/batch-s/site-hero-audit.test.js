@@ -620,13 +620,13 @@ test("SEC-E: with SPACES_WRITE_PREFIX (the real-bucket harness) every put and de
   assert.equal(run({ SITE_HERO_PREFIX: "_qa/site/hero/x/", VERCEL: "1" }).status, 3);
 });
 
-test("P4: desktop renditions stop at 2560 px (the master keeps its width); a 2805 px banner offers nothing wider", async () => {
+test("P4: desktop renditions run from 960 to 2560 px (the master keeps its width); a 2805 px banner offers nothing wider or narrower", async () => {
   const wide = await hh.photo(2805, 1081, { hue: 140 });
   const r = await hh.stage(AT, "desktop", wide);
   assert.equal(r.status, 201, JSON.stringify(r.body));
   const d = r.body.state.draft.desktop;
   assert.equal(d.width, 2805, "master at full width");
-  assert.deepEqual(d.renditions.map((x) => x.width), [640, 960, 1280, 1600, 1920, 2560]);
+  assert.deepEqual(d.renditions.map((x) => x.width), [960, 1280, 1600, 1920, 2560], "from 960 (desktop art is shown from 768 px) to 2560");
   const key = storage().keyFromUrl(d.url);
   assert.ok(!objects().some((k) => k.startsWith(`${key}/`) && /w3840/.test(k)), "no w3840 rendition stored");
 });

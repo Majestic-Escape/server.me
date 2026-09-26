@@ -1,5 +1,5 @@
 {
- "about": "Homepage hero contract (server services/siteHeroImage.js). The server test, the site's scripts/check-hero.mjs and the admin's check script must reproduce every vector. Renditions stop at renditionCap (the master at cap).",
+ "about": "Homepage hero contract (server services/siteHeroImage.js). The server test, the site's scripts/check-hero.mjs and the admin's check script must reproduce every vector. Renditions run from renditionMin to renditionCap (the master stops at cap).",
  "slots": {
   "desktop": {
    "ratio": 2.5945945945945947,
@@ -8,7 +8,8 @@
     1920,
     740
    ],
-   "renditionCap": 2560
+   "renditionCap": 2560,
+   "renditionMin": 768
   },
   "mobile": {
    "ratio": 0.7361111111111112,
@@ -17,7 +18,8 @@
     530,
     720
    ],
-   "renditionCap": 1600
+   "renditionCap": 1600,
+   "renditionMin": 0
   }
  },
  "ratioTolerance": 0.01,
@@ -241,14 +243,12 @@
    "slot": "desktop",
    "masterWidth": 1920,
    "widths": [
-    640,
     960,
     1280,
     1600,
     1920
    ],
    "keyWidths": [
-    640,
     960,
     1280,
     1600,
@@ -259,7 +259,6 @@
    "slot": "desktop",
    "masterWidth": 1937,
    "widths": [
-    640,
     960,
     1280,
     1600,
@@ -267,7 +266,6 @@
     1937
    ],
    "keyWidths": [
-    640,
     960,
     1280,
     1600,
@@ -279,7 +277,6 @@
    "slot": "desktop",
    "masterWidth": 2560,
    "widths": [
-    640,
     960,
     1280,
     1600,
@@ -287,7 +284,6 @@
     2560
    ],
    "keyWidths": [
-    640,
     960,
     1280,
     1600,
@@ -299,7 +295,6 @@
    "slot": "desktop",
    "masterWidth": 2805,
    "widths": [
-    640,
     960,
     1280,
     1600,
@@ -307,7 +302,6 @@
     2560
    ],
    "keyWidths": [
-    640,
     960,
     1280,
     1600,
@@ -319,7 +313,6 @@
    "slot": "desktop",
    "masterWidth": 3000,
    "widths": [
-    640,
     960,
     1280,
     1600,
@@ -327,7 +320,6 @@
     2560
    ],
    "keyWidths": [
-    640,
     960,
     1280,
     1600,
@@ -339,7 +331,6 @@
    "slot": "desktop",
    "masterWidth": 3839,
    "widths": [
-    640,
     960,
     1280,
     1600,
@@ -347,7 +338,6 @@
     2560
    ],
    "keyWidths": [
-    640,
     960,
     1280,
     1600,
@@ -359,7 +349,6 @@
    "slot": "desktop",
    "masterWidth": 3840,
    "widths": [
-    640,
     960,
     1280,
     1600,
@@ -367,7 +356,6 @@
     2560
    ],
    "keyWidths": [
-    640,
     960,
     1280,
     1600,
@@ -379,7 +367,6 @@
    "slot": "desktop",
    "masterWidth": 3841,
    "widths": [
-    640,
     960,
     1280,
     1600,
@@ -387,7 +374,6 @@
     2560
    ],
    "keyWidths": [
-    640,
     960,
     1280,
     1600,
@@ -399,7 +385,6 @@
    "slot": "desktop",
    "masterWidth": 5000,
    "widths": [
-    640,
     960,
     1280,
     1600,
@@ -407,7 +392,6 @@
     2560
    ],
    "keyWidths": [
-    640,
     960,
     1280,
     1600,

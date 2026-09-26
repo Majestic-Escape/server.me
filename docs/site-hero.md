@@ -42,17 +42,20 @@ both to the site's built-in banner. A custom/default mix never exists.
 - **One image job at a time** (the lease), really cancelled at its budget (sharp timeouts, `ManagedUpload.abort()`), unable to install after it lost the lease. The lease records the request's fingerprint: only the very same request is told "processing"; its id with other content is `OP_ID_REUSED`.
 - **Nothing referenced is ever deleted.** Objects live under the protected `site/` prefix: `storage.deleteObjects` refuses them unless the hero service or its sweep asks explicitly, users can't reference them (`isOurImageUrl`), `/uploads/delete` answers 409, maintenance scripts filter them out. Cleanup is the sweep's job.
 
-## Quality and speed (measured, sharp 0.34.5, in-memory, the real banners)
+## Quality and speed (measured, sharp 0.34.5, the real banners, strict gates)
 
-| | desktop w1920 KB / SSIM-Y / p1 | mobile w1060 |
-|---|---|---|
-| previous static AVIF q55 | 192 / .9858 / .928 | (old artwork) |
-| listing pipeline (WebP, 2 generations) | 252 / .9869 / .936 | 188 / .9836 / .908 |
-| **hero AVIF q60 e4** | **222 / .9885 / .942** | **141 / .9893 / .942** |
-| JPEG master q95 4:4:4 | SSIM .9996 (q92 was .9995) | .9953 (q92 was .9933) |
+Every output is scored against the ORIGINAL file resized to the same width (SSIM-Y mean / 1st percentile, chroma PSNR, and the lettering region), next to today's static files at equal widths — `tests/pw-final/hero-quality-strict.cjs`, `evidence/audit/quality-strict-final.json`. The plan's bars apply at EVERY delivered width with no slack: AVIF SSIM-Y ≥ today (desktop) / ≥ 0.988 (mobile), p1 ≥ 0.94, chroma ≥ 43 dB, lettering ≥ today; WebP SSIM-Y ≥ today and ≥ 0.985, p1 ≥ 0.93; JPEG master ≥ 0.995. All 18 outputs of both artworks pass.
 
-AVIF q62 costs +5% bytes for +.001; effort 6 saves 1% for 2.5–3.5× the CPU.
-Local processing: the 2805 px desktop art ~11 s, the 1060 px mobile art ~4 s.
+A single AVIF quality misses the bars at the smaller widths (more detail per pixel after downscaling), so the quality is set per width — the lowest that meets them (`AVIF_QUALITY`, measured: `evidence/audit/quality-tune.json`):
+
+| desktop | w960 | w1280 | w1600 | w1920 | w2560 |
+|---|---|---|---|---|---|
+| AVIF quality / KB / SSIM-Y / p1 / chroma | q76 · 132 · .9887 · .961 · 43.4 | q64 · 156 · .9885 · .944 · 43.0 | q64 · 203 · .9898 · .950 · 43.8 | q60 · 222 · .9876 · .941 · 43.7 | q60 · 286 · .9880 · .943 · 44.7 |
+| today's static AVIF (q55) | — | 125 · .9830 · .915 · 41.6 | — | 192 · .9849 · .927 · 43.1 | 246 · .9860 · .932 · 44.1 |
+
+Mobile (1060 px art): w640 q72 · 109 KB · .9880 · .950; w960 q60 · 129 KB · .9886 · .940; w1060 q60 · 141 KB · .9893 · .942. JPEG q95 4:4:4 masters: .9996 / .9953. Desktop renditions start at 960 px (the desktop art is shown from 768 px) and stop at 2560 px.
+
+Bytes per viewport against today: 1440@1 +6% (w1600 203 KB vs w1920 192 KB), 1440@2 +16%, 1920@1 +16%, 768@1 +6%, mobile w1060 141 KB (≤ 150 KB). **1280@1 is +25%** (w1280 q64 156 KB vs 125 KB): at that width the absolute bars and "≤ today + 20%" can't both hold (q60: 143 KB, +14%, p1 .935, chroma 42.3 — still well above today's 1280 file). The plan's byte gate is defined at the 1440 viewports; this one is recorded for the owner, not hidden.
 
 ## Routes
 

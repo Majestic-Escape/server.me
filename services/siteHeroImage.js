@@ -1,9 +1,10 @@
 // Homepage hero images (docs/site-hero.md): identification, the crop to the
 // slot's box, ONE prepared raster, and every output encoded from it.
 //
-// Quality (measured, docs/site-hero.md): AVIF q60 effort 4 is the primary
-// format — above today's static hero on SSIM at every width for about +16%
-// bytes — with WebP (the listing quality policy + smart chroma, which keeps
+// Quality (measured, docs/site-hero.md): AVIF effort 4 is the primary
+// format — q60 from 1920 px up, higher on the smaller widths (AVIF_QUALITY),
+// so every delivered width meets the plan's bars and beats today's static
+// hero — with WebP (the listing quality policy + smart chroma, which keeps
 // the banner's lettering clean) for browsers without AVIF, and a JPEG q95
 // 4:4:4 master kept as the long-term source and the fallback of last resort.
 // All of them come from one decoded, upright, cropped, flattened sRGB
@@ -26,8 +27,8 @@ const storage = require("./storage");
 // budget (≤ today + 20%) holds; a wider rendition cost +33% for the pixels
 // that 2560 → 2880 upscaling adds back.
 const SLOTS = Object.freeze({
-  desktop: Object.freeze({ ratio: 1920 / 740, box: [1920, 740], min: [1920, 740], cap: 3840, renditionCap: 2560, recommended: [2880, 1110] }),
-  mobile: Object.freeze({ ratio: 530 / 720, box: [530, 720], min: [530, 720], cap: 1600, renditionCap: 1600, recommended: [1060, 1440] }),
+  desktop: Object.freeze({ ratio: 1920 / 740, box: [1920, 740], min: [1920, 740], cap: 3840, renditionCap: 2560, renditionMin: 768, recommended: [2880, 1110] }),
+  mobile: Object.freeze({ ratio: 530 / 720, box: [530, 720], min: [530, 720], cap: 1600, renditionCap: 1600, renditionMin: 0, recommended: [1060, 1440] }),
 });
 const SLOT_NAMES = Object.freeze(["desktop", "mobile"]);
 const MAX_INPUT_PIXELS = 25_000_000; // a 6000×4166 export; the heavier listing guard is 40 MP
@@ -35,6 +36,22 @@ const RATIO_TOLERANCE = 0.01; // within 1% of the box: used whole (object-cover 
 const RATIO_CONFIRM = 0.35; // beyond 35%: only with the admin's explicit "use anyway"
 const RENDITION_STEPS = Object.freeze([640, 960, 1280, 1600, 1920, 2560, 3840]);
 const AVIF = Object.freeze({ quality: 60, effort: 4 });
+// Smaller renditions carry more detail per pixel: q60 — measured best from
+// 1920 px up — misses the plan's bars below it (SSIM-Y p1 ≥ 0.94, chroma
+// ≥ 43 dB; mobile SSIM-Y ≥ 0.988; WebP SSIM-Y ≥ 0.985). Measured on both
+// designer artworks (tests/pw-final/evidence/audit/quality-tune.json): the
+// lowest quality that meets them at each width. w1280 at q64 costs +9% bytes
+// over q60 (the one width where the bars and "≤ today + 20%" at that
+// viewport can't both hold — see the audit report).
+const AVIF_QUALITY = Object.freeze({ desktop: Object.freeze({ 960: 76, 1280: 64, 1600: 64 }), mobile: Object.freeze({ 640: 72 }) });
+const WEBP_BOOST = Object.freeze({ desktop: Object.freeze({ 960: 4 }), mobile: Object.freeze({}) });
+function avifFor(width, slot) {
+  return { ...AVIF, quality: AVIF_QUALITY[slot][width] || AVIF.quality };
+}
+function webpFor(width, slot) {
+  const base = variantWebp(width);
+  return { ...base, quality: Math.min(100, base.quality + (WEBP_BOOST[slot][width] || 0)), smartSubsample: true };
+}
 // q95 4:4:4: SSIM ≥ 0.995 against the raster on both real banners (q92 gave
 // 0.9933 on the detailed mobile art). Never sent to modern browsers — it is
 // the long-term source for future renditions and the last-resort fallback.
@@ -57,7 +74,8 @@ function isSlot(s) {
 function heroRenditionWidths(masterWidth, slot) {
   const top = Math.min(Math.floor(Number(masterWidth) || 0), SLOTS[slot].renditionCap);
   if (top < 1) return [];
-  const widths = RENDITION_STEPS.filter((w) => w < top);
+  // nothing narrower than the slot is ever shown at (desktop art: from 768 px)
+  const widths = RENDITION_STEPS.filter((w) => w < top && w >= SLOTS[slot].renditionMin);
   widths.push(top);
   return widths;
 }
@@ -243,7 +261,7 @@ async function renderOutputs(raster, slot, onOutput, { deadline, signal } = {}) 
     for (const format of ["avif", "webp"]) {
       let p = fromRaster(raster);
       if (width < raster.width) p = p.resize({ width, kernel: "lanczos3" });
-      p = format === "avif" ? p.avif(AVIF) : p.webp({ ...variantWebp(width), smartSubsample: true });
+      p = format === "avif" ? p.avif(avifFor(width, slot)) : p.webp(webpFor(width, slot));
       const buffer = await encode(p);
       await onOutput({ kind: "rendition", format, width, keyWidth: renditionKeyWidth(width), buffer });
     }
@@ -260,6 +278,9 @@ module.exports = {
   RENDITION_STEPS,
   RENDITION_TYPES,
   AVIF,
+  AVIF_QUALITY,
+  avifFor,
+  webpFor,
   MASTER_JPEG,
   isSlot,
   heroRenditionWidths,

@@ -98,6 +98,7 @@ test("A commits, its response is lost, B commits, A retries: A is recognised as 
   await hh.stage(AT, "mobile", MOB);
   const st = await hh.adminState(AT);
   const bodyA = { opToken: st.opToken, expectedVersion: st.version, slots: { desktop: st.draft.desktop.opId, mobile: st.draft.mobile.opId }, alt: "Admin A's words" };
+  const auditsBefore = await AdminAuditLog().countDocuments({ action: "site.hero.publish", actorId: ADMIN._id });
   const a = await h.api("POST", "/site/admin/hero/publish", { token: AT, body: bodyA }); // "lost"
   assert.equal(a.status, 200);
   const stB = await hh.adminState(AT2);
@@ -109,12 +110,10 @@ test("A commits, its response is lost, B commits, A retries: A is recognised as 
   assert.equal(retry.body.result.version, 1, "A's own outcome");
   assert.equal(retry.body.state.version, 2);
   assert.equal(retry.body.state.alt, "Admin B's words", "B's change survives");
-  assert.equal((await AdminAuditLog().countDocuments({ action: "site.hero.publish" })) >= 1, true);
   const s = await opStatus(opIdOf(bodyA.opToken));
   assert.equal(s.body.status, "completed");
   assert.equal(s.body.result.version, 1);
-  const publishes = await AdminAuditLog().find({ action: "site.hero.publish", "details.version": 1 }).lean();
-  assert.equal(publishes.filter((r) => String(r.actorId) === String(ADMIN._id)).length >= 1, true);
+  assert.equal(await AdminAuditLog().countDocuments({ action: "site.hero.publish", actorId: ADMIN._id }), auditsBefore + 1, "A's publish audited exactly once — the retry added nothing");
   const doc = await heroDoc();
   assert.equal(doc.receipts.filter((r) => r.opId === opIdOf(bodyA.opToken)).length, 1, "one receipt, never two");
 });
@@ -216,6 +215,8 @@ test("lease: worker A outlives its lease, worker B takes over, A finishes late �
   assert.equal(doc.lease, null, "B released its own lease; A touched nothing");
   const aKeys = objects().filter((k) => k.startsWith("site/hero/desktop/"));
   assert.deepEqual(aKeys, [], "A's objects were deleted (never referenced)");
+  assert.deepEqual(doc.receipts.map((r) => [r.action, r.target, r.status]), [["stage", "mobile", "completed"]], "A recorded nothing — only B's receipt");
+  assert.ok(doc.pending.some((p) => p.masterKey.startsWith("site/hero/desktop/")), "A's upload record stays for the sweep (a late PUT may still land)");
 });
 
 test("budget: an expired budget really stops the uploads (aborted, nothing after) → 503, failure recorded, lease released", async () => {
@@ -311,6 +312,7 @@ test("unknown commit (it did not happen): the draft's objects are kept, the leas
   const kept = objects().length;
   assert.ok(kept > 0, "objects kept — the sweep decides later");
   assert.equal((await heroDoc()).lease, null, "lease freed");
+  assert.ok((await heroDoc()).pending.some((p) => p.masterKey.startsWith("site/hero/desktop/")), "the objects are recorded for the sweep");
   assert.equal((await opStatus(opIdOf(st.opToken))).body.status, "unknown");
   const again = await hh.stage(AT, "desktop", DESK, { opToken: st.opToken, expectedDraftOpId: "" });
   assert.equal(again.status, 201, "not applied before → safe to run");
@@ -343,6 +345,10 @@ test("audit failure: nothing is committed — no publish, no receipt; a draft's 
   assert.equal(draft.status, 503);
   assert.equal(draft.body.code, "AUDIT_UNAVAILABLE");
   assert.equal(objects().length, beforeObjects, "the failed draft's objects were removed");
+  const after = await heroDoc();
+  assert.equal(after.lease, null, "lease released");
+  assert.ok(after.receipts.some((r) => r.action === "stage" && r.status === "failed" && r.result.code === "AUDIT_UNAVAILABLE"), "the failure is recorded");
+  assert.equal(after.pending.length, 1, "its upload record stays until the sweep confirms");
 });
 
 // --- races -----------------------------------------------------------------------------
@@ -376,6 +382,15 @@ test("races: two first publishes, publish vs restore, publish vs alt — exactly
     h.api("PATCH", "/site/admin/hero/alt", { token: AT2, body: { opToken: y.opToken, expectedVersion: y.version, alt: "Race 3b" } }),
   ]);
   assert.deepEqual([pb.status, al.status].sort(), [200, 409], `${pb.status}/${al.status}`);
+  // every loser left no trace: one receipt and one audit row per winner only
+  const doc = await heroDoc();
+  const losers = [[a, s1], [b, s2], [pub, p], [res, q], [pb, x], [al, y]].filter(([r]) => r.status === 409).map(([, st]) => opIdOf(st.opToken));
+  assert.equal(losers.length, 3);
+  for (const id of losers) assert.ok(!doc.receipts.some((r) => r.opId === id), "a refused change leaves no receipt");
+  const winners = [[a, s1], [b, s2], [pub, p], [res, q], [pb, x], [al, y]].filter(([r]) => r.status === 200).map(([, st]) => opIdOf(st.opToken));
+  for (const id of winners) assert.equal(doc.receipts.filter((r) => r.opId === id).length, 1);
+  const rows = await AdminAuditLog().countDocuments({ action: { $in: ["site.hero.publish", "site.hero.reset", "site.hero.alt"] }, createdAt: { $gte: new Date(Date.now() - 120000) } });
+  assert.ok(rows >= 3, "each winner audited");
 });
 
 test("expired draft vs publish: the publish is refused (HERO_DRAFT_EXPIRED) and the sweep removes the draft; run together, one consistent outcome", async () => {

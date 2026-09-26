@@ -244,12 +244,13 @@ test("environments: only production uses site/hero/; anything else has its own n
   assert.match(storage().keyFromUrl(d.body.state.draft.desktop.url), /^_qa\/site\/hero\/run-1\/desktop\//);
   assert.ok(storage().isProtectedKey("_qa/site/hero/run-1/desktop/x.jpg"), "QA objects are protected too");
   const st = await hh.adminState(AT);
-  assert.deepEqual(st.environment, { production: false, prefix: "_qa/site/hero/run-1/" }, "the admin page is told");
+  assert.deepEqual(st.environment, { production: false, prefix: "_qa/site/hero/run-1/", namespace: "_qa/site/hero/run-1/", writable: true }, "the admin page is told");
   await SiteSetting().collection.updateOne({ _id: "home_hero" }, { $push: { retired: { masterKeys: [prodKey], retiredAt: new Date() }, pending: { masterKey: prodKey, at: new Date() } } });
   const r = await sweeper().sweep({ now: later(25), force: true });
   assert.equal(underMaster(prodKey).length, 2, `production's objects untouched: ${JSON.stringify(r)}`);
   const doc = await heroDoc();
-  assert.equal(doc.retired.length + doc.pending.length, 0, "the foreign records are let go of, not acted on");
+  assert.equal(r.foreign, 2, JSON.stringify(r));
+  assert.equal(doc.retired.length + doc.pending.length, 2, "the foreign records are kept (another environment's to act on), not acted on");
 });
 
 test("the draft's URL is built from its key, whatever format the storage reply has", async () => {

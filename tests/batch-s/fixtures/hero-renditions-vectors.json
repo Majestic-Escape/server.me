@@ -1,5 +1,5 @@
 {
- "about": "Homepage hero contract (server services/siteHeroImage.js). The server test, the site's scripts/check-hero.mjs and the admin's check script must reproduce every vector.",
+ "about": "Homepage hero contract (server services/siteHeroImage.js). The server test, the site's scripts/check-hero.mjs and the admin's check script must reproduce every vector. Renditions stop at renditionCap (the master at cap).",
  "slots": {
   "desktop": {
    "ratio": 2.5945945945945947,
@@ -7,7 +7,8 @@
    "min": [
     1920,
     740
-   ]
+   ],
+   "renditionCap": 2560
   },
   "mobile": {
    "ratio": 0.7361111111111112,
@@ -15,7 +16,8 @@
    "min": [
     530,
     720
-   ]
+   ],
+   "renditionCap": 1600
   }
  },
  "ratioTolerance": 0.01,
@@ -302,8 +304,7 @@
     1280,
     1600,
     1920,
-    2560,
-    2805
+    2560
    ],
    "keyWidths": [
     640,
@@ -311,8 +312,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3840
+    2560
    ]
   },
   {
@@ -324,8 +324,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3000
+    2560
    ],
    "keyWidths": [
     640,
@@ -333,8 +332,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3840
+    2560
    ]
   },
   {
@@ -346,8 +344,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3839
+    2560
    ],
    "keyWidths": [
     640,
@@ -355,8 +352,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3840
+    2560
    ]
   },
   {
@@ -368,8 +364,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3840
+    2560
    ],
    "keyWidths": [
     640,
@@ -377,8 +372,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3840
+    2560
    ]
   },
   {
@@ -390,8 +384,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3840
+    2560
    ],
    "keyWidths": [
     640,
@@ -399,8 +392,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3840
+    2560
    ]
   },
   {
@@ -412,8 +404,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3840
+    2560
    ],
    "keyWidths": [
     640,
@@ -421,8 +412,7 @@
     1280,
     1600,
     1920,
-    2560,
-    3840
+    2560
    ]
   }
  ]

@@ -20,9 +20,14 @@
 //  - whatever the document still points at — the live pair and every draft —
 //    is never deleted, whatever the records say; a live or draft URL that
 //    does not parse to a key stops the run before anything is deleted;
-//  - only keys under this environment's prefix are ever touched;
+//  - only keys under this environment's prefix are ever touched, and a
+//    document that belongs to another environment (siteHero.assertEnvironment:
+//    a production database opened from a laptop or a preview) is not swept at
+//    all — not even the once-a-day claim is written;
 //  - a record is pulled only after a fresh listing shows none of its objects
-//    left; a failed delete or listing keeps it for the next run.
+//    left; a failed delete or listing keeps it for the next run. A record
+//    naming keys outside this prefix is kept (another environment's to act
+//    on) and counted as `foreign`.
 // Eligible objects are deleted by a later successful run: with the daily
 // cron (Hobby: once a day, ±59 min) that can be more than a day after they
 // became eligible.
@@ -41,8 +46,7 @@ function hero() {
   return require("./siteHero");
 }
 
-async function expireDrafts(now, log) {
-  const doc = await hero().readDoc();
+async function expireDrafts(now, log, doc) {
   let expired = 0;
   for (const slot of SLOTS) {
     const d = doc && doc.draft && doc.draft[slot];
@@ -50,14 +54,17 @@ async function expireDrafts(now, log) {
     const key = storage.keyFromUrl(d.url);
     const update = { $set: { [`draft.${slot}`]: null } };
     if (key) update.$push = { retired: { masterKeys: [key], retiredAt: now } };
+    let done = false;
     const session = await mongoose.startSession();
     try {
       await session.withTransaction(async () => {
+        done = false;
         const res = await coll().updateOne({ _id: hero().DOC_ID, [`draft.${slot}.opId`]: d.opId, [`draft.${slot}.expiresAt`]: { $lte: now } }, update, { session });
         if (res.matchedCount !== 1) return;
         await adminAudit.recordSystem("site.hero.draft_expire", { targetType: "SiteSetting", targetKey: hero().DOC_ID }, { slot, opId: d.opId }, { session });
-        expired += 1;
+        done = true;
       });
+      if (done) expired += 1; // counted once, however often the driver ran the callback
     } catch (err) {
       log(`[site-hero sweep] draft expiry failed (${slot}): ${err && (err.code || err.message)}`);
     } finally {
@@ -72,20 +79,30 @@ async function expireDrafts(now, log) {
  * @returns {Promise<object>} what was (or, with dryRun, would be) done
  */
 async function sweep({ now = new Date(), window = DEFAULT_WINDOW_MS, dryRun = false, force = false, log = console.log } = {}) {
-  await hero().ensureDoc();
+  const prefix = hero().keyPrefix();
+  // A dry run writes nothing (not even the document's creation).
+  if (!dryRun) await hero().ensureDoc();
+  const current = await hero().readDoc();
+  if (!current) return { dryRun, prefix, skipped: "no-document" };
+  if (current.namespace && current.namespace !== prefix) {
+    log(`[site-hero sweep] this document belongs to ${current.namespace}, this process uses ${prefix} — nothing done`);
+    return { dryRun, prefix, namespace: current.namespace, skipped: "other-environment" };
+  }
   if (!force && !dryRun) {
     const claim = await coll().findOneAndUpdate(
       { _id: hero().DOC_ID, $or: [{ lastSweepAt: null }, { lastSweepAt: { $lt: new Date(now.getTime() - window) } }] },
       { $set: { lastSweepAt: now } },
-      { returnDocument: "after" },
+      { returnDocument: "after", projection: { _id: 1 } },
     );
     if (!docOf(claim)) return { skipped: "recent" };
   }
-  const summary = { dryRun, expiredDrafts: 0, records: 0, listed: 0, candidates: 0, deleted: 0, failed: 0, retiredPulled: 0, pendingPulled: 0, kept: 0, unrecorded: 0 };
-  if (!dryRun) summary.expiredDrafts = await expireDrafts(now, log);
+  const summary = { dryRun, prefix, expiredDrafts: 0, records: 0, listed: 0, candidates: 0, deleted: 0, failed: 0, retiredPulled: 0, pendingPulled: 0, kept: 0, foreign: 0, unrecorded: 0 };
+  if (!dryRun) summary.expiredDrafts = await expireDrafts(now, log, current);
 
-  const prefix = hero().keyPrefix();
-  const doc = await hero().readDoc();
+  // The snapshot read before the claim is enough unless drafts were just
+  // expired (their keys moved to `retired`): a key in a due record can never
+  // become referenced again, so an older snapshot is only more conservative.
+  const doc = summary.expiredDrafts ? await hero().readDoc() : current;
 
   // What the document points at is off limits. A reference that does not
   // parse means something is wrong with this environment: delete nothing.
@@ -138,8 +155,7 @@ async function sweep({ now = new Date(), window = DEFAULT_WINDOW_MS, dryRun = fa
   }
 
   // A record goes only once a fresh listing confirms its objects are gone.
-  // Keys it may not delete (another prefix, referenced again) are simply let
-  // go of — never deleted.
+  // A record naming keys outside this prefix stays (another environment's).
   let remaining = new Set();
   if (masters.size) {
     try {
@@ -149,15 +165,32 @@ async function sweep({ now = new Date(), window = DEFAULT_WINDOW_MS, dryRun = fa
       return { ...summary, kept: due.length, error: "confirm-list" };
     }
   }
+  const pulls = { retired: [], pending: [] };
   for (const d of due) {
+    if (d.keys.some((k) => typeof k !== "string" || !k.startsWith(prefix))) {
+      summary.foreign += 1;
+      continue;
+    }
     if (d.keys.some((k) => deletable(k) && remaining.has(k))) {
       summary.kept += 1;
       continue;
     }
-    const pull = d.kind === "retired" ? { retired: { retiredAt: d.record.retiredAt, masterKeys: d.record.masterKeys } } : { pending: { masterKey: d.record.masterKey, at: d.record.at } };
-    const res = await coll().updateOne({ _id: hero().DOC_ID }, { $pull: pull });
-    if (res.modifiedCount) summary[d.kind === "retired" ? "retiredPulled" : "pendingPulled"] += 1;
+    if (d.kind === "retired") pulls.retired.push({ retiredAt: d.record.retiredAt, masterKeys: d.record.masterKeys });
+    else pulls.pending.push({ masterKey: d.record.masterKey, at: d.record.at });
   }
+  // one update for every confirmed record
+  const $pull = {};
+  if (pulls.retired.length) $pull.retired = { $or: pulls.retired };
+  if (pulls.pending.length) $pull.pending = { $or: pulls.pending };
+  if (Object.keys($pull).length) {
+    const sizes = { r: { $size: { $ifNull: ["$retired", []] } }, p: { $size: { $ifNull: ["$pending", []] } } };
+    const before = await coll().findOne({ _id: hero().DOC_ID }, { projection: sizes });
+    await coll().updateOne({ _id: hero().DOC_ID }, { $pull });
+    const after = await coll().findOne({ _id: hero().DOC_ID }, { projection: sizes });
+    summary.retiredPulled = Math.max(0, before.r - after.r);
+    summary.pendingPulled = Math.max(0, before.p - after.p);
+  }
+  if (summary.foreign) log(`[site-hero sweep] ${summary.foreign} record(s) name objects outside ${prefix} — kept, not acted on`);
   if (summary.failed) log(`[site-hero sweep] ${summary.failed} object(s) could not be deleted; the next run retries`);
   if (summary.unrecorded) log(`[site-hero sweep] ${summary.unrecorded} object(s) under ${prefix} are not this database's — left alone`);
   return summary;

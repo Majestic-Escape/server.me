@@ -292,17 +292,20 @@ test("draft crop: cut to the exact box around the focal point; within 1% used wh
   await reset();
   const tall = await hh.stage(AT, "desktop", await hh.photo(1920, 1000), { fields: { focalY: "0", acceptRatio: "1" } });
   assert.deepEqual([tall.body.state.draft.desktop.width, tall.body.state.draft.desktop.height], [1920, 740]);
-  // the minimum, ±1 px (1% slack for the uncropped tolerance): desktop 1900×732 / mobile 524×712
+  // the minimum, ±1 px: the width is exact (1920 / 530); the height keeps
+  // the 1% slack of the uncropped ratio tolerance (desktop 733, mobile 713)
   await reset();
-  assert.equal((await hh.stage(AT, "desktop", await hh.photo(1900, 732))).status, 201);
+  assert.equal((await hh.stage(AT, "desktop", await hh.photo(1920, 733))).status, 201, "1920×733: used whole");
   let before = objects();
-  const small = await hh.stage(AT, "desktop", await hh.photo(1899, 732));
-  await expectRefused(small, 422, "HERO_TOO_SMALL", "1899 px", before);
+  const small = await hh.stage(AT, "desktop", await hh.photo(1919, 740));
+  await expectRefused(small, 422, "HERO_TOO_SMALL", "1919 px", before);
   assert.deepEqual(small.body.required, { width: 1920, height: 740 });
-  assert.deepEqual(small.body.actual, { width: 1899, height: 732 });
-  assert.equal((await hh.stage(AT, "mobile", await hh.photo(524, 712))).status, 201);
+  assert.deepEqual(small.body.actual, { width: 1919, height: 740 });
   before = objects();
-  await expectRefused(await hh.stage(AT, "mobile", await hh.photo(523, 712)), 422, "HERO_TOO_SMALL", "523 px mobile", before);
+  await expectRefused(await hh.stage(AT, "desktop", await hh.photo(1920, 731)), 422, "HERO_TOO_SMALL", "1920×731 (cropped to 1897 wide)", before);
+  assert.equal((await hh.stage(AT, "mobile", await hh.photo(530, 713))).status, 201, "530×713: used whole");
+  before = objects();
+  await expectRefused(await hh.stage(AT, "mobile", await hh.photo(529, 720)), 422, "HERO_TOO_SMALL", "529 px mobile", before);
   // desktop art in the mobile slot: needs the explicit confirmation
   const wrongSlot = await hh.stage(AT, "mobile", DESK);
   assert.equal(wrongSlot.body.code, "HERO_RATIO_CONFIRM");

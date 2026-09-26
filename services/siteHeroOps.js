@@ -104,9 +104,25 @@ function checkOperation(doc, op, { actorId, fingerprint: fp }, now = Date.now())
     return { replay: r };
   }
   if (op.expired) throw new HeroError(410, "OP_EXPIRED", "This page has been open too long — reload and try again");
-  const retryable = ((doc && doc.receipts) || []).filter((x) => x && x.at && now - new Date(x.at).getTime() < TOKEN_TTL_MS).length;
-  if (retryable >= RECEIPT_CAP) throw new HeroError(429, "HERO_TOO_MANY_OPS", "Too many banner changes in a short time — wait a few minutes");
+  if (atCapacity(doc, now)) throw tooManyOps();
   return { proceed: true };
+}
+
+// Receipts are appended in time order, so the first one is the oldest. The
+// list is full when it holds RECEIPT_CAP receipts; one more may only be added
+// (evicting the oldest) when that oldest is past its retry window.
+function atCapacity(doc, now = Date.now()) {
+  const list = (doc && doc.receipts) || [];
+  return list.length >= RECEIPT_CAP && !!list[0] && now - new Date(list[0].at).getTime() < TOKEN_TTL_MS;
+}
+function tooManyOps() {
+  return new HeroError(429, "HERO_TOO_MANY_OPS", "Too many banner changes in a short time — wait a few minutes");
+}
+// The same rule inside every update that appends a receipt, so two
+// operations that both passed checkOperation can't together evict a
+// receipt that is still retryable.
+function roomFilter(now = Date.now()) {
+  return { $or: [{ [`receipts.${RECEIPT_CAP - 1}`]: { $exists: false } }, { "receipts.0.at": { $lt: new Date(now - TOKEN_TTL_MS) } }] };
 }
 
 function receipt({ opId, actorId, action, target, fingerprint: fp, status, result }, now = new Date()) {
@@ -133,6 +149,9 @@ module.exports = {
   canonical,
   findReceipt,
   checkOperation,
+  atCapacity,
+  tooManyOps,
+  roomFilter,
   receipt,
   pushReceipt,
   pruneFilter,

@@ -350,3 +350,355 @@ test("environments: only the exact production signals count; another QA run's re
   assert.equal(objects("_qa/site/hero/run-2/").length, 2, `run-2's objects untouched: ${JSON.stringify(r)}`);
   assert.equal(storage().__mock.deleted.length, 0, "nothing deleted at all");
 });
+
+// --- batch 2 (reviewer findings INT-1…9, SEC-A/B/E, D1, P4) -------------------------------
+const mongoose = require("mongoose");
+const ops = () => require("../../services/siteHeroOps");
+const underKey = (master) => [...storage().__mock.objects.keys()].filter((k) => k === master || k.startsWith(`${master}/`));
+// A real driver commit error without the UnknownTransactionCommitResult label:
+// w:2 on the one-node test replica set → UnsatisfiableWriteConcern on commit,
+// after the commit applied on the primary.
+function unlabelledCommitErrors() {
+  const real = mongoose.startSession.bind(mongoose);
+  const seen = [];
+  mongoose.startSession = async () => {
+    const s = await real({ defaultTransactionOptions: { writeConcern: { w: 2 } } });
+    const wt = s.withTransaction.bind(s);
+    s.withTransaction = async (fn, o) => {
+      try {
+        return await wt(fn, o);
+      } catch (e) {
+        seen.push({ code: e.code, unknownLabel: !!(e.hasErrorLabel && e.hasErrorLabel("UnknownTransactionCommitResult")) });
+        throw e;
+      }
+    };
+    return s;
+  };
+  return { seen, restore: () => (mongoose.startSession = real) };
+}
+
+test("INT-1: a commit error the driver leaves unlabelled (write concern) is 'unknown' — the saved draft keeps its objects; the same-token retry replays it", async () => {
+  const st = await hh.adminState(AT);
+  const inj = unlabelledCommitErrors();
+  let r;
+  try {
+    r = await hh.stage(AT, "desktop", DESK, { opToken: st.opToken, expectedDraftOpId: "" });
+  } finally {
+    inj.restore();
+  }
+  assert.equal(inj.seen.length, 1);
+  assert.equal(inj.seen[0].unknownLabel, false, "the driver did not label it");
+  assert.equal(r.status, 503, JSON.stringify(r.body));
+  assert.equal(r.body.code, "HERO_OUTCOME_UNKNOWN", "never 'Nothing was saved'");
+  const doc = await heroDoc();
+  assert.ok(doc.draft.desktop, "the commit applied");
+  const key = storage().keyFromUrl(doc.draft.desktop.url);
+  assert.ok(underKey(key).length >= 2, "its objects are all still there");
+  assert.equal(doc.lease, null);
+  const again = await hh.stage(AT, "desktop", DESK, { opToken: st.opToken, expectedDraftOpId: "" });
+  assert.equal(again.status, 200, JSON.stringify(again.body));
+  assert.equal(again.body.replayed, true);
+});
+
+test("INT-1: the same on publish — 503 unknown (not 'nothing saved'); status completed; the retry replays", async () => {
+  await hh.stage(AT, "desktop", DESK);
+  await hh.stage(AT, "mobile", MOB);
+  const st = await hh.adminState(AT);
+  const body = { opToken: st.opToken, expectedVersion: st.version, slots: { desktop: st.draft.desktop.opId, mobile: st.draft.mobile.opId }, alt: "A season banner" };
+  const inj = unlabelledCommitErrors();
+  let r;
+  try {
+    r = await h.api("POST", "/site/admin/hero/publish", { token: AT, body });
+  } finally {
+    inj.restore();
+  }
+  assert.equal(r.body.code, "HERO_OUTCOME_UNKNOWN", JSON.stringify(r.body));
+  assert.equal((await heroDoc()).version, 1);
+  assert.equal((await opStatus(opIdOf(st.opToken))).body.status, "completed");
+  const again = await h.api("POST", "/site/admin/hero/publish", { token: AT, body });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.replayed, true);
+  assert.equal(await audits("site.hero.publish"), 1);
+});
+
+test("INT-6: when a database session can't start at install, the lease is released at once and the failure recorded", async () => {
+  const st = await hh.adminState(AT);
+  const real = mongoose.startSession.bind(mongoose);
+  mongoose.startSession = async () => {
+    throw new Error("no session");
+  };
+  let r;
+  try {
+    r = await hh.stage(AT, "desktop", DESK, { opToken: st.opToken, expectedDraftOpId: "" });
+  } finally {
+    mongoose.startSession = real;
+  }
+  assert.equal(r.status, 503, JSON.stringify(r.body));
+  const doc = await heroDoc();
+  assert.equal(doc.lease, null, "not stuck for 150 s");
+  assert.equal(doc.receipts.find((x) => x.opId === opIdOf(st.opToken)).status, "failed");
+  assert.deepEqual(objects(), [], "nothing left stored");
+});
+
+test("INT-4: an install that finds this operation already has an outcome replays it (one receipt) and cleans up after itself", async () => {
+  const st = await hh.adminState(AT);
+  const opId = opIdOf(st.opToken);
+  const fp = ops().fingerprint({ action: "stage", slot: "desktop", file: require("crypto").createHash("sha256").update(DESK).digest("hex"), focal: { x: 0.5, y: 0.5 }, acceptRatio: false, clientReencoded: false, expectedDraftOpId: null });
+  const c = SiteSetting().collection;
+  const realFOAU = c.findOneAndUpdate;
+  let armed = true;
+  // right after this attempt takes the lease, an earlier attempt of the same
+  // request records its failure (the interleaving the reviewer found)
+  c.findOneAndUpdate = async function (...args) {
+    const res = await realFOAU.apply(this, args);
+    if (armed && args[1] && args[1].$set && args[1].$set.lease) {
+      armed = false;
+      await c.updateOne({ _id: "home_hero" }, { $push: { receipts: { opId, actorId: ADMIN._id, action: "stage", target: "desktop", fingerprint: fp, status: "failed", result: { httpStatus: 503, code: "HERO_TIMEOUT", message: "Preparing the image took too long" }, at: new Date() } } });
+    }
+    return res;
+  };
+  let r;
+  try {
+    r = await hh.stage(AT, "desktop", DESK, { opToken: st.opToken, expectedDraftOpId: "" });
+  } finally {
+    c.findOneAndUpdate = realFOAU;
+  }
+  assert.equal(r.status, 503, JSON.stringify(r.body));
+  assert.equal(r.body.code, "HERO_TIMEOUT");
+  assert.equal(r.body.replayed, true, "the recorded outcome, not 'changed by someone else'");
+  const doc = await heroDoc();
+  assert.equal(doc.receipts.filter((x) => x.opId === opId).length, 1, "one receipt");
+  assert.equal(doc.draft.desktop, null);
+  assert.equal(doc.lease, null);
+  assert.deepEqual(objects(), [], "this attempt's objects were deleted");
+});
+
+test("INT-5: receipts at the cap — two operations that both passed the check can't evict a retryable receipt (one gets 429)", async () => {
+  await banner();
+  await hh.stage(AT, "desktop", await hh.photo(1920, 740, { hue: 77 }));
+  const cap = ops().RECEIPT_CAP;
+  const doc0 = await heroDoc();
+  const fill = cap - 1 - doc0.receipts.length;
+  const filler = Array.from({ length: fill }, (_, i) => ({ opId: require("crypto").randomUUID(), actorId: ADMIN._id, action: "alt", target: "alt", fingerprint: "x", status: "completed", result: {}, at: new Date(Date.now() - 60_000 + i) }));
+  await SiteSetting().collection.updateOne({ _id: "home_hero" }, { $push: { receipts: { $each: filler, $position: 0 } } });
+  assert.equal((await heroDoc()).receipts.length, cap - 1);
+  const oldest = (await heroDoc()).receipts[0].opId;
+  const [s1, s2] = [await hh.adminState(AT), await hh.adminState(AT2)];
+  const release = readBarrier(2);
+  let rs;
+  try {
+    rs = await Promise.all([
+      h.api("PATCH", "/site/admin/hero/alt", { token: AT, body: { opToken: s1.opToken, expectedVersion: s1.version, alt: "One" } }),
+      h.api("DELETE", "/site/admin/hero/desktop/draft", { token: AT2, body: { opToken: s2.opToken, expectedDraftOpId: s2.draft.desktop.opId } }),
+    ]);
+  } finally {
+    release();
+  }
+  assert.deepEqual(rs.map((r) => r.status).sort(), [200, 429], JSON.stringify(rs.map((r) => r.body.code)));
+  const doc = await heroDoc();
+  assert.equal(doc.receipts.length, cap);
+  assert.equal(doc.receipts[0].opId, oldest, "the oldest (still retryable) receipt was not evicted");
+});
+
+test("INT-7: when the upload records are full, a new job is refused (503) before storing anything — no record is ever dropped", async () => {
+  await require("../../services/siteHero").ensureDoc();
+  const full = Array.from({ length: 200 }, () => ({ masterKey: `site/hero/desktop/${require("crypto").randomUUID()}.jpg`, at: new Date() }));
+  await SiteSetting().collection.updateOne({ _id: "home_hero" }, { $set: { pending: full } });
+  const r = await hh.stage(AT, "desktop", DESK);
+  assert.equal(r.status, 503, JSON.stringify(r.body));
+  assert.equal(r.body.code, "HERO_CLEANUP_BACKLOG");
+  const doc = await heroDoc();
+  assert.equal(doc.pending.length, 200);
+  assert.equal(doc.pending[0].masterKey, full[0].masterKey, "nothing evicted");
+  assert.equal(storage().__mock.uploaded.length, 0);
+  assert.equal(doc.lease, null);
+});
+
+test("INT-8: while a job runs, its id with another file is OP_ID_REUSED; the very same request is 202 processing", async () => {
+  storage().__mock.putDelayMs = 250;
+  const st = await hh.adminState(AT);
+  const first = hh.stage(AT, "desktop", DESK, { opToken: st.opToken, expectedDraftOpId: "" });
+  assert.ok(await waitFor(async () => !!((await heroDoc()) || {}).lease));
+  const other = await hh.stage(AT, "desktop", await hh.photo(1920, 740, { hue: 33 }), { opToken: st.opToken, expectedDraftOpId: "" });
+  assert.equal(other.status, 422, JSON.stringify(other.body));
+  assert.equal(other.body.code, "OP_ID_REUSED");
+  const same = await hh.stage(AT, "desktop", DESK, { opToken: st.opToken, expectedDraftOpId: "" });
+  assert.equal(same.status, 202);
+  const reencoded = await hh.stage(AT, "desktop", DESK, { opToken: st.opToken, expectedDraftOpId: "", fields: { clientReencoded: "1" } });
+  assert.equal(reencoded.status, 422, "clientReencoded is part of the request");
+  storage().__mock.putDelayMs = 0;
+  assert.equal((await first).status, 201);
+});
+
+test("INT-9: a listing page marked truncated without a continuation token is an error, never a short listing", async () => {
+  const cfgPath = require.resolve("../../config/digitalOcean.config");
+  const saved = require.cache[cfgPath];
+  require.cache[cfgPath] = { id: cfgPath, filename: cfgPath, loaded: true, exports: { listObjectsV2: () => ({ promise: async () => ({ Contents: [{ Key: "a/1", Size: 1 }], IsTruncated: true }) }) } };
+  process.env.SPACES_MOCK = "0";
+  try {
+    await assert.rejects(() => storage().listKeys("a/"), (e) => e.code === "LIST_INCOMPLETE");
+  } finally {
+    process.env.SPACES_MOCK = "1";
+    if (saved) require.cache[cfgPath] = saved;
+    else delete require.cache[cfgPath];
+  }
+});
+
+test("SEC-A: a non-production server never changes or sweeps production's banner document; production takes over a document of another namespace; an old document is bound", async () => {
+  await banner(); // created as production (SITE_HERO_PRODUCTION=1): namespace site/hero/
+  assert.equal((await heroDoc()).namespace, "site/hero/");
+  await SiteSetting().collection.updateOne({ _id: "home_hero" }, { $push: { retired: { masterKeys: ["site/hero/desktop/old.jpg"], retiredAt: new Date(Date.now() - 48 * HOUR) } } });
+  const before = await heroDoc();
+  delete process.env.SITE_HERO_PRODUCTION; // now a laptop / preview pointed at that database
+  const st = await hh.adminState(AT);
+  assert.equal(st.environment.writable, false);
+  const refused = [
+    await hh.stage(AT, "desktop", DESK),
+    await h.api("PATCH", "/site/admin/hero/alt", { token: AT, body: { opToken: st.opToken, expectedVersion: st.version, alt: "x" } }),
+    await h.api("POST", "/site/admin/hero/restore-default", { token: AT, body: { opToken: (await hh.adminState(AT)).opToken, expectedVersion: st.version } }),
+  ];
+  for (const r of refused) {
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.code, "HERO_WRONG_ENVIRONMENT");
+  }
+  assert.equal((await sweeper().sweep({ force: true })).skipped, "other-environment");
+  assert.equal((await sweeper().sweep({})).skipped, "other-environment");
+  const after = await heroDoc();
+  assert.deepEqual(
+    { v: after.version, r: after.retired.length, p: after.pending.length, s: String(after.lastSweepAt), d: !!after.draft.desktop },
+    { v: before.version, r: before.retired.length, p: before.pending.length, s: String(before.lastSweepAt), d: !!before.draft.desktop },
+    "production's document untouched (not even the sweep claim)",
+  );
+  assert.equal(storage().__mock.uploaded.filter((u) => !u.key.startsWith("site/hero/")).length, 0, "nothing stored for it");
+  // production takes over a document created under a QA namespace
+  await SiteSetting().collection.updateOne({ _id: "home_hero" }, { $set: { namespace: "_qa/site/hero/dev/" } });
+  process.env.SITE_HERO_PRODUCTION = "1";
+  const s2 = await hh.adminState(AT);
+  const ok = await h.api("PATCH", "/site/admin/hero/alt", { token: AT, body: { opToken: s2.opToken, expectedVersion: s2.version, alt: "Adopted" } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal((await heroDoc()).namespace, "site/hero/");
+  // a document from before the rule is bound to its first writer
+  await SiteSetting().collection.updateOne({ _id: "home_hero" }, { $unset: { namespace: 1 } });
+  const s3 = await hh.adminState(AT);
+  assert.equal((await h.api("PATCH", "/site/admin/hero/alt", { token: AT, body: { opToken: s3.opToken, expectedVersion: s3.version, alt: "Bound" } })).status, 200);
+  assert.equal((await heroDoc()).namespace, "site/hero/");
+});
+
+test("SEC-B: keys with '.' segments (e.g. ./site/… via %2F) are not our keys", () => {
+  const s = storage();
+  const base = s.publicUrl("x").replace(/x$/, "");
+  // a "." segment hidden behind %2F survives URL parsing and must be refused
+  for (const p of [".%2Fsite/hero/desktop/a.jpg", "%2E%2Fsite/hero/desktop/a.jpg", "listings/.%2Fa.jpg", "a/.%2F.%2Fsite/x.jpg"]) assert.equal(s.keyFromUrl(`${base}${p}`), null, p);
+  // a plain "/./" or "/%2E/" is normalised by the URL parser itself (the browser fetches the same object)
+  assert.equal(s.keyFromUrl(`${base}listings/./a.jpg`), "listings/a.jpg");
+  assert.equal(s.keyFromUrl(`${base}listings/%2E/a.jpg`), "listings/a.jpg");
+  assert.equal(s.keyFromUrl(`${base}listings/a.jpg`), "listings/a.jpg");
+});
+
+test("SEC-E: with SPACES_WRITE_PREFIX (the real-bucket harness) every put and delete outside it is refused; the harness itself refuses production flags", async () => {
+  process.env.SPACES_WRITE_PREFIX = "_qa/";
+  try {
+    await assert.rejects(() => storage().putObject("listings/x.jpg", Buffer.from("x"), "image/jpeg"), (e) => e.code === "WRITE_PREFIX");
+    storage().__mock.objects.set("listings/keep.jpg", { body: Buffer.from("x"), contentType: "image/jpeg", cacheControl: "", lastModified: new Date() });
+    const r = await storage().deleteObjects(["listings/keep.jpg", "site/hero/desktop/k.jpg"], { allowProtected: true });
+    assert.deepEqual(r.deleted, []);
+    assert.deepEqual(r.failed.map((f) => f.code), ["WRITE_PREFIX", "WRITE_PREFIX"]);
+    assert.ok(storage().__mock.objects.has("listings/keep.jpg"));
+    await storage().putObject("_qa/site/hero/x/ok.jpg", Buffer.from("x"), "image/jpeg");
+  } finally {
+    delete process.env.SPACES_WRITE_PREFIX;
+  }
+  const { spawnSync } = require("child_process");
+  const script = "require('./tests/batch-s/setup').start().then(()=>process.exit(0),(e)=>{console.log(e.message);process.exit(3)})";
+  const run = (env) => spawnSync(process.execPath, ["-e", script], { cwd: require("path").resolve(__dirname, "../.."), env: { PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT, E2E_REAL_SPACES: "1", ...env }, encoding: "utf8", timeout: 60000 });
+  const noPrefix = run({});
+  assert.equal(noPrefix.status, 3, noPrefix.stdout + noPrefix.stderr);
+  assert.match(noPrefix.stdout, /needs SITE_HERO_PREFIX/);
+  const prod = run({ SITE_HERO_PREFIX: "_qa/site/hero/x/", SITE_HERO_PRODUCTION: "1" });
+  assert.equal(prod.status, 3);
+  assert.match(prod.stdout, /must not run as production/);
+  assert.equal(run({ SITE_HERO_PREFIX: "_qa/site/hero/x/", VERCEL: "1" }).status, 3);
+});
+
+test("P4: desktop renditions stop at 2560 px (the master keeps its width); a 2805 px banner offers nothing wider", async () => {
+  const wide = await hh.photo(2805, 1081, { hue: 140 });
+  const r = await hh.stage(AT, "desktop", wide);
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  const d = r.body.state.draft.desktop;
+  assert.equal(d.width, 2805, "master at full width");
+  assert.deepEqual(d.renditions.map((x) => x.width), [640, 960, 1280, 1600, 1920, 2560]);
+  const key = storage().keyFromUrl(d.url);
+  assert.ok(!objects().some((k) => k.startsWith(`${key}/`) && /w3840/.test(k)), "no w3840 rendition stored");
+});
+
+test("D1: status polls and the admin read never ship the bookkeeping arrays (bounded replies with a full document)", async () => {
+  await banner();
+  const crypto = require("crypto");
+  const receipts = Array.from({ length: 480 }, (_, i) => ({ opId: crypto.randomUUID(), actorId: ADMIN._id, action: "alt", target: "alt", fingerprint: "f".repeat(64), status: "completed", result: { version: i }, at: new Date(Date.now() - 2 * HOUR) }));
+  const pending = Array.from({ length: 190 }, () => ({ masterKey: `site/hero/desktop/${crypto.randomUUID()}.jpg`, at: new Date() }));
+  const retired = Array.from({ length: 60 }, () => ({ masterKeys: [`site/hero/desktop/${crypto.randomUUID()}.jpg`], retiredAt: new Date() }));
+  await SiteSetting().collection.updateOne({ _id: "home_hero" }, { $push: { receipts: { $each: receipts } }, $set: { pending, retired } });
+  const BSON = mongoose.mongo.BSON;
+  const full = BSON.calculateObjectSize(await heroDoc());
+  const c = SiteSetting().collection;
+  const real = c.findOne;
+  const sizes = [];
+  c.findOne = async function (...args) {
+    const res = await real.apply(this, args);
+    sizes.push(res ? BSON.calculateObjectSize(res) : 0);
+    return res;
+  };
+  try {
+    sizes.length = 0;
+    await opStatus(receipts[7].opId);
+    const poll = Math.max(...sizes);
+    sizes.length = 0;
+    await hh.adminState(AT);
+    const state = Math.max(...sizes);
+    console.log(`[site-hero] reply bytes — full document ${full}, status poll ${poll}, admin read ${state}`);
+    assert.ok(full > 100_000, `the document is realistically full (${full})`);
+    assert.ok(poll < 3_000, `status poll ${poll} bytes`);
+    assert.ok(state < 8_000, `admin read ${state} bytes`);
+  } finally {
+    c.findOne = real;
+  }
+});
+
+test('QR: a "code" that decodes to nothing (jsQR on dithered noise) does not refuse a banner; listings keep their rule', async () => {
+  const { detectQr } = require('../../services/imageSanitizer');
+  const sharp = require('sharp');
+  const buf = require('fs').readFileSync(require('path').join(__dirname, 'fixtures/qr-empty-decode.png'));
+  assert.equal(await detectQr(sharp(buf)), true, 'the listing rule (unchanged) sees an empty version-1 decode');
+  assert.equal(await detectQr(sharp(buf), { requirePayload: true }), false, 'the banner rule needs a payload');
+});
+
+test("sweep CLI: unknown arguments stop it; it prints the environment it runs as; a dry run writes nothing; a non-production run against production's document does nothing", async () => {
+  await banner(); // a production document (namespace site/hero/)
+  await SiteSetting().collection.updateOne({ _id: "home_hero" }, { $set: { lastSweepAt: null } });
+  const before = await heroDoc();
+  const { spawnSync } = require("child_process");
+  const cli = (args, env) =>
+    spawnSync(process.execPath, ["scripts/site-hero-sweep.js", `--uri=${process.env.DB_URI}`, ...args], {
+      cwd: require("path").resolve(__dirname, "../.."),
+      env: { PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT, SPACES_MOCK: "1", JWT_SECRET: "x", DO_SPACES_BUCKET: "test-bucket", REGION: "blr1", ...env },
+      encoding: "utf8",
+      timeout: 90000,
+    });
+  const bad = cli(["--aply"], {});
+  assert.equal(bad.status, 1, bad.stdout + bad.stderr);
+  assert.match(bad.stderr, /unknown argument/);
+  const laptop = cli(["--apply"], {});
+  assert.equal(laptop.status, 0, laptop.stderr);
+  assert.match(laptop.stdout, /environment: not production \(prefix _qa\/site\/hero\/dev\/\); APPLY/);
+  assert.match(laptop.stdout, /other-environment/);
+  const prodDry = cli([], { SITE_HERO_PRODUCTION: "1" });
+  assert.equal(prodDry.status, 0, prodDry.stderr);
+  assert.match(prodDry.stdout, /environment: production \(prefix site\/hero\/\); dry run/);
+  assert.match(prodDry.stdout, /"dryRun": true/);
+  const after = await heroDoc();
+  assert.deepEqual(
+    { s: after.lastSweepAt, r: after.retired.length, p: after.pending.length, v: after.version },
+    { s: before.lastSweepAt, r: before.retired.length, p: before.pending.length, v: before.version },
+    "nothing written by any of the three",
+  );
+});

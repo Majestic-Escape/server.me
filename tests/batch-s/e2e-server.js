@@ -33,6 +33,9 @@ async function main() {
   if (process.env.E2E_REAL_SPACES === "1" && (process.env.SITE_HERO_PRODUCTION === "1" || process.env.VERCEL_ENV === "production")) {
     throw new Error("E2E_REAL_SPACES=1 must not run with SITE_HERO_PRODUCTION=1 or VERCEL_ENV=production");
   }
+  // Loopback only: the stack hands out admin tokens (/seed) and, in the
+  // banner QA mode, holds real storage credentials.
+  process.env.LISTEN_HOST = process.env.LISTEN_HOST || "127.0.0.1";
   await h.start();
   // Canary values (contact lock-down): the counterpart's last name, email and
   // phone are searched for by VALUE in browser-side responses, DOM and storage.
@@ -181,7 +184,9 @@ async function main() {
   let seq = 0;
   http
     .createServer(async (req, res) => {
-      res.setHeader("access-control-allow-origin", "*");
+      // CORS for the stack's own site/admin origins only (never "*": /seed returns admin tokens)
+      const origin = req.headers.origin;
+      if (origin && (process.env.ALLOWED_ORIGINS || "").split(",").includes(origin)) res.setHeader("access-control-allow-origin", origin);
       res.setHeader("access-control-allow-headers", "content-type");
       if (req.method === "OPTIONS") return res.end();
       let body = "";

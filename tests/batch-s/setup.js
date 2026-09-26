@@ -17,8 +17,19 @@ let started;
 // unless SITE_HERO_PREFIX is a _qa/site/hero/<run>/ prefix.
 const REAL_SPACES = process.env.E2E_REAL_SPACES === "1";
 
+// Real credentials never run as production, never outside a QA banner
+// prefix, and every write is confined to _qa/ at the storage layer
+// (storage.writeAllowed) — for ANY test file or server that uses this
+// harness, not only the e2e server.
+function assertRealSpacesSafe() {
+  if (!REAL_SPACES) return;
+  if (!/^_qa\/site\/hero\/[a-z0-9-]{1,40}\/$/.test(process.env.SITE_HERO_PREFIX || "")) throw new Error("E2E_REAL_SPACES=1 needs SITE_HERO_PREFIX=_qa/site/hero/<run>/");
+  if (process.env.SITE_HERO_PRODUCTION === "1" || process.env.VERCEL_ENV === "production" || process.env.VERCEL) throw new Error("E2E_REAL_SPACES=1 must not run as production (SITE_HERO_PRODUCTION / VERCEL_ENV / VERCEL)");
+}
+
 async function start() {
   if (started) return started;
+  assertRealSpacesSafe();
   mongod = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: "wiredTiger" } });
   const uri = mongod.getUri("batch_s_test");
   Object.assign(process.env, {
@@ -49,7 +60,7 @@ async function start() {
     NEXT_PUBLIC_ENV: "test",
     // Non-secret placeholders the app constructs clients from at import time.
     ...(REAL_SPACES
-      ? {}
+      ? { SPACES_WRITE_PREFIX: "_qa/" }
       : {
           DO_SPACES_ENDPOINT: "https://blr1.digitaloceanspaces.com",
           DO_SPACES_KEY: "test",

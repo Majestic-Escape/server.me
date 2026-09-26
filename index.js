@@ -284,7 +284,7 @@ app.use("*", (req, res) => {
 
 // Start Server
 const PORT = process.env.PORT || 5005;
-const server = app.listen(PORT, () =>
+const server = app.listen(PORT, ...(process.env.LISTEN_HOST ? [process.env.LISTEN_HOST] : []), () =>
   console.log(`Server running on port ${PORT}`),
 );
 

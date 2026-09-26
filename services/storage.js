@@ -75,7 +75,9 @@ function keyFromUrl(url) {
   if (!key) return null;
   if (CONTROL_RE.test(key)) return null;
   if (key.startsWith("/") || key.includes("//")) return null;
-  if (key.split("/").some((seg) => seg === "..")) return null;
+  // "." and ".." segments: a key that only looks like another one (e.g.
+  // "./site/…" via %2F) must not slip past the protected-prefix check.
+  if (key.split("/").some((seg) => seg === ".." || seg === ".")) return null;
   return key;
 }
 
@@ -130,6 +132,16 @@ const PROTECTED_RE = /^(?:_qa\/)?site\//;
 
 function isProtectedKey(key) {
   return typeof key === "string" && PROTECTED_RE.test(key);
+}
+
+// SPACES_WRITE_PREFIX — set only by the real-bucket QA harness
+// (tests/batch-s/setup.js, E2E_REAL_SPACES=1) to "_qa/": every put and delete
+// outside that prefix is refused, whatever route or script asks, so a QA
+// server holding real credentials can't change a production object.
+// Unset (production, every other environment): no effect.
+function writeAllowed(key) {
+  const p = process.env.SPACES_WRITE_PREFIX;
+  return !p || (typeof key === "string" && key.startsWith(p));
 }
 
 function isVariantKey(key) {
@@ -217,6 +229,7 @@ function abortError() {
 // waiting for it; callers without a signal behave exactly as before.
 async function putObject(key, body, contentType, { cacheControl = IMMUTABLE_CACHE_CONTROL, signal } = {}) {
   if (signal && signal.aborted) throw abortError();
+  if (!writeAllowed(key)) throw Object.assign(new Error("storage: write outside SPACES_WRITE_PREFIX refused"), { code: "WRITE_PREFIX" });
   if (process.env.SPACES_MOCK === "1") {
     if (mock.putDelayMs > 0) {
       await new Promise((resolve, reject) => {
@@ -305,6 +318,9 @@ async function listKeys(prefix, { limit = Infinity } = {}) {
   do {
     const page = await s3.listObjectsV2({ Bucket: bucket(), Prefix: prefix, ContinuationToken: token, MaxKeys: 1000 }).promise();
     for (const o of page.Contents || []) out.push({ key: o.Key, size: Number(o.Size) || 0, lastModified: o.LastModified || null });
+    // A truncated page without a continuation token would silently end the
+    // listing early — callers (the sweep's confirmation) must not act on it.
+    if (page.IsTruncated && !page.NextContinuationToken) throw Object.assign(new Error("listing truncated without a continuation token"), { code: "LIST_INCOMPLETE" });
     token = page.IsTruncated ? page.NextContinuationToken : undefined;
   } while (token && out.length < limit);
   return out.length > limit ? out.slice(0, limit) : out;
@@ -315,10 +331,13 @@ async function deleteObjects(keys, { allowProtected = false } = {}) {
   const out = { deleted: [], failed: [] };
   // The lowest delete boundary: a protected object is never deleted by a
   // caller that did not ask for it explicitly (see the header).
-  const unique = allowProtected ? requested : requested.filter((k) => !isProtectedKey(k));
+  const unique = (allowProtected ? requested : requested.filter((k) => !isProtectedKey(k))).filter(writeAllowed);
   if (unique.length !== requested.length) {
-    for (const key of requested) if (isProtectedKey(key)) out.failed.push({ key, code: "PROTECTED", message: "managed by the homepage banner settings" });
-    console.error("storage: refused to delete protected object(s)", requested.length - unique.length);
+    for (const key of requested) {
+      if (!allowProtected && isProtectedKey(key)) out.failed.push({ key, code: "PROTECTED", message: "managed by the homepage banner settings" });
+      else if (!writeAllowed(key)) out.failed.push({ key, code: "WRITE_PREFIX", message: "outside SPACES_WRITE_PREFIX" });
+    }
+    console.error("storage: refused to delete object(s)", requested.length - unique.length);
   }
   if (!unique.length) return out;
   if (process.env.SPACES_MOCK === "1") {
@@ -460,6 +479,7 @@ module.exports = {
   IMMUTABLE_CACHE_CONTROL,
   isVariantKey,
   isProtectedKey,
+  writeAllowed,
   masterKeyOf,
   variantKey,
   variantKeys,

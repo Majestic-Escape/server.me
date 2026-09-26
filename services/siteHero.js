@@ -86,7 +86,7 @@ const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 const docOf = (res) => (res && Object.prototype.hasOwnProperty.call(res, "value") && Object.prototype.hasOwnProperty.call(res, "ok") ? res.value : res);
 
 function defaults() {
-  return { version: 0, alt: null, desktop: null, mobile: null, draft: { desktop: null, mobile: null }, retired: [], pending: [], receipts: [], lease: null, lastSweepAt: null, updatedBy: null, updatedAt: null };
+  return { namespace: keyPrefix(), version: 0, alt: null, desktop: null, mobile: null, draft: { desktop: null, mobile: null }, retired: [], pending: [], receipts: [], lease: null, lastSweepAt: null, updatedBy: null, updatedAt: null };
 }
 // The singleton exists before any compare-and-set, so publishing never upserts.
 async function ensureDoc() {
@@ -99,6 +99,24 @@ async function ensureDoc() {
 async function readDoc() {
   return coll().findOne({ _id: DOC_ID }, { readPreference: "primary" });
 }
+// The document belongs to the environment that created it (its key prefix,
+// `namespace`). Environments share the bucket and — by mistake: a copied
+// .env, a restored backup — possibly the database. A server that is not
+// production never changes (or sweeps) a document of another namespace: it
+// would put up objects the live site can't show, or drop production's
+// cleanup records. Production is authoritative: it takes over a document
+// created under another namespace (e.g. before its environment was set).
+// A document from before this rule (no namespace) is bound on first change.
+async function assertEnvironment(doc) {
+  const mine = keyPrefix();
+  const ns = doc && doc.namespace;
+  if (ns === mine) return;
+  if (ns && !isProduction()) {
+    throw new HeroError(409, "HERO_WRONG_ENVIRONMENT", `These banner settings belong to another environment (${ns === PRODUCTION_PREFIX ? "the live site" : ns}); this server uses ${mine} — nothing was changed`, { namespace: ns, prefix: mine });
+  }
+  await coll().updateOne({ _id: DOC_ID, namespace: ns ? ns : { $exists: false } }, { $set: { namespace: mine } });
+}
+
 function draftOf(doc, slot) {
   return (doc && doc.draft && doc.draft[slot]) || null;
 }
@@ -174,7 +192,7 @@ async function adminView(doc, actor) {
     updatedBy: doc.updatedBy ? names.get(String(doc.updatedBy)) || null : null,
     spec: specView(),
     // where this server keeps banner objects; the site only shows production's
-    environment: { production: isProduction(), prefix: keyPrefix() },
+    environment: { production: isProduction(), prefix: keyPrefix(), namespace: doc.namespace || null, writable: !doc.namespace || doc.namespace === keyPrefix() || isProduction() },
   };
 }
 
@@ -231,22 +249,34 @@ function parseSlots(v) {
 // --- transactions --------------------------------------------------------------
 // `work` returns { abort: true } for a compare-and-set miss (nothing written).
 // Result: { committed } | { committed: false, aborted } | { committed: false,
-// unknown } (the driver gave up retrying the commit: it may have happened) |
-// { committed: false, error } (definitely not committed).
+// unknown } (it may have happened) | { committed: false, error } (definitely
+// not committed).
+// "Unknown" is not only the driver's UnknownTransactionCommitResult label:
+// an error raised AFTER the work finished — i.e. by the commit — may have
+// been applied unless the driver says the transaction was rolled back
+// (TransientTransactionError). The driver deliberately leaves some commit
+// errors unlabelled (write-concern errors such as UnsatisfiableWriteConcern)
+// although the commit applied on the primary; treating those as "not saved"
+// would let a caller clean up objects a saved draft points at.
 async function inTransaction(work) {
-  const session = await mongoose.startSession();
+  let session = null;
+  let workDone = false;
   try {
+    session = await mongoose.startSession();
     await session.withTransaction(async () => {
+      workDone = false;
       const outcome = await work(session);
       if (outcome && outcome.abort) throw Object.assign(new Error("compare-and-set miss"), { heroAbort: true });
+      workDone = true;
     });
     return { committed: true };
   } catch (err) {
     if (err && err.heroAbort) return { committed: false, aborted: true };
-    const unknown = !!(err && typeof err.hasErrorLabel === "function" && err.hasErrorLabel("UnknownTransactionCommitResult"));
+    const labelled = (l) => !!(err && typeof err.hasErrorLabel === "function" && err.hasErrorLabel(l));
+    const unknown = labelled("UnknownTransactionCommitResult") || (workDone && !labelled("TransientTransactionError"));
     return { committed: false, unknown, error: err };
   } finally {
-    await session.endSession().catch(() => {});
+    if (session) await session.endSession().catch(() => {});
   }
 }
 
@@ -336,13 +366,22 @@ function jobDeadline(now) {
   return end;
 }
 
-async function acquireLease(token, opId, actorId, now) {
+// The lease also records the request's fingerprint: only the very same
+// request may be told "it is being prepared".
+async function acquireLease(token, opId, actorId, fp, now) {
   const res = await coll().findOneAndUpdate(
     { _id: DOC_ID, $or: [{ lease: null }, { "lease.until": { $lt: new Date(now) } }] },
-    { $set: { lease: { token, opId, actorId: oid(actorId), until: new Date(now + leaseMs()) } } },
-    { returnDocument: "after" },
+    { $set: { lease: { token, opId, actorId: oid(actorId), fp, until: new Date(now + leaseMs()) } } },
+    { returnDocument: "after", projection: { _id: 1 } },
   );
   return !!docOf(res);
+}
+// A running job of this operation: true when it is this very request (202
+// "processing"); the same id with other content is refused, as with a receipt.
+function sameJobRunning(lease, op, fp, actor, now) {
+  if (!lease || lease.opId !== op.opId || new Date(lease.until).getTime() <= now) return false;
+  if (lease.fp !== fp || String(lease.actorId) !== String(actor.id)) throw new HeroError(422, "OP_ID_REUSED", "This operation was already used for a different change — reload and try again");
+  return true;
 }
 
 function errorResult(err) {
@@ -368,13 +407,12 @@ async function stageDraft(req, actor, slot, file, body) {
   const focal = { x: parseUnit(body.focalX, "focalX"), y: parseUnit(body.focalY, "focalY") };
   const acceptRatio = parseBool(body.acceptRatio, "acceptRatio");
   const clientReencoded = parseBool(body.clientReencoded, "clientReencoded");
-  const fp = ops.fingerprint({ action: "stage", slot, file: sha256(file.buffer), focal, acceptRatio, expectedDraftOpId });
+  const fp = ops.fingerprint({ action: "stage", slot, file: sha256(file.buffer), focal, acceptRatio, clientReencoded, expectedDraftOpId });
 
   await ensureDoc();
   const doc = await readDoc();
-  if (doc.lease && doc.lease.opId === op.opId && new Date(doc.lease.until).getTime() > now) {
-    return { status: 202, body: { success: true, status: "processing", opId: op.opId } };
-  }
+  await assertEnvironment(doc);
+  if (sameJobRunning(doc.lease, op, fp, actor, now)) return { status: 202, body: { success: true, status: "processing", opId: op.opId } };
   const check = ops.checkOperation(doc, op, { actorId: actor.id, fingerprint: fp }, now);
   if (check.replay) return replayResponse(check.replay, doc, actor);
   const current = draftOf(doc, slot);
@@ -383,10 +421,10 @@ async function stageDraft(req, actor, slot, file, body) {
   }
 
   const leaseToken = crypto.randomUUID();
-  if (!(await acquireLease(leaseToken, op.opId, actor.id, now))) {
+  if (!(await acquireLease(leaseToken, op.opId, actor.id, fp, now))) {
     const busy = await readDoc();
     // the same operation, sent twice at once: it is being prepared
-    if (busy && busy.lease && busy.lease.opId === op.opId) return { status: 202, body: { success: true, status: "processing", opId: op.opId } };
+    if (busy && sameJobRunning(busy.lease, op, fp, actor, Date.now())) return { status: 202, body: { success: true, status: "processing", opId: op.opId } };
     const until = busy && busy.lease ? new Date(busy.lease.until).getTime() : now + 60_000;
     throw new HeroError(409, "HERO_BUSY", "Another banner image is being prepared — try again in a minute", { retryAfter: Math.max(1, Math.ceil((until - Date.now()) / 1000)) });
   }
@@ -398,8 +436,9 @@ async function stageDraft(req, actor, slot, file, body) {
   const inflight = new Set();
   let installAttempted = false;
   const target = slot;
-  // Stop the uploads still running, then delete what was stored: nothing can
-  // land after the delete. (Anything left is in `pending`; the sweep removes it.)
+  // Stop the uploads still running, then delete what was stored. An upload
+  // the storage had already fully received can still complete after the
+  // delete; its key stays recorded in `pending`, so the sweep removes it.
   const cleanup = async () => {
     if (!controller.signal.aborted) controller.abort();
     await Promise.allSettled([...inflight]);
@@ -413,7 +452,7 @@ async function stageDraft(req, actor, slot, file, body) {
     await cleanup();
     const r = ops.receipt({ opId: op.opId, actorId: oid(actor.id), action: "stage", target, fingerprint: fp, status: "failed", result: errorResult(err) });
     try {
-      const res = await coll().updateOne({ _id: DOC_ID, "lease.token": leaseToken, "receipts.opId": { $ne: op.opId } }, { $set: { lease: null }, $push: { receipts: ops.pushReceipt(r) } });
+      const res = await coll().updateOne({ _id: DOC_ID, "lease.token": leaseToken, "receipts.opId": { $ne: op.opId }, ...ops.roomFilter() }, { $set: { lease: null }, $push: { receipts: ops.pushReceipt(r) } });
       if (res.matchedCount !== 1) await coll().updateOne({ _id: DOC_ID, "lease.token": leaseToken }, { $set: { lease: null } });
     } catch (e) {
       console.error("[site-hero] could not record the failure", e && e.message);
@@ -449,8 +488,16 @@ async function stageDraft(req, actor, slot, file, body) {
     // Recorded before anything is stored: if this job dies between upload and
     // install, the sweep knows these objects are ours and removes them. The
     // sweep deletes nothing it has no record of.
-    const recorded = await coll().updateOne({ _id: DOC_ID, "lease.token": leaseToken, "lease.until": { $gt: new Date() } }, { $push: { pending: { $each: [{ masterKey, at: new Date() }], $slice: -PENDING_CAP } } });
-    if (recorded.matchedCount !== 1) throw timedOut(); // the lease is gone — nothing was stored
+    // The list is never trimmed (a dropped record would leave its objects
+    // behind for good): when it is full, new jobs wait for the sweep.
+    const recorded = await coll().updateOne({ _id: DOC_ID, "lease.token": leaseToken, "lease.until": { $gt: new Date() }, [`pending.${PENDING_CAP - 1}`]: { $exists: false } }, { $push: { pending: { masterKey, at: new Date() } } });
+    if (recorded.matchedCount !== 1) {
+      const d = await readDoc();
+      if (d && d.lease && d.lease.token === leaseToken && (d.pending || []).length >= PENDING_CAP) {
+        throw new HeroError(503, "HERO_CLEANUP_BACKLOG", "Too many unfinished image jobs are waiting for the daily cleanup — try again after it has run");
+      }
+      throw timedOut(); // the lease is gone — nothing was stored
+    }
     const putErrors = [];
     const put = (key, buffer, type) => {
       attempted.add(key);
@@ -509,7 +556,7 @@ async function stageDraft(req, actor, slot, file, body) {
     // objects are now referenced and leave `pending`.
     const replacedKey = current && keyOf(current.url);
     const tx = await inTransaction(async (session) => {
-      const filter = { _id: DOC_ID, "lease.token": leaseToken, "lease.until": { $gt: new Date() }, "receipts.opId": { $ne: op.opId } };
+      const filter = { _id: DOC_ID, "lease.token": leaseToken, "lease.until": { $gt: new Date() }, "receipts.opId": { $ne: op.opId }, ...ops.roomFilter() };
       if (expectedDraftOpId) filter[`draft.${slot}.opId`] = expectedDraftOpId;
       else filter[`draft.${slot}`] = null;
       const push = { receipts: ops.pushReceipt(r) };
@@ -548,6 +595,20 @@ async function stageDraft(req, actor, slot, file, body) {
       await fail(timedOut()); // still ours, but it ran out: a timeout, not a conflict
       throw timedOut();
     }
+    const release = () => coll().updateOne({ _id: DOC_ID, "lease.token": leaseToken }, { $set: { lease: null } }).catch(() => {});
+    // This operation already has its outcome (an earlier attempt of the same
+    // request recorded it meanwhile): that outcome stands, ours is dropped.
+    const mine = await ownReceipt(op, fp, actor);
+    if (mine) {
+      await cleanup();
+      await release();
+      return replayResponse(mine, await readDoc(), actor);
+    }
+    if (ops.atCapacity(after)) {
+      await cleanup();
+      await release();
+      throw ops.tooManyOps();
+    }
     const changed = new HeroError(409, "HERO_DRAFT_CHANGED", "This draft was changed by someone else — reload and review again", { draftOpId: draftOf(after, slot) ? draftOf(after, slot).opId : null });
     await fail(changed);
     throw changed;
@@ -577,6 +638,7 @@ async function discardDraft(req, actor, slot, body) {
   const fp = ops.fingerprint({ action: "discard", slot, expectedDraftOpId });
   await ensureDoc();
   const doc = await readDoc();
+  await assertEnvironment(doc);
   const check = ops.checkOperation(doc, op, { actorId: actor.id, fingerprint: fp }, now);
   if (check.replay) return replayResponse(check.replay, doc, actor);
   const current = draftOf(doc, slot);
@@ -588,7 +650,7 @@ async function discardDraft(req, actor, slot, body) {
     const at = new Date();
     const push = { receipts: ops.pushReceipt(r) };
     if (discardedKey) push.retired = { masterKeys: [discardedKey], retiredAt: at };
-    const res = await coll().updateOne({ _id: DOC_ID, [`draft.${slot}.opId`]: expectedDraftOpId, "receipts.opId": { $ne: op.opId } }, { $set: { [`draft.${slot}`]: null, updatedAt: at }, $push: push }, { session });
+    const res = await coll().updateOne({ _id: DOC_ID, [`draft.${slot}.opId`]: expectedDraftOpId, "receipts.opId": { $ne: op.opId }, ...ops.roomFilter() }, { $set: { [`draft.${slot}`]: null, updatedAt: at }, $push: push }, { session });
     if (res.matchedCount !== 1) return { abort: true };
     await adminAudit.record(req, "site.hero.discard", { targetType: "SiteSetting", targetKey: DOC_ID }, { slot, opId: expectedDraftOpId }, { session });
     return { ok: true };
@@ -598,6 +660,7 @@ async function discardDraft(req, actor, slot, body) {
     if (tx.error) throw notRecorded();
     const mine = await ownReceipt(op, fp, actor);
     if (mine) return replayResponse(mine, await readDoc(), actor);
+    if (ops.atCapacity(await readDoc())) throw ops.tooManyOps();
     throw new HeroError(409, "HERO_DRAFT_CHANGED", "This draft was changed by someone else — reload and review again");
   }
   return { status: 200, body: { success: true, state: await adminView(await readDoc(), actor), opToken: ops.issueOpToken(actor.id) } };
@@ -631,7 +694,7 @@ async function ownReceipt(op, fp, actor) {
 // Returns null when committed, or the operation's own receipt (a twin won).
 async function commitBannerChange(req, { filter, update, audit, slots, op, fp, actor }) {
   const tx = await inTransaction(async (session) => {
-    const res = await coll().updateOne({ ...filter, "receipts.opId": { $ne: op.opId } }, update, { session });
+    const res = await coll().updateOne({ ...filter, "receipts.opId": { $ne: op.opId }, ...ops.roomFilter() }, update, { session });
     if (res.matchedCount !== 1) return { abort: true };
     await adminAudit.record(req, audit.action, { targetType: "SiteSetting", targetKey: DOC_ID }, audit.details, { session });
     return { ok: true };
@@ -644,6 +707,7 @@ async function commitBannerChange(req, { filter, update, audit, slots, op, fp, a
   }
   const mine = await ownReceipt(op, fp, actor);
   if (mine) return mine;
+  if (ops.atCapacity(await readDoc())) throw ops.tooManyOps();
   throw await conflictFor(slots);
 }
 
@@ -657,6 +721,7 @@ async function publish(req, actor, body) {
   const fp = ops.fingerprint({ action: "publish", expectedVersion, slots, alt });
   await ensureDoc();
   const doc = await readDoc();
+  await assertEnvironment(doc);
   const check = ops.checkOperation(doc, op, { actorId: actor.id, fingerprint: fp }, now);
   if (check.replay) return replayResponse(check.replay, doc, actor);
 
@@ -710,6 +775,7 @@ async function editAlt(req, actor, body) {
   const fp = ops.fingerprint({ action: "alt", expectedVersion, alt });
   await ensureDoc();
   const doc = await readDoc();
+  await assertEnvironment(doc);
   const check = ops.checkOperation(doc, op, { actorId: actor.id, fingerprint: fp }, now);
   if (check.replay) return replayResponse(check.replay, doc, actor);
   if (!doc.desktop || !doc.mobile) throw new HeroError(409, "HERO_NOT_CUSTOM", "The bundled default banner's description can't be edited here — publish a custom banner first");
@@ -740,6 +806,7 @@ async function restoreDefault(req, actor, body) {
   const fp = ops.fingerprint({ action: "reset", expectedVersion });
   await ensureDoc();
   const doc = await readDoc();
+  await assertEnvironment(doc);
   const check = ops.checkOperation(doc, op, { actorId: actor.id, fingerprint: fp }, now);
   if (check.replay) return replayResponse(check.replay, doc, actor);
   if ((doc.version || 0) !== expectedVersion) throw new HeroError(409, "HERO_VERSION_CONFLICT", "The banner was changed by someone else — reload and review again", { version: doc.version || 0 });
@@ -768,7 +835,8 @@ async function restoreDefault(req, actor, body) {
 /** GET /site/admin/hero/ops/:opId — own operations only. */
 async function operationStatus(actor, opId) {
   if (typeof opId !== "string" || !ops.UUID_RE.test(opId)) throw bad("INVALID_FIELDS", "Invalid operation id");
-  const doc = await readDoc();
+  // only this operation's receipt and the lease: not the whole document
+  const doc = await coll().findOne({ _id: DOC_ID }, { readPreference: "primary", projection: { receipts: { $elemMatch: { opId } }, lease: 1 } });
   const r = ops.findReceipt(doc, opId);
   if (r && String(r.actorId) === String(actor.id)) return { status: r.status, result: r.result || {}, at: r.at };
   const lease = doc && doc.lease;
@@ -778,7 +846,8 @@ async function operationStatus(actor, opId) {
 
 async function getAdminState(actor) {
   await ensureDoc();
-  const doc = await readDoc();
+  // the bookkeeping arrays are never shown
+  const doc = await coll().findOne({ _id: DOC_ID }, { readPreference: "primary", projection: { receipts: 0, pending: 0, retired: 0 } });
   const sixHours = 6 * 60 * 60 * 1000;
   if (!doc.lastSweepAt || Date.now() - new Date(doc.lastSweepAt).getTime() > sixHours) background(require("./siteHeroSweep").sweep({ window: sixHours }), "sweep");
   return { ...(await adminView(doc, actor)), opToken: ops.issueOpToken(actor.id) };

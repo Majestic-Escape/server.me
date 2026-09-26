@@ -5,6 +5,11 @@
 //   node scripts/site-hero-sweep.js --uri="<DB_URI>"            (dry run)
 //   node scripts/site-hero-sweep.js --uri="<DB_URI>" --apply    (delete)
 //
+// PRODUCTION: the sweep only acts on the document of the environment it runs
+// as. Against the production database run it as production —
+//   SITE_HERO_PRODUCTION=1 node scripts/site-hero-sweep.js --uri="<prod>" [--apply]
+// — otherwise it reports "other-environment" and changes nothing.
+//
 // --apply ignores the once-a-day window (it is an explicit run) but keeps
 // every safety rule: nothing referenced, nothing younger than 24 h.
 require("dotenv").config();
@@ -21,8 +26,11 @@ async function main() {
   const uri = opt("uri") || process.env.DB_URI;
   if (!uri) throw new Error("DB_URI (or --uri) is required");
   await mongoose.connect(uri, { serverSelectionTimeoutMS: 20000 });
+  const unknown = args.filter((a) => a !== "--apply" && !a.startsWith("--uri="));
+  if (unknown.length) throw new Error(`unknown argument(s): ${unknown.join(" ")}`);
   const apply = args.includes("--apply");
-  console.log(`[site-hero sweep] database: ${mongoose.connection.db.databaseName}; ${apply ? "APPLY" : "dry run"}`);
+  const hero = require("../services/siteHero");
+  console.log(`[site-hero sweep] database: ${mongoose.connection.db.databaseName}; environment: ${hero.isProduction() ? "production" : "not production"} (prefix ${hero.keyPrefix()}); ${apply ? "APPLY" : "dry run"}`);
   const summary = await sweep({ dryRun: !apply, force: apply });
   console.log(JSON.stringify(summary, null, 2));
 }

@@ -19,11 +19,15 @@ const { ImageRejected, detectQr, variantWebp } = require("./imageSanitizer");
 const storage = require("./storage");
 
 // The two boxes the site renders (user.website hero-section): desktop from
-// 768 px up, mobile below. `cap` bounds the master and every rendition — no
-// screen ever shows more pixels than that.
+// 768 px up, mobile below. `cap` bounds the master (the long-term source);
+// `renditionCap` bounds what browsers are offered. Desktop renditions stop
+// at 2560 px — the widest file the static hero ever had — so a 2× laptop
+// (1440 px → 2880 needed) gets the same 2560 px it gets today and the byte
+// budget (≤ today + 20%) holds; a wider rendition cost +33% for the pixels
+// that 2560 → 2880 upscaling adds back.
 const SLOTS = Object.freeze({
-  desktop: Object.freeze({ ratio: 1920 / 740, box: [1920, 740], min: [1920, 740], cap: 3840, recommended: [2880, 1110] }),
-  mobile: Object.freeze({ ratio: 530 / 720, box: [530, 720], min: [530, 720], cap: 1600, recommended: [1060, 1440] }),
+  desktop: Object.freeze({ ratio: 1920 / 740, box: [1920, 740], min: [1920, 740], cap: 3840, renditionCap: 2560, recommended: [2880, 1110] }),
+  mobile: Object.freeze({ ratio: 530 / 720, box: [530, 720], min: [530, 720], cap: 1600, renditionCap: 1600, recommended: [1060, 1440] }),
 });
 const SLOT_NAMES = Object.freeze(["desktop", "mobile"]);
 const MAX_INPUT_PIXELS = 25_000_000; // a 6000×4166 export; the heavier listing guard is 40 MP
@@ -47,10 +51,11 @@ function isSlot(s) {
 }
 
 // Actual pixel widths of the renditions of a master `masterWidth` px wide:
-// the standard steps below the (capped) master width, plus that width itself.
-// Never empty (a 530 px master → [530]), never wider than the master.
+// the standard steps below the (rendition-capped) master width, plus that
+// width itself. Never empty (a 530 px master → [530]), never wider than the
+// master.
 function heroRenditionWidths(masterWidth, slot) {
-  const top = Math.min(Math.floor(Number(masterWidth) || 0), SLOTS[slot].cap);
+  const top = Math.min(Math.floor(Number(masterWidth) || 0), SLOTS[slot].renditionCap);
   if (top < 1) return [];
   const widths = RENDITION_STEPS.filter((w) => w < top);
   widths.push(top);
@@ -106,11 +111,13 @@ function outputSize(region, slot) {
   return { width, height };
 }
 
-// A region smaller than the box (1% slack for the uncropped tolerance) would
-// be upscaled on the smallest screens that show it: refused.
+// A region narrower than the box would be upscaled on the screens that show
+// it at 1×: refused. The width is exact (the box fills the screen's width);
+// the height keeps the 1% slack of the uncropped ratio tolerance (a 1920×735
+// image is used whole — object-cover trims the rest).
 function tooSmall(region, slot) {
   const [mw, mh] = SLOTS[slot].min;
-  return region.width < Math.floor(mw * (1 - RATIO_TOLERANCE)) || region.height < Math.floor(mh * (1 - RATIO_TOLERANCE));
+  return region.width < mw || region.height < Math.floor(mh * (1 - RATIO_TOLERANCE));
 }
 
 function heicError() {
@@ -209,7 +216,7 @@ function fromRaster(raster) {
 }
 
 async function hasQrCode(raster) {
-  return detectQr(fromRaster(raster));
+  return detectQr(fromRaster(raster), { requirePayload: true });
 }
 
 /**

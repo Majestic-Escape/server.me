@@ -702,3 +702,86 @@ test("sweep CLI: unknown arguments stop it; it prints the environment it runs as
     "nothing written by any of the three",
   );
 });
+
+// --- batch 3: revoked / disabled / duplicate identities against the banner routes -------------
+const jwt = require("jsonwebtoken");
+const sign = (claims) => jwt.sign(claims, process.env.JWT_SECRET, { expiresIn: "1h" });
+const heroGet = (token) => h.api("GET", "/site/admin/hero", { token });
+
+test("SEC-C: an admin-role user's tokens of every shape stop working when the account's tokenVersion moves (revocation), on the banner routes", async () => {
+  const u = await h.makeUser({ role: "admin" });
+  const login = sign({ userId: String(u._id), firstName: "A", tokenVersion: 0, admin: 1 }); // the user login of an admin-role account
+  const registration = sign({ userId: String(u._id), firstName: "A" }); // registration: no admin claim, no tokenVersion
+  const userShaped = sign({ userId: String(u._id), firstName: "A", tokenVersion: 0, admin: 0 });
+  for (const t of [login, registration, userShaped]) assert.equal((await heroGet(t)).status, 200);
+  await User().updateOne({ _id: u._id }, { $inc: { tokenVersion: 1 } });
+  for (const [name, t] of [["login", login], ["registration", registration], ["user-shaped", userShaped]]) {
+    const r = await heroGet(t);
+    assert.ok(r.status === 401, `${name} token after revocation: ${r.status}`);
+  }
+  const st = await hh.adminState(AT);
+  const pub = await h.api("POST", "/site/admin/hero/restore-default", { token: login, body: { opToken: st.opToken, expectedVersion: st.version } });
+  assert.equal(pub.status, 401, "a revoked token can't change the banner");
+  const fresh = sign({ userId: String(u._id), firstName: "A", tokenVersion: 1, admin: 1 });
+  assert.equal((await heroGet(fresh)).status, 200, "a token of the current version works");
+});
+
+test("SEC-D: deactivated accounts and Admin records with a non-admin role have no banner rights, whatever token they hold; legacy records without a role keep theirs", async () => {
+  const u = await h.makeUser({ role: "admin" });
+  const ut = sign({ userId: String(u._id), firstName: "A", tokenVersion: 0, admin: 1 });
+  assert.equal((await heroGet(ut)).status, 200);
+  await User().updateOne({ _id: u._id }, { $set: { "status.active": false } });
+  assert.equal((await heroGet(ut)).status, 403, "deactivated admin-role user");
+  const x = await h.makeAdmin();
+  const xt = h.adminToken(x);
+  assert.equal((await heroGet(xt)).status, 200);
+  await Admin().updateOne({ _id: x._id }, { $set: { "status.active": false } });
+  assert.equal((await heroGet(xt)).status, 403, "deactivated Admin record");
+  const up = await hh.multipart("/site/admin/hero/desktop/draft", { token: xt, fields: { opToken: "x" }, file: { buf: DESK } });
+  assert.equal(up.status, 403, "no draft either");
+  const y = await h.makeAdmin();
+  await Admin().updateOne({ _id: y._id }, { $set: { role: "user" } });
+  assert.ok([401, 403].includes((await heroGet(h.adminToken(y))).status), "Admin record with role user");
+  const z = await h.makeAdmin();
+  await Admin().collection.updateOne({ _id: z._id }, { $unset: { role: 1 } });
+  assert.equal((await heroGet(h.adminToken(z))).status, 200, "a legacy Admin record without a role is still an admin");
+  assert.equal(storage().__mock.uploaded.length, 0);
+});
+
+test("SEC-H: five registrations of one new e-mail at once create exactly one admin (no unique index needed); a duplicate e-mail can't sign in", async () => {
+  const email = `race-${Date.now()}@lockdown.test`;
+  const rs = await Promise.all(Array.from({ length: 5 }, (_, i) => h.api("POST", "/admin/register", { token: AT, body: { firstName: `Race${i}`, email } })));
+  assert.deepEqual(rs.map((r) => r.status).sort(), [201, 409, 409, 409, 409], JSON.stringify(rs.map((r) => r.body.code)));
+  assert.equal(await Admin().countDocuments({ email }), 1);
+  assert.equal(await AdminAuditLog().countDocuments({ action: "admin.create", targetId: (await Admin().findOne({ email }).lean())._id }), 1);
+  // two Admin records with one address (created before this rule, or by hand)
+  const dup = `dup-${Date.now()}@lockdown.test`;
+  const mk = () => ({ _id: new mongoose.Types.ObjectId(), firstName: "Dup", email: dup, isVerified: true, status: { active: true, banned: false }, otp: { value: "123456", expiry: new Date(Date.now() + 60000) } });
+  const [a, b] = [mk(), mk()];
+  b.status.banned = true; // one of them banned
+  await Admin().collection.insertMany([a, b]);
+  const axios = require("axios");
+  const realPost = axios.post;
+  const calls = [];
+  axios.post = async (url, ...rest) => {
+    if (String(url).includes("brevo.com")) {
+      calls.push(url);
+      return { data: { messageId: "t" } };
+    }
+    return realPost.call(axios, url, ...rest);
+  };
+  try {
+    const req = await h.api("POST", "/admin/request-otp", { body: { email: dup } });
+    assert.equal(req.status, 409, JSON.stringify(req.body));
+    assert.equal(req.body.code, "ADMIN_AMBIGUOUS");
+    const ver = await h.api("POST", "/admin/verify-otp", { body: { email: dup, otp: "123456" } });
+    assert.equal(ver.status, 409, "the banned twin can't be walked around");
+    assert.equal(calls.length, 0, "no code mailed");
+  } finally {
+    axios.post = realPost;
+  }
+  // the report names it
+  const lines = [];
+  await require("../../scripts/privileged-identities").report({ log: (l) => lines.push(String(l)) });
+  assert.ok(lines.some((l) => l.includes("DUPLICATE admin e-mail") && l.includes(dup)), lines.join("\n"));
+});

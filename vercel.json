@@ -17,6 +17,10 @@
     {
       "path": "/api/v1/payment/schedule-cron",
       "schedule": "30 18 * * *"
+    },
+    {
+      "path": "/api/v1/site/cron/hero-sweep",
+      "schedule": "15 21 * * *"
     }
   ]
 }

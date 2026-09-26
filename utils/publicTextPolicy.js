@@ -112,7 +112,12 @@ const storage = require("../services/storage");
 const IMAGE_NOT_ALLOWED = "IMAGE_NOT_ALLOWED";
 
 function isOurImageUrl(url) {
-  return typeof url === "string" && storage.keyFromUrl(url) !== null;
+  if (typeof url !== "string") return false;
+  const key = storage.keyFromUrl(url);
+  // Objects of the homepage banner (site/…) are the platform's own: a
+  // profile picture or listing photo pointing at one could later be deleted
+  // with that account's or listing's images.
+  return key !== null && !storage.isProtectedKey(key);
 }
 
 /**

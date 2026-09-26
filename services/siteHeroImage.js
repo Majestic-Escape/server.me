@@ -1,0 +1,412 @@
+// Homepage hero images (docs/site-hero.md): identification, the crop to the
+// slot's box, ONE prepared raster, and every output encoded from it.
+//
+// Quality (measured, docs/site-hero.md): AVIF effort 4 is the primary
+// format — q60 from 1920 px up, higher on the smaller widths (AVIF_QUALITY),
+// so every delivered width meets the plan's bars and beats today's static
+// hero — with WebP (the listing quality policy + smart chroma, which keeps
+// the banner's lettering clean) for browsers without AVIF, and a JPEG q95
+// 4:4:4 master kept as the long-term source and the fallback of last resort.
+// All of them come from one decoded, upright, cropped, flattened sRGB
+// raster: a single lossy generation (listing variants are encoded from a
+// re-encoded master — two).
+//
+// Refusals mirror the listing sanitiser (bounded decode, no metadata in any
+// output, QR codes refused with the very same detector) plus an allow-list
+// of decoded formats: sharp also decodes SVG, TIFF, PDF, JPEG 2000… which
+// have no place in a banner.
+const sharp = require("sharp");
+const { ImageRejected, detectQr, variantWebp } = require("./imageSanitizer");
+const quality = require("./imageQuality");
+const { HeroError } = require("./siteHeroOps");
+const storage = require("./storage");
+
+// The two boxes the site renders (user.website hero-section): desktop from
+// 768 px up, mobile below. `cap` bounds the master (the long-term source);
+// `renditionCap` bounds what browsers are offered. Desktop renditions stop
+// at 2560 px — the widest file the static hero ever had — so a 2× laptop
+// (1440 px → 2880 needed) gets the same 2560 px it gets today and the byte
+// budget (≤ today + 20%) holds; a wider rendition cost +33% for the pixels
+// that 2560 → 2880 upscaling adds back.
+const SLOTS = Object.freeze({
+  desktop: Object.freeze({ ratio: 1920 / 740, box: [1920, 740], min: [1920, 740], cap: 3840, renditionCap: 2560, renditionMin: 768, recommended: [2880, 1110] }),
+  mobile: Object.freeze({ ratio: 530 / 720, box: [530, 720], min: [530, 720], cap: 1600, renditionCap: 1600, renditionMin: 0, recommended: [1060, 1440] }),
+});
+const SLOT_NAMES = Object.freeze(["desktop", "mobile"]);
+const MAX_INPUT_PIXELS = 25_000_000; // a 6000×4166 export; the heavier listing guard is 40 MP
+const RATIO_TOLERANCE = 0.01; // within 1% of the box: used whole (object-cover trims the rest)
+const RATIO_CONFIRM = 0.35; // beyond 35%: only with the admin's explicit "use anyway"
+const RENDITION_STEPS = Object.freeze([640, 960, 1280, 1600, 1920, 2560, 3840]);
+const AVIF = Object.freeze({ quality: 60, effort: 4 });
+// Every rendition is VERIFIED while it is prepared (encodeVerified below),
+// scored against the prepared raster at its width — SSIM-Y mean and 1st
+// percentile, chroma PSNR, unrounded — on two tiers:
+//  1. the FLOOR (always enforced): at least as good as today's static hero
+//     pipeline (scripts/optimize-static-images.mjs: AVIF q55 effort 6, WebP
+//     q75 effort 5) would make of the SAME artwork at the same width — "no
+//     drop in quality", for every upload: a rendition that can't beat
+//     today's encode on every measure IS today's encode.
+//  2. the plan's TARGETS (measured on the real banners; photographic grain
+//     can make them unreachable at any reasonable size):
+//       AVIF: SSIM-Y ≥ 0.986 desktop (≥ every value today's static files
+//             measured, 0.983–0.986) / ≥ 0.988 mobile, p1 ≥ 0.94, chroma ≥ 43 dB
+//       WebP: SSIM-Y ≥ 0.985, p1 ≥ 0.93
+//     The quality is raised until they hold. A rendition that can't reach
+//     them (or only over the size budget) is flagged on the draft
+//     (BELOW_QUALITY_TARGET / OVER_BYTE_BUDGET, with the numbers), and
+//     publishing it needs an explicit acknowledgment; with
+//     SITE_HERO_QUALITY_POLICY=strict such a draft is refused instead.
+//     Which of the two applies is the owner's decision.
+const TODAY_PIPELINE = Object.freeze({ avif: Object.freeze({ quality: 55, effort: 6 }), webp: Object.freeze({ quality: 75, effort: 5 }) });
+const strictPolicy = () => process.env.SITE_HERO_QUALITY_POLICY === "strict";
+const BARS = Object.freeze({
+  avif: Object.freeze({ desktop: Object.freeze({ ssim: 0.986, p1: 0.94, chroma: 43 }), mobile: Object.freeze({ ssim: 0.988, p1: 0.94, chroma: 43 }) }),
+  webp: Object.freeze({ desktop: Object.freeze({ ssim: 0.985, p1: 0.93, chroma: 0 }), mobile: Object.freeze({ ssim: 0.985, p1: 0.93, chroma: 0 }) }),
+});
+// Where the search starts (measured on both designer artworks,
+// tests/pw-final/evidence/audit/quality-tune.json, w1280-alternatives.json):
+// smaller renditions carry more detail per pixel and need more quality.
+const AVIF_START = Object.freeze({
+  desktop: Object.freeze({ 960: Object.freeze({ quality: 76, effort: 4 }), 1280: Object.freeze({ quality: 62, effort: 8 }), 1600: Object.freeze({ quality: 64, effort: 4 }) }),
+  mobile: Object.freeze({ 640: Object.freeze({ quality: 72, effort: 4 }) }),
+});
+const AVIF_DEFAULT = Object.freeze({ desktop: 60, mobile: 62 });
+const WEBP_BOOST = Object.freeze({ desktop: Object.freeze({ 960: 4 }), mobile: Object.freeze({}) });
+const AVIF_MAX_QUALITY = 90;
+const WEBP_MAX_QUALITY = 95;
+const STEP_UP = 6; // the one extra quality step a rendition may take
+// The size budget (plan: today's static files + 20% on desktop, 150 KB for
+// the mobile w1060): only at the widths the static hero had (tier 2 above).
+const BYTE_BUDGET = Object.freeze({ desktop: Object.freeze({ 1280: 153074, 1920: 236004, 2560: 302665 }), mobile: Object.freeze({ 1060: 153600 }) });
+const budgetFor = (slot, width) => {
+  const b = BYTE_BUDGET[slot][width];
+  const scale = Number(process.env.SITE_HERO_BYTE_BUDGET_SCALE) || 1; // tests only
+  return b ? Math.round(b * scale) : null;
+};
+function avifFor(width, slot) {
+  return { ...AVIF, ...(AVIF_START[slot][width] || { quality: AVIF_DEFAULT[slot] }) };
+}
+function webpFor(width, slot) {
+  const base = variantWebp(width);
+  return { ...base, quality: Math.min(100, base.quality + (WEBP_BOOST[slot][width] || 0)), smartSubsample: true };
+}
+// q95 4:4:4: SSIM ≥ 0.995 against the raster on both real banners (q92 gave
+// 0.9933 on the detailed mobile art). Never sent to modern browsers — it is
+// the long-term source for future renditions and the last-resort fallback.
+const MASTER_JPEG = Object.freeze({ quality: 95, mozjpeg: true, chromaSubsampling: "4:4:4" });
+const LQIP_WIDTH = 24;
+const LQIP_MAX_CHARS = 600;
+const RENDITION_TYPES = Object.freeze({ avif: "image/avif", webp: "image/webp" });
+
+const HEIC_BRANDS = new Set(["heic", "heix", "hevc", "hevx", "heim", "heis", "hevm", "hevs"]);
+const AVIF_BRANDS = new Set(["avif", "avis"]);
+
+function isSlot(s) {
+  return s === "desktop" || s === "mobile";
+}
+
+// Actual pixel widths of the renditions of a master `masterWidth` px wide:
+// the standard steps below the (rendition-capped) master width, plus that
+// width itself. Never empty (a 530 px master → [530]), never wider than the
+// master.
+function heroRenditionWidths(masterWidth, slot) {
+  const top = Math.min(Math.floor(Number(masterWidth) || 0), SLOTS[slot].renditionCap);
+  if (top < 1) return [];
+  // nothing narrower than the slot is ever shown at (desktop art: from 768 px)
+  const widths = RENDITION_STEPS.filter((w) => w < top && w >= SLOTS[slot].renditionMin);
+  widths.push(top);
+  return widths;
+}
+// The storage key width a rendition lives under: the smallest standard
+// variant width that is at least as wide (a 1060 px rendition → w1280).
+// Unique per rendition by construction: every step below the top maps to
+// itself, the top to a key above all of them.
+function renditionKeyWidth(width) {
+  return storage.variantWidthFor(width);
+}
+function renditionKey(masterKey, width, format) {
+  return `${masterKey}/${storage.VARIANT_SET}/w${renditionKeyWidth(width)}.${format}`;
+}
+
+// How far a width×height image is from the slot's box ratio, symmetric:
+// 0 = exact, 0.35 = 1.35× too wide or too tall.
+function ratioDeviation(width, height, slot) {
+  const r = width / height;
+  const R = SLOTS[slot].ratio;
+  return Math.max(r / R, R / r) - 1;
+}
+
+function clamp(v, lo, hi) {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+// The region of an upright width×height image that fills the slot's box,
+// centred on the focal point (0–1 each way, clamped inside the image).
+// Integer, always inside the image. Shared with the admin through
+// tests/batch-s/fixtures/hero-crop-vectors.json.
+function cropRegion(width, height, slot, focal = { x: 0.5, y: 0.5 }) {
+  const R = SLOTS[slot].ratio;
+  const deviation = ratioDeviation(width, height, slot);
+  const fx = Number.isFinite(focal && focal.x) ? clamp(focal.x, 0, 1) : 0.5;
+  const fy = Number.isFinite(focal && focal.y) ? clamp(focal.y, 0, 1) : 0.5;
+  if (deviation <= RATIO_TOLERANCE) return { left: 0, top: 0, width, height, cropped: false, deviation };
+  if (width / height > R) {
+    const w = clamp(Math.round(height * R), 1, width);
+    const left = clamp(Math.round(fx * width - w / 2), 0, width - w);
+    return { left, top: 0, width: w, height, cropped: true, deviation };
+  }
+  const h = clamp(Math.round(width / R), 1, height);
+  const top = clamp(Math.round(fy * height - h / 2), 0, height - h);
+  return { left: 0, top, width, height: h, cropped: true, deviation };
+}
+
+// Width × height of the master a region becomes (capped, ratio kept).
+function outputSize(region, slot) {
+  const width = Math.min(region.width, SLOTS[slot].cap);
+  const height = Math.max(1, Math.round((width * region.height) / region.width));
+  return { width, height };
+}
+
+// A region narrower than the box would be upscaled on the screens that show
+// it at 1×: refused. The width is exact (the box fills the screen's width);
+// the height keeps the 1% slack of the uncropped ratio tolerance (a 1920×735
+// image is used whole — object-cover trims the rest).
+function tooSmall(region, slot) {
+  const [mw, mh] = SLOTS[slot].min;
+  return region.width < mw || region.height < Math.floor(mh * (1 - RATIO_TOLERANCE));
+}
+
+function heicError() {
+  return new ImageRejected("HEIC_NOT_SUPPORTED", "iPhone HEIC photos can't be used — export the banner as JPEG and upload that", 415);
+}
+function unsupportedError() {
+  return new ImageRejected("UNSUPPORTED_FORMAT", "Use a JPEG, PNG, WebP or AVIF image", 415);
+}
+// An AVIF image sequence (brand "avis"): this sharp build can't decode one at
+// all, so it would otherwise be refused as "not an AVIF".
+function animatedAvifError() {
+  return new ImageRejected("ANIMATED_AVIF_NOT_SUPPORTED", "Animated AVIF files can't be used — export the banner as a still image (JPEG, PNG, WebP or a still AVIF)", 415);
+}
+function pixelsError() {
+  return new ImageRejected("IMAGE_TOO_LARGE", "The image has too many pixels (at most 25 megapixels)", 413);
+}
+
+// ISO-BMFF brands (HEIF / AVIF containers): the major brand and the
+// compatible brands of the ftyp box, bounded to its first 64 bytes.
+function ftypBrands(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 16 || buffer.toString("latin1", 4, 8) !== "ftyp") return null;
+  const size = buffer.readUInt32BE(0);
+  const end = Math.min(Math.max(size, 16), 64, buffer.length);
+  const brands = [buffer.toString("latin1", 8, 12)];
+  for (let i = 16; i + 4 <= end; i += 4) brands.push(buffer.toString("latin1", i, i + 4));
+  return brands;
+}
+
+function open(buffer, extra = {}) {
+  return sharp(buffer, { failOn: "error", limitInputPixels: MAX_INPUT_PIXELS, ...extra });
+}
+
+/**
+ * What the upload is, from its header only (nothing is decoded).
+ * @returns {Promise<{ format: string, width: number, height: number, animated: boolean }>} width/height upright
+ */
+async function identify(buffer) {
+  // The brand check comes first: a HEIC the build cannot read may make
+  // metadata() throw, and the admin should still hear "export as JPEG".
+  const brands = ftypBrands(buffer);
+  if (brands && brands.some((b) => HEIC_BRANDS.has(b)) && !brands.some((b) => AVIF_BRANDS.has(b))) throw heicError();
+  let meta;
+  try {
+    meta = await open(buffer).metadata();
+  } catch (err) {
+    if (/pixel limit/i.test(String(err && err.message))) throw pixelsError();
+    if (brands && brands.includes("avis")) throw animatedAvifError();
+    throw unsupportedError();
+  }
+  if (meta.format === "heif" && meta.compression !== "av1") throw heicError();
+  const allowed = ["jpeg", "png", "webp", "gif"].includes(meta.format) || (meta.format === "heif" && meta.compression === "av1");
+  if (!allowed) throw unsupportedError();
+  if (!meta.width || !meta.height) throw new ImageRejected("INVALID_IMAGE", "The file is not a valid image", 400);
+  if (meta.width * meta.height > MAX_INPUT_PIXELS) throw pixelsError();
+  const upright = meta.autoOrient && meta.autoOrient.width ? meta.autoOrient : { width: meta.width, height: meta.height };
+  return { format: meta.format, width: upright.width, height: upright.height, animated: (meta.pages || 1) > 1 };
+}
+
+function secondsLeft(deadline) {
+  return Math.max(1, Math.ceil((deadline - Date.now()) / 1000));
+}
+function checkAbort(signal) {
+  if (signal && signal.aborted) throw Object.assign(new Error("hero processing timed out"), { name: "AbortError", code: "HERO_TIMEOUT" });
+}
+// sharp failures while encoding: its own timeout, the pixel limit, or a
+// corrupt stream the header did not reveal.
+function encodeError(err) {
+  const msg = String(err && err.message);
+  if (/timeout/i.test(msg)) return Object.assign(new Error("hero processing timed out"), { name: "AbortError", code: "HERO_TIMEOUT" });
+  if (/pixel limit/i.test(msg)) return pixelsError();
+  return new ImageRejected("INVALID_IMAGE", "The file is not a valid image", 400);
+}
+
+/**
+ * The one raster every output is encoded from: first frame, EXIF
+ * orientation applied at input (so the crop is in upright coordinates),
+ * cropped to the slot's ratio, capped, alpha flattened on white, sRGB
+ * (an embedded profile is honoured), 8-bit, 3 channels.
+ */
+async function prepareRaster(buffer, region, slot, { deadline, signal } = {}) {
+  checkAbort(signal);
+  const out = outputSize(region, slot);
+  let img = open(buffer, { autoOrient: true, pages: 1 });
+  if (region.cropped) img = img.extract({ left: region.left, top: region.top, width: region.width, height: region.height });
+  if (out.width !== region.width) img = img.resize({ width: out.width, height: out.height, fit: "fill", kernel: "lanczos3", fastShrinkOnLoad: false });
+  try {
+    const { data, info } = await img
+      .flatten({ background: "#ffffff" })
+      .toColourspace("srgb")
+      .raw({ depth: "uchar" })
+      .timeout({ seconds: secondsLeft(deadline || Date.now() + 120000) })
+      .toBuffer({ resolveWithObject: true });
+    if (info.channels !== 3) throw new Error(`unexpected channel count ${info.channels}`);
+    return { data, width: info.width, height: info.height };
+  } catch (err) {
+    throw encodeError(err);
+  }
+}
+
+function fromRaster(raster) {
+  return sharp(raster.data, { raw: { width: raster.width, height: raster.height, channels: 3 } });
+}
+
+async function hasQrCode(raster) {
+  return detectQr(fromRaster(raster), { requirePayload: true });
+}
+
+/**
+ * Encodes the master, the placeholder and every rendition from the raster,
+ * handing each to `onOutput` as soon as it exists (uploads overlap encodes).
+ * AVIF and WebP for every rendition width; nothing wider than the raster.
+ */
+async function renderOutputs(raster, slot, onOutput, { deadline, signal } = {}) {
+  const limit = () => ({ seconds: secondsLeft(deadline || Date.now() + 120000) });
+  const encode = async (pipeline) => {
+    checkAbort(signal);
+    try {
+      return await pipeline.timeout(limit()).toBuffer();
+    } catch (err) {
+      throw encodeError(err);
+    }
+  };
+  const master = await encode(fromRaster(raster).jpeg(MASTER_JPEG));
+  await onOutput({ kind: "master", format: "jpeg", width: raster.width, buffer: master });
+  const lqipBuf = await encode(fromRaster(raster).resize({ width: LQIP_WIDTH }).webp({ quality: 40 }));
+  const lqip = `data:image/webp;base64,${lqipBuf.toString("base64")}`;
+  const widths = heroRenditionWidths(raster.width, slot);
+  const overBudget = [];
+  const belowTarget = [];
+  const settings = [];
+  for (const width of widths) {
+    // the reference: the raster at this width (every attempt encodes it)
+    checkAbort(signal);
+    let refPipe = fromRaster(raster);
+    if (width < raster.width) refPipe = refPipe.resize({ width, kernel: "lanczos3" });
+    let ref;
+    try {
+      ref = await refPipe.raw().timeout(limit()).toBuffer({ resolveWithObject: true });
+    } catch (err) {
+      throw encodeError(err);
+    }
+    const refPlanes = quality.planes(ref.data, ref.info.channels);
+    for (const format of ["avif", "webp"]) {
+      const chosen = await encodeVerified({ ref, refPlanes, slot, width, format, encode, signal });
+      settings.push({ width, format, quality: chosen.quality, effort: chosen.effort, bytes: chosen.buffer.length, metrics: chosen.metrics, floor: chosen.floor });
+      if (chosen.belowTarget) {
+        belowTarget.push({ width, format, metrics: chosen.metrics, target: BARS[format][slot] });
+        if (strictPolicy()) throw new HeroError(422, "HERO_QUALITY_LIMIT", `At ${width} px (${format.toUpperCase()}) this artwork stays below the website's quality target: fine grain or noise, tiny patterns or very fine coloured lettering don't survive web compression well. Reduce grain or noise, simplify the finest texture, and export it again.`, { slot, width, format, metrics: chosen.metrics, target: BARS[format][slot] });
+      }
+      const budget = format === "avif" ? budgetFor(slot, width) : null;
+      if (budget && chosen.buffer.length > budget) {
+        overBudget.push({ width, bytes: chosen.buffer.length, budget });
+        if (strictPolicy()) {
+          throw new HeroError(422, "HERO_BYTE_BUDGET", `At ${width} px this artwork needs ${Math.round(chosen.buffer.length / 1024)} KB to keep its quality — the website's limit there is ${Math.round(budget / 1024)} KB. Simplify fine texture or grain, or reduce noise, and export it again.`, { slot, width, bytes: chosen.buffer.length, budget });
+        }
+      }
+      await onOutput({ kind: "rendition", format, width, keyWidth: renditionKeyWidth(width), buffer: chosen.buffer, metrics: chosen.metrics });
+    }
+  }
+  return { lqip: lqip.length <= LQIP_MAX_CHARS ? lqip : "", widths, overBudget, belowTarget, settings };
+}
+
+// One rendition, verified (see the tiers above), with a bounded cost — at
+// most three encodes: today's (the floor), the measured start setting, and
+// one step up (+STEP_UP quality) when the start misses the targets and the
+// step still fits the size budget. The best of them that beats the floor on
+// every measure is used (targets first); if none does, today's encode
+// itself. Whatever remains below target or over budget is reported.
+async function encodeVerified({ ref, refPlanes, slot, width, format, encode, signal }) {
+  const bars = BARS[format][slot];
+  const w = ref.info.width;
+  const h = ref.info.height;
+  const src = () => sharp(ref.data, { raw: ref.info });
+  const measure = async (buffer) => {
+    const got = await sharp(buffer).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    return quality.compare(refPlanes, got.data, got.info.channels, w, h);
+  };
+  const meets = (m, t) => m.ssim >= t.ssim && m.p1 >= t.p1 && m.chroma >= t.chroma;
+  const tryOne = async (q, effort) => {
+    checkAbort(signal);
+    const buffer = await encode(format === "avif" ? src().avif({ quality: q, effort }) : src().webp({ ...webpFor(width, slot), quality: q }));
+    return { buffer, metrics: await measure(buffer), quality: q, effort: format === "avif" ? effort : webpFor(width, slot).effort };
+  };
+  // the floor: what today's static pipeline makes of this raster
+  checkAbort(signal);
+  const t = TODAY_PIPELINE[format];
+  const floorBuf = await encode(format === "avif" ? src().avif({ quality: t.quality, effort: t.effort }) : src().webp({ quality: t.quality, effort: t.effort }));
+  const floor = await measure(floorBuf);
+  const today = { buffer: floorBuf, metrics: floor, quality: t.quality, effort: t.effort, todayEncode: true };
+  const budget = format === "avif" ? budgetFor(slot, width) : null;
+  const start = format === "avif" ? avifFor(width, slot) : { quality: webpFor(width, slot).quality, effort: undefined };
+  const maxQ = format === "avif" ? AVIF_MAX_QUALITY : WEBP_MAX_QUALITY;
+  const tried = [await tryOne(start.quality, start.effort)];
+  const first = tried[0];
+  const firstFits = !budget || first.buffer.length <= budget;
+  if (!(meets(first.metrics, bars) && meets(first.metrics, floor)) && firstFits && start.quality < maxQ) {
+    const up = await tryOne(Math.min(maxQ, start.quality + STEP_UP), start.effort);
+    if (!budget || up.buffer.length <= budget) tried.push(up);
+  }
+  const valid = tried.filter((c) => meets(c.metrics, floor));
+  const chosen = valid.find((c) => meets(c.metrics, bars)) || valid[valid.length - 1] || today;
+  return { ...chosen, floor, belowTarget: !meets(chosen.metrics, bars) };
+}
+
+module.exports = {
+  SLOTS,
+  SLOT_NAMES,
+  MAX_INPUT_PIXELS,
+  RATIO_TOLERANCE,
+  RATIO_CONFIRM,
+  RENDITION_STEPS,
+  RENDITION_TYPES,
+  AVIF,
+  AVIF_START,
+  BARS,
+  BYTE_BUDGET,
+  budgetFor,
+  TODAY_PIPELINE,
+  encodeVerified,
+  avifFor,
+  webpFor,
+  MASTER_JPEG,
+  isSlot,
+  heroRenditionWidths,
+  renditionKeyWidth,
+  renditionKey,
+  ratioDeviation,
+  cropRegion,
+  outputSize,
+  tooSmall,
+  ftypBrands,
+  identify,
+  prepareRaster,
+  hasQrCode,
+  renderOutputs,
+};

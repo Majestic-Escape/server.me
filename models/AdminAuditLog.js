@@ -14,15 +14,26 @@ const ACTIONS = [
   "kyc.document.download",
   "kyc.document.manual_verify",
   "admin.create",
+  // homepage hero (services/siteHero.js); target: SiteSetting "home_hero"
+  "site.hero.stage",
+  "site.hero.discard",
+  "site.hero.publish",
+  "site.hero.alt",
+  "site.hero.reset",
+  "site.hero.draft_expire",
 ];
+// Targets that are singleton documents with a string id instead of an ObjectId.
+const KEYED_TARGETS = ["SiteSetting"];
 
 const adminAuditLogSchema = new mongoose.Schema(
   {
-    actorId: { type: mongoose.Schema.Types.ObjectId, required: true },
-    actorKind: { type: String, enum: ["admin", "host"], default: "admin" },
+    // "system": scheduled maintenance (a hero draft expiring) — no person acted
+    actorId: { type: mongoose.Schema.Types.ObjectId, required: function () { return this.actorKind !== "system"; } },
+    actorKind: { type: String, enum: ["admin", "host", "system"], default: "admin" },
     action: { type: String, enum: ACTIONS, required: true },
     targetType: { type: String, required: true },
-    targetId: { type: mongoose.Schema.Types.ObjectId, required: true },
+    targetId: { type: mongoose.Schema.Types.ObjectId, required: function () { return !KEYED_TARGETS.includes(this.targetType); } },
+    targetKey: { type: String },
     details: { type: mongoose.Schema.Types.Mixed },
     createdAt: { type: Date, default: Date.now },
   },

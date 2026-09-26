@@ -101,6 +101,8 @@ async function referencedMasters(urlsFile) {
   const add = (url, owner) => {
     const key = storage.keyFromUrl(url);
     if (!key) return "foreign";
+    // the homepage banner keeps its own renditions (services/siteHero.js)
+    if (storage.isProtectedKey(key)) return "protected";
     const master = storage.masterKeyOf(key);
     const r = refs.get(master) || { owners: [], urls: new Set() };
     r.owners.push(owner);
@@ -192,7 +194,11 @@ async function processMaster(master, opts, log) {
 
 // --- prune ---------------------------------------------------------------------
 async function prune(refs, opts, log) {
-  const all = await storage.listKeys("");
+  // A bucket-wide LIST cannot exclude a prefix; protected objects (the
+  // homepage banner, services/siteHero.js) are dropped before any decision —
+  // never counted, never pruned — including objects of a banner upload that
+  // is still being stored and not yet referenced anywhere.
+  const all = (await storage.listKeys("")).filter((o) => !storage.isProtectedKey(o.key));
   const orphans = [];
   let variants = 0;
   let masters = 0;
@@ -202,7 +208,7 @@ async function prune(refs, opts, log) {
     if (storage.isVariantKey(o.key)) {
       variants += 1;
       const master = storage.masterKeyOf(o.key);
-      const set = o.key.match(/\/(v[0-9]+)\/w[0-9]+\.webp$/)[1];
+      const set = o.key.match(/\/(v[0-9]+)\/w[0-9]+\.(?:webp|avif)$/)[1];
       if (!refs.has(master) || set !== storage.VARIANT_SET) {
         orphans.push(o.key);
         bytes += o.size;

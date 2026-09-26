@@ -41,7 +41,8 @@ function disabled() {
 // Call at the top of a catalogue handler. Returns false when the request
 // has already been answered (invalid `fresh`), true otherwise. With
 // `cacheable: false` (date-filtered search) the global no-store stands.
-function catalogueCache(req, res, { cacheable = true } = {}) {
+// `tag` names what a purge must drop (the homepage hero uses "site-hero").
+function catalogueCache(req, res, { cacheable = true, tag = TAG } = {}) {
   if (Object.prototype.hasOwnProperty.call(req.query, "fresh")) {
     if (!freshSecretOk(req)) {
       res.status(400).json({
@@ -63,7 +64,7 @@ function catalogueCache(req, res, { cacheable = true } = {}) {
       res.set({
         "Cache-Control": BROWSER_DIRECTIVE,
         "CDN-Cache-Control": CDN_DIRECTIVE,
-        "Vercel-Cache-Tag": TAG,
+        "Vercel-Cache-Tag": tag,
         Vary: "Origin",
       });
       res.removeHeader("Pragma");

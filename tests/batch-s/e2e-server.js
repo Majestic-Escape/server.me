@@ -2,6 +2,7 @@
 // for end-to-end runs of the frontend against Batch S. Test-only.
 //
 //   node tests/batch-s/e2e-server.js     (backend :5005, helper :5056)
+//   E2E_PORT=5105 E2E_HELPER_PORT=5156 node tests/batch-s/e2e-server.js   (a second stack)
 //
 // Helper endpoints (port 5056, CORS *):
 //   GET  /seed                       → ids/tokens of the seeded fixtures
@@ -17,10 +18,24 @@ const http = require("http");
 const crypto = require("crypto");
 const h = require("./setup");
 
+const HELPER_PORT = Number(process.env.E2E_HELPER_PORT || 5056);
 const PHOTO = "https://majestic-escape-host-properties.blr1.cdn.digitaloceanspaces.com/1769315746961-gettyimages-1516933385-612x612.jpg";
 
 async function main() {
-  process.env.E2E_PORT = "5005";
+  process.env.E2E_PORT = process.env.E2E_PORT || "5005";
+  // Real Spaces (the banner QA run) only ever under a QA prefix: never the
+  // production site/hero/ namespace, and the run's objects are removable by prefix.
+  if (process.env.E2E_REAL_SPACES === "1" && !/^_qa\/site\/hero\/[a-z0-9-]{1,40}\/$/.test(process.env.SITE_HERO_PREFIX || "")) {
+    throw new Error("E2E_REAL_SPACES=1 needs SITE_HERO_PREFIX=_qa/site/hero/<run>/");
+  }
+  // …and never as "production": that would ignore the QA prefix and write
+  // (and sweep) the live banner's namespace in the real bucket.
+  if (process.env.E2E_REAL_SPACES === "1" && (process.env.SITE_HERO_PRODUCTION === "1" || process.env.VERCEL_ENV === "production")) {
+    throw new Error("E2E_REAL_SPACES=1 must not run with SITE_HERO_PRODUCTION=1 or VERCEL_ENV=production");
+  }
+  // Loopback only: the stack hands out admin tokens (/seed) and, in the
+  // banner QA mode, holds real storage credentials.
+  process.env.LISTEN_HOST = process.env.LISTEN_HOST || "127.0.0.1";
   await h.start();
   // Canary values (contact lock-down): the counterpart's last name, email and
   // phone are searched for by VALUE in browser-side responses, DOM and storage.
@@ -169,7 +184,9 @@ async function main() {
   let seq = 0;
   http
     .createServer(async (req, res) => {
-      res.setHeader("access-control-allow-origin", "*");
+      // CORS for the stack's own site/admin origins only (never "*": /seed returns admin tokens)
+      const origin = req.headers.origin;
+      if (origin && (process.env.ALLOWED_ORIGINS || "").split(",").includes(origin)) res.setHeader("access-control-allow-origin", origin);
       res.setHeader("access-control-allow-headers", "content-type");
       if (req.method === "OPTIONS") return res.end();
       let body = "";
@@ -325,7 +342,7 @@ async function main() {
       res.statusCode = 404;
       res.end("{}");
     })
-    .listen(5056, () => console.log("[e2e] helper on 5056; backend on 5005; listing", seed.listingId));
+    .listen(HELPER_PORT, process.env.LISTEN_HOST || "127.0.0.1", () => console.log(`[e2e] helper on ${HELPER_PORT}; backend on ${process.env.E2E_PORT}; listing`, seed.listingId));
 }
 main().catch((err) => {
   console.error(err);

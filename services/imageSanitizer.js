@@ -66,6 +66,15 @@ function rejectFor(err) {
   return new ImageRejected("INVALID_IMAGE", "The file is not a valid image", 400);
 }
 
+// True when a QR code is readable anywhere in the picture: the pipeline is
+// downscaled to at most QR_SCAN_MAX px and handed to jsQR as RGBA. Shared by
+// the listing/profile sanitiser (on the upload) and the homepage hero (on
+// its prepared raster), so both refuse exactly the same pictures.
+async function detectQr(pipeline) {
+  const { data, info } = await pipeline.resize({ width: QR_SCAN_MAX, height: QR_SCAN_MAX, fit: "inside", withoutEnlargement: true }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return !!jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, { inversionAttempts: "attemptBoth" });
+}
+
 /**
  * @param {Buffer} buffer the uploaded bytes
  * @param {string} mimetype as declared by the client (only a hint)
@@ -81,16 +90,13 @@ async function sanitizeImage(buffer, mimetype) {
   if (!meta.width || !meta.height) throw new ImageRejected("INVALID_IMAGE", "The file is not a valid image", 400);
   if (meta.width * meta.height > MAX_INPUT_PIXELS) throw new ImageRejected("IMAGE_TOO_LARGE", "The image has too many pixels", 413);
 
-  let data;
-  let info;
+  let qr;
   try {
     // QR detection on a bounded raster (the decode also proves the image is real)
-    const scan = open(buffer).rotate().resize({ width: QR_SCAN_MAX, height: QR_SCAN_MAX, fit: "inside", withoutEnlargement: true }).ensureAlpha().raw();
-    ({ data, info } = await scan.toBuffer({ resolveWithObject: true }));
+    qr = await detectQr(open(buffer).rotate());
   } catch (err) {
     throw rejectFor(err);
   }
-  const qr = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, { inversionAttempts: "attemptBoth" });
   if (qr) throw new ImageRejected("IMAGE_NOT_ALLOWED", "Images with QR codes aren't allowed");
 
   // Re-encode without metadata (sharp strips it unless withMetadata() is called)
@@ -215,4 +221,4 @@ function outputName(originalname, extension) {
   return `${base}.${extension}`;
 }
 
-module.exports = { sanitizeImage, makeVariants, stripJpegMetadataLossless, hasMetadata, outputName, ImageRejected, MAX_INPUT_PIXELS, variantQuality, variantWebp, VARIANT_EFFORT };
+module.exports = { sanitizeImage, makeVariants, stripJpegMetadataLossless, hasMetadata, outputName, ImageRejected, MAX_INPUT_PIXELS, variantQuality, variantWebp, VARIANT_EFFORT, detectQr, rejectFor };

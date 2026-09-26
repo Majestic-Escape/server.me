@@ -183,6 +183,9 @@ exports.deleteImages = async (req, res) => {
     // delete apply to the master (and take every variant with it).
     const key = storage.masterKeyOf(storage.keyFromUrl(url));
     if (!key) return fail(res, 400, "INVALID_KEY", "Not an object of this platform");
+    // Homepage banner objects are managed in Settings → Homepage banner (for
+    // admins too): deleting one here would blank the live hero.
+    if (storage.isProtectedKey(key)) return fail(res, 409, "OBJECT_IN_USE", "This image is managed in Settings → Homepage banner");
 
     if (!authz.isAdmin(actor)) {
       const { listingRefs, profileRefs } = await referencesOf(key);

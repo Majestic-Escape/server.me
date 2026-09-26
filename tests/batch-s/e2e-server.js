@@ -2,6 +2,7 @@
 // for end-to-end runs of the frontend against Batch S. Test-only.
 //
 //   node tests/batch-s/e2e-server.js     (backend :5005, helper :5056)
+//   E2E_PORT=5105 E2E_HELPER_PORT=5156 node tests/batch-s/e2e-server.js   (a second stack)
 //
 // Helper endpoints (port 5056, CORS *):
 //   GET  /seed                       → ids/tokens of the seeded fixtures
@@ -17,10 +18,11 @@ const http = require("http");
 const crypto = require("crypto");
 const h = require("./setup");
 
+const HELPER_PORT = Number(process.env.E2E_HELPER_PORT || 5056);
 const PHOTO = "https://majestic-escape-host-properties.blr1.cdn.digitaloceanspaces.com/1769315746961-gettyimages-1516933385-612x612.jpg";
 
 async function main() {
-  process.env.E2E_PORT = "5005";
+  process.env.E2E_PORT = process.env.E2E_PORT || "5005";
   await h.start();
   // Canary values (contact lock-down): the counterpart's last name, email and
   // phone are searched for by VALUE in browser-side responses, DOM and storage.
@@ -325,7 +327,7 @@ async function main() {
       res.statusCode = 404;
       res.end("{}");
     })
-    .listen(5056, () => console.log("[e2e] helper on 5056; backend on 5005; listing", seed.listingId));
+    .listen(HELPER_PORT, () => console.log(`[e2e] helper on ${HELPER_PORT}; backend on ${process.env.E2E_PORT}; listing`, seed.listingId));
 }
 main().catch((err) => {
   console.error(err);

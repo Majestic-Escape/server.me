@@ -43,10 +43,14 @@ const AVIF = Object.freeze({ quality: 60, effort: 4 });
 // lowest quality that meets them at each width. w1280 at q64 costs +9% bytes
 // over q60 (the one width where the bars and "≤ today + 20%" at that
 // viewport can't both hold — see the audit report).
+// Mobile q62 everywhere else: at q60 the mobile renditions scored a hair
+// below the static files made from the same art (SSIM 0.9893 vs 0.9894);
+// q62 is above them and keeps w1060 within the 150 KB budget (149 KB).
 const AVIF_QUALITY = Object.freeze({ desktop: Object.freeze({ 960: 76, 1280: 64, 1600: 64 }), mobile: Object.freeze({ 640: 72 }) });
+const AVIF_DEFAULT = Object.freeze({ desktop: 60, mobile: 62 });
 const WEBP_BOOST = Object.freeze({ desktop: Object.freeze({ 960: 4 }), mobile: Object.freeze({}) });
 function avifFor(width, slot) {
-  return { ...AVIF, quality: AVIF_QUALITY[slot][width] || AVIF.quality };
+  return { ...AVIF, quality: AVIF_QUALITY[slot][width] || AVIF_DEFAULT[slot] };
 }
 function webpFor(width, slot) {
   const base = variantWebp(width);

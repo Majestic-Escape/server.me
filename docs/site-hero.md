@@ -53,7 +53,7 @@ A single AVIF quality misses the bars at the smaller widths (more detail per pix
 | AVIF quality / KB / SSIM-Y / p1 / chroma | q76 · 132 · .9887 · .961 · 43.4 | q64 · 156 · .9885 · .944 · 43.0 | q64 · 203 · .9898 · .950 · 43.8 | q60 · 222 · .9876 · .941 · 43.7 | q60 · 286 · .9880 · .943 · 44.7 |
 | today's static AVIF (q55) | — | 125 · .9830 · .915 · 41.6 | — | 192 · .9849 · .927 · 43.1 | 246 · .9860 · .932 · 44.1 |
 
-Mobile (1060 px art): w640 q72 · 109 KB · .9880 · .950; w960 q60 · 129 KB · .9886 · .940; w1060 q60 · 141 KB · .9893 · .942. JPEG q95 4:4:4 masters: .9996 / .9953. Desktop renditions start at 960 px (the desktop art is shown from 768 px) and stop at 2560 px.
+Mobile (1060 px art): w640 q72 · 109 KB · .9880 · .950; w960 q62 · 135 KB · .9894 · .946; w1060 q62 · **149 KB** · .9901 · .948 (q60 was a hair below the static files of the same art: .9893 vs .9894; the 150 KB budget holds with 1 KB to spare on this art — there is no byte guard, a more detailed upload can exceed it). JPEG q95 4:4:4 masters: .9996 / .9953. Desktop renditions start at 960 px (the desktop art is shown from 768 px) and stop at 2560 px.
 
 Bytes per viewport against today: 1440@1 +6% (w1600 203 KB vs w1920 192 KB), 1440@2 +16%, 1920@1 +16%, 768@1 +6%, mobile w1060 141 KB (≤ 150 KB). **1280@1 is +25%** (w1280 q64 156 KB vs 125 KB): at that width the absolute bars and "≤ today + 20%" can't both hold (q60: 143 KB, +14%, p1 .935, chroma 42.3 — still well above today's 1280 file). The plan's byte gate is defined at the 1440 viewports; this one is recorded for the owner, not hidden.
 

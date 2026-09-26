@@ -509,7 +509,7 @@ async function stageDraft(req, actor, slot, file, body) {
     // objects are now referenced and leave `pending`.
     const replacedKey = current && keyOf(current.url);
     const tx = await inTransaction(async (session) => {
-      const filter = { _id: DOC_ID, "lease.token": leaseToken, "lease.until": { $gt: new Date() } };
+      const filter = { _id: DOC_ID, "lease.token": leaseToken, "lease.until": { $gt: new Date() }, "receipts.opId": { $ne: op.opId } };
       if (expectedDraftOpId) filter[`draft.${slot}.opId`] = expectedDraftOpId;
       else filter[`draft.${slot}`] = null;
       const push = { receipts: ops.pushReceipt(r) };
@@ -588,7 +588,7 @@ async function discardDraft(req, actor, slot, body) {
     const at = new Date();
     const push = { receipts: ops.pushReceipt(r) };
     if (discardedKey) push.retired = { masterKeys: [discardedKey], retiredAt: at };
-    const res = await coll().updateOne({ _id: DOC_ID, [`draft.${slot}.opId`]: expectedDraftOpId }, { $set: { [`draft.${slot}`]: null, updatedAt: at }, $push: push }, { session });
+    const res = await coll().updateOne({ _id: DOC_ID, [`draft.${slot}.opId`]: expectedDraftOpId, "receipts.opId": { $ne: op.opId } }, { $set: { [`draft.${slot}`]: null, updatedAt: at }, $push: push }, { session });
     if (res.matchedCount !== 1) return { abort: true };
     await adminAudit.record(req, "site.hero.discard", { targetType: "SiteSetting", targetKey: DOC_ID }, { slot, opId: expectedDraftOpId }, { session });
     return { ok: true };
@@ -596,6 +596,8 @@ async function discardDraft(req, actor, slot, body) {
   if (!tx.committed) {
     if (tx.unknown) throw outcomeUnknown();
     if (tx.error) throw notRecorded();
+    const mine = await ownReceipt(op, fp, actor);
+    if (mine) return replayResponse(mine, await readDoc(), actor);
     throw new HeroError(409, "HERO_DRAFT_CHANGED", "This draft was changed by someone else — reload and review again");
   }
   return { status: 200, body: { success: true, state: await adminView(await readDoc(), actor), opToken: ops.issueOpToken(actor.id) } };
@@ -613,21 +615,35 @@ async function conflictFor(slots) {
   return new HeroError(409, "HERO_VERSION_CONFLICT", "The banner was changed by someone else — reload and review again", { version: doc ? doc.version : null });
 }
 
+// A compare-and-set missed. If this very operation's receipt is there — the
+// same request sent twice at once (a "Try again" while the first was still
+// committing) — the change IS done: answer with the recorded result, not
+// "someone else changed it".
+async function ownReceipt(op, fp, actor) {
+  const r = ops.findReceipt(await readDoc(), op.opId);
+  return r && String(r.actorId) === String(actor.id) && r.fingerprint === fp ? r : null;
+}
+
 // A banner change (publish / alt / restore) as one transaction: the
-// compare-and-set update with its receipt, then the audit row.
-async function commitBannerChange(req, { filter, update, audit, slots }) {
+// compare-and-set update with its receipt, then the audit row. The filter
+// also requires that this operation has no receipt yet, so two copies of one
+// request can never both apply, whatever the pre-checks saw.
+// Returns null when committed, or the operation's own receipt (a twin won).
+async function commitBannerChange(req, { filter, update, audit, slots, op, fp, actor }) {
   const tx = await inTransaction(async (session) => {
-    const res = await coll().updateOne(filter, update, { session });
+    const res = await coll().updateOne({ ...filter, "receipts.opId": { $ne: op.opId } }, update, { session });
     if (res.matchedCount !== 1) return { abort: true };
     await adminAudit.record(req, audit.action, { targetType: "SiteSetting", targetKey: DOC_ID }, audit.details, { session });
     return { ok: true };
   });
-  if (tx.committed) return;
+  if (tx.committed) return null;
   if (tx.unknown) throw outcomeUnknown();
   if (tx.error) {
     console.error("[site-hero] change not recorded", tx.error && (tx.error.code || tx.error.message));
     throw notRecorded();
   }
+  const mine = await ownReceipt(op, fp, actor);
+  if (mine) return mine;
   throw await conflictFor(slots);
 }
 
@@ -669,12 +685,16 @@ async function publish(req, actor, body) {
     if (liveKey) retired.push({ masterKeys: [liveKey], retiredAt: at });
   }
   const r = ops.receipt({ opId: op.opId, actorId: oid(actor.id), action: "publish", target: selected.join("+"), fingerprint: fp, status: "completed", result: { version } }, at);
-  await commitBannerChange(req, {
+  const twin = await commitBannerChange(req, {
     filter,
     update: { $set, $push: { receipts: ops.pushReceipt(r), ...(retired.length ? { retired: { $each: retired } } : {}) } },
     audit: { action: "site.hero.publish", details: { version, slots: selected, replaced: retired.length } },
     slots,
+    op,
+    fp,
+    actor,
   });
+  if (twin) return replayResponse(twin, await readDoc(), actor);
   const notified = await notifySite("hero-publish");
   const fresh = await readDoc();
   afterWrite({ reason: "publish", doc: fresh, slots: selected });
@@ -697,11 +717,15 @@ async function editAlt(req, actor, body) {
   const at = new Date(now);
   const version = expectedVersion + 1;
   const r = ops.receipt({ opId: op.opId, actorId: oid(actor.id), action: "alt", target: "alt", fingerprint: fp, status: "completed", result: { version } }, at);
-  await commitBannerChange(req, {
+  const twin = await commitBannerChange(req, {
     filter: { _id: DOC_ID, version: expectedVersion, desktop: { $ne: null }, mobile: { $ne: null } },
     update: { $set: { alt, version, updatedBy: oid(actor.id), updatedAt: at }, $push: { receipts: ops.pushReceipt(r) } },
     audit: { action: "site.hero.alt", details: { version } },
+    op,
+    fp,
+    actor,
   });
+  if (twin) return replayResponse(twin, await readDoc(), actor);
   const notified = await notifySite("hero-alt");
   const fresh = await readDoc();
   afterWrite({ reason: "alt", doc: fresh });
@@ -726,11 +750,15 @@ async function restoreDefault(req, actor, body) {
   const version = expectedVersion + 1;
   const retired = img.SLOT_NAMES.map((s) => doc[s] && keyOf(doc[s].url)).filter(Boolean).map((k) => ({ masterKeys: [k], retiredAt: at }));
   const r = ops.receipt({ opId: op.opId, actorId: oid(actor.id), action: "reset", target: "banner", fingerprint: fp, status: "completed", result: { version } }, at);
-  await commitBannerChange(req, {
+  const twin = await commitBannerChange(req, {
     filter: { _id: DOC_ID, version: expectedVersion },
     update: { $set: { desktop: null, mobile: null, alt: null, version, updatedBy: oid(actor.id), updatedAt: at }, $push: { receipts: ops.pushReceipt(r), retired: { $each: retired } } },
     audit: { action: "site.hero.reset", details: { version, replaced: retired.length } },
+    op,
+    fp,
+    actor,
   });
+  if (twin) return replayResponse(twin, await readDoc(), actor);
   const notified = await notifySite("hero-reset");
   const fresh = await readDoc();
   afterWrite({ reason: "reset", doc: fresh });

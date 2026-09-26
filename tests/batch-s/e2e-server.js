@@ -342,7 +342,7 @@ async function main() {
       res.statusCode = 404;
       res.end("{}");
     })
-    .listen(HELPER_PORT, () => console.log(`[e2e] helper on ${HELPER_PORT}; backend on ${process.env.E2E_PORT}; listing`, seed.listingId));
+    .listen(HELPER_PORT, process.env.LISTEN_HOST || "127.0.0.1", () => console.log(`[e2e] helper on ${HELPER_PORT}; backend on ${process.env.E2E_PORT}; listing`, seed.listingId));
 }
 main().catch((err) => {
   console.error(err);

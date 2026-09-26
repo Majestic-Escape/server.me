@@ -1,4 +1,5 @@
 // controllers/authController.js
+const crypto = require("crypto");
 const mongoose = require("mongoose");
 const Admin = require("../models/Admin");
 const adminAudit = require("../services/adminAudit");
@@ -291,31 +292,43 @@ const verifyOTP = async (req, res) => {
     // A lock that has run out gives a fresh set of attempts (otherwise the
     // counter stays at the limit and one wrong guess every few minutes keeps
     // the admin locked out for good).
-    if (admin.lockUntil && !admin.isLocked() && admin.otpRetries >= MAX_RETRIES) {
-      admin.otpRetries = 0;
-      admin.lockUntil = undefined;
-    }
+    const now = new Date();
+    await Admin.updateOne({ _id: admin._id, lockUntil: { $lte: now }, otpRetries: { $gte: MAX_RETRIES } }, { $set: { otpRetries: 0 }, $unset: { lockUntil: 1 } });
 
-    // Check if account is locked
-    if (admin.isLocked()) {
-      const remainingLockTime = admin.lockUntil - Date.now();
-      return res.status(423).json({
-        requestType: "LOGIN_OTP_VERIFICATION",
-        success: false,
-        error: true,
-        code: "ACCOUNT_LOCKED",
-        message:
-          "Account is temporarily locked due to multiple failed attempts",
-        statusCode: 423,
-        unlocksAt: {
-          unlocksAt: admin.lockUntil.toISOString(),
-          remainingMinutes: Math.ceil(remainingLockTime / 60000),
-        },
-      });
-    }
+    // Every guess first takes one of the attempts, atomically: parallel
+    // guesses can never be compared more than MAX_RETRIES times per code
+    // (read → compare → save would let any number of them through).
+    const claimed = await Admin.findOneAndUpdate(
+      {
+        _id: admin._id,
+        otpRetries: { $lt: MAX_RETRIES },
+        $or: [{ lockUntil: null }, { lockUntil: { $lte: now } }],
+        "otp.value": { $nin: [null, ""] },
+        "otp.expiry": { $gt: now },
+      },
+      { $inc: { otpRetries: 1 } },
+      { new: true },
+    ).lean();
 
-    // Check if OTP is expired
-    if (!admin.otp || !admin.otp.value || admin.otp.expiry < Date.now()) {
+    if (!claimed) {
+      const current = await Admin.findById(admin._id).lean();
+      const lockedUntil = current && current.lockUntil && new Date(current.lockUntil) > new Date() ? new Date(current.lockUntil) : null;
+      if (lockedUntil || (current && current.otpRetries >= MAX_RETRIES)) {
+        const until = lockedUntil || new Date(Date.now() + LOCK_DURATION);
+        return res.status(423).json({
+          requestType: "LOGIN_OTP_VERIFICATION",
+          success: false,
+          error: true,
+          code: "ACCOUNT_LOCKED",
+          message:
+            "Account is temporarily locked due to multiple failed attempts",
+          statusCode: 423,
+          unlocksAt: {
+            unlocksAt: until.toISOString(),
+            remainingMinutes: Math.ceil((until - Date.now()) / 60000),
+          },
+        });
+      }
       return res.status(410).json({
         requestType: "LOGIN_OTP_VERIFICATION",
         success: false,
@@ -323,19 +336,22 @@ const verifyOTP = async (req, res) => {
         code: "OTP_EXPIRED",
         message: "OTP has expired. Please request a new one",
         statusCode: 410,
-        expiredAt: admin.otp.expiry,
+        expiredAt: (current && current.otp && current.otp.expiry) || null,
       });
     }
 
-    // Check if OTP is valid
-    if (admin.otp.value !== otp) {
-      admin.otpRetries += 1;
-      const remainingAttempts = MAX_RETRIES - admin.otpRetries;
+    const given = Buffer.from(otp);
+    const expected = Buffer.from(String(claimed.otp.value));
+    const matches = given.length === expected.length && crypto.timingSafeEqual(given, expected);
 
-      // Lock the account if retry limit is reached
-      if (admin.otpRetries >= MAX_RETRIES) {
-        admin.lockUntil = new Date(Date.now() + LOCK_DURATION);
-        await admin.save();
+    if (!matches) {
+      const remainingAttempts = MAX_RETRIES - claimed.otpRetries;
+
+      // The last attempt locks the account and ends this code: after the
+      // lock a new one must be requested.
+      if (claimed.otpRetries >= MAX_RETRIES) {
+        const lockUntil = new Date(Date.now() + LOCK_DURATION);
+        await Admin.updateOne({ _id: admin._id }, { $set: { lockUntil, otp: { value: null, expiry: null } } });
         return res.status(423).json({
           requestType: "LOGIN_OTP_VERIFICATION",
           success: false,
@@ -344,13 +360,12 @@ const verifyOTP = async (req, res) => {
           message: "Account locked due to too many failed attempts",
           statusCode: 423,
           unlockAt: {
-            unlocksAt: admin.lockUntil.toISOString(),
+            unlocksAt: lockUntil.toISOString(),
             lockDuration: "5 minutes",
           },
         });
       }
 
-      await admin.save();
       return res.status(400).json({
         requestType: "LOGIN_OTP_VERIFICATION",
         success: false,
@@ -360,15 +375,27 @@ const verifyOTP = async (req, res) => {
         statusCode: 400,
         otpAttempts: {
           remainingAttempts,
-          attemptsUsed: admin.otpRetries,
+          attemptsUsed: claimed.otpRetries,
         },
       });
     }
 
-    // Clear OTP and mark as verified
-    admin.otp = { value: null, expiry: null }; // Clear OTP
-    admin.otpRetries = 0;
-    await admin.save();
+    // The code is used once: only the request that clears it signs in.
+    const used = await Admin.updateOne(
+      { _id: admin._id, "otp.value": claimed.otp.value },
+      { $set: { otp: { value: null, expiry: null }, otpRetries: 0 }, $unset: { lockUntil: 1 } },
+    );
+    if (used.modifiedCount !== 1) {
+      return res.status(410).json({
+        requestType: "LOGIN_OTP_VERIFICATION",
+        success: false,
+        error: true,
+        code: "OTP_EXPIRED",
+        message: "OTP has expired. Please request a new one",
+        statusCode: 410,
+        expiredAt: null,
+      });
+    }
 
     // Generate authentication token
     const token = jwt.sign(

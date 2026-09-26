@@ -20,6 +20,19 @@ const newAdmin = (extra = {}) => {
 const register = (body, token) => h.api("POST", "/admin/register", { token, body });
 const counts = async () => ({ admins: await Admin().countDocuments(), audits: await AdminAuditLog().countDocuments({ action: "admin.create" }) });
 
+// Every outbound call to Brevo (the admin OTP mail goes there directly via
+// axios, not through utils/sendEmail) is recorded and never sent.
+const brevoCalls = [];
+const axios = require("axios");
+const realPost = axios.post;
+axios.post = async (url, ...rest) => {
+  if (String(url).includes("brevo.com")) {
+    brevoCalls.push(url);
+    return { data: { messageId: "test" } };
+  }
+  return realPost.call(axios, url, ...rest);
+};
+
 test.before(async () => {
   await h.start();
   // The schema's unique e-mail index (admins' indexes are not managed by
@@ -167,13 +180,13 @@ test("privileged-identities report lists every admin-capable account, audit prov
 
 test("login: operator objects are refused before any lookup (no code mailed, nobody's attempts used); a lock that ran out gives fresh attempts", async () => {
   const target = await h.makeAdmin({ isVerified: true });
-  const mailed = h.sentEmails().length;
+  const mailed = brevoCalls.length;
   for (const email of [{ $regex: "^" }, { $ne: null }, ["x"], 42, ""]) {
     const r = await h.api("POST", "/admin/request-otp", { body: { email } });
     assert.equal(r.status, 400, JSON.stringify(r.body));
     assert.equal(r.body.code, "INVALID_FIELDS");
   }
-  assert.equal(h.sentEmails().length, mailed, "no code mailed to anyone");
+  assert.equal(brevoCalls.length, mailed, "no code mailed to anyone (the admin OTP goes to Brevo directly, not through sendEmail)");
   assert.equal((await h.api("POST", "/admin/verify-otp", { body: { email: { $regex: "^" }, otp: "000000" } })).status, 400);
   assert.equal((await h.api("POST", "/admin/verify-otp", { body: { email: target.email, otp: { $ne: "x" } } })).status, 400);
   assert.equal((await Admin().findById(target._id).lean()).otpRetries || 0, 0, "nobody's attempts were used");
@@ -188,4 +201,36 @@ test("login: operator objects are refused before any lookup (no code mailed, nob
   // codes come from crypto: always six digits
   const { generateOTP } = require("../../utils/loginOtpUtils");
   for (let i = 0; i < 200; i += 1) assert.match(generateOTP(), /^[1-9]\d{5}$/);
+});
+
+test("login: parallel guesses can't beat the attempt limit — at most 3 compared per code, the lock ends the code, a right code works once", async () => {
+  const target = await h.makeAdmin({ isVerified: true });
+  const arm = (value) => Admin().updateOne({ _id: target._id }, { $set: { otpRetries: 0, otp: { value, expiry: new Date(Date.now() + 5 * 60000) } }, $unset: { lockUntil: 1 } });
+  await arm("777777");
+  const guesses = Array.from({ length: 39 }, (_, i) => String(100000 + i));
+  guesses.splice(20, 0, "777777"); // the right code arrives after 20 wrong ones
+  const res = await Promise.all(guesses.map((otp) => h.api("POST", "/admin/verify-otp", { body: { email: target.email, otp } })));
+  const tally = {};
+  for (const r of res) tally[`${r.status} ${r.body.code}`] = (tally[`${r.status} ${r.body.code}`] || 0) + 1;
+  const compared = (tally["400 INVALID_OTP"] || 0) + (res.filter((r) => r.status === 423 && r.body.message === "Account locked due to too many failed attempts").length) + (tally["200 VERIFICATION_COMPLETE"] || 0);
+  assert.ok(compared <= 3, `at most 3 guesses compared: ${JSON.stringify(tally)}`);
+  assert.ok(res[20].status !== 200 || (tally["400 INVALID_OTP"] || 0) <= 2, `the right code only counts within the limit: ${JSON.stringify(tally)}`);
+  let doc = await Admin().findById(target._id).lean();
+  if (res[20].status !== 200) {
+    assert.ok(doc.lockUntil && new Date(doc.lockUntil) > new Date(), "locked");
+    assert.equal(doc.otp.value, null, "the code died with the lock");
+    const late = await h.api("POST", "/admin/verify-otp", { body: { email: target.email, otp: "777777" } });
+    assert.equal(late.status, 423, "the right code is refused while locked");
+  }
+  // a right code, sent 10 times at once: exactly one sign-in
+  await arm("424242");
+  const same = await Promise.all(Array.from({ length: 10 }, () => h.api("POST", "/admin/verify-otp", { body: { email: target.email, otp: "424242" } })));
+  assert.equal(same.filter((r) => r.status === 200).length, 1, JSON.stringify(same.map((r) => r.status)));
+  doc = await Admin().findById(target._id).lean();
+  assert.equal(doc.otp.value, null);
+  assert.equal(doc.otpRetries, 0);
+  // expired code: 410 (was a crash when no code had ever been requested)
+  await Admin().updateOne({ _id: target._id }, { $unset: { otp: 1 } });
+  const none = await h.api("POST", "/admin/verify-otp", { body: { email: target.email, otp: "123456" } });
+  assert.equal(none.status, 410, JSON.stringify(none.body));
 });

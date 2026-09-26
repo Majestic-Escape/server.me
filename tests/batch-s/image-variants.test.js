@@ -538,7 +538,16 @@ test("lossless JPEG metadata strip: EXIF/GPS/XMP/IPTC/comments gone, pixels byte
   const clean = stripJpegMetadataLossless(tagged, 1);
   assert.ok(clean && clean.length < tagged.length);
   assert.equal(await hasMetadata(clean), false);
-  assert.ok(!clean.includes(Buffer.from("GPS")) && !clean.includes(Buffer.from("Canary")) && !clean.includes(Buffer.from("private note")));
+  // Metadata lives in the segments before the scan; the entropy-coded data
+  // after it is random-looking and may contain any 3 bytes (e.g. "GPS").
+  const headerOf = (buf) => {
+    let i = 2;
+    while (i + 4 <= buf.length && buf[i] === 0xff && buf[i + 1] !== 0xda) i += 2 + buf.readUInt16BE(i + 2);
+    return buf.subarray(0, i);
+  };
+  const head = headerOf(clean);
+  assert.ok(head.length > 100 && head.length < clean.length, "found the scan");
+  assert.ok(!head.includes(Buffer.from("GPS")) && !head.includes(Buffer.from("Canary")) && !head.includes(Buffer.from("private note")));
   const [a, b] = await Promise.all([sharp(tagged).raw().toBuffer(), sharp(clean).raw().toBuffer()]);
   assert.ok(a.equals(b), "decoded pixels are identical");
   const m = await sharp(clean).metadata();

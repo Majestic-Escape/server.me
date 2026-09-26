@@ -1,5 +1,7 @@
 // controllers/authController.js
+const mongoose = require("mongoose");
 const Admin = require("../models/Admin");
+const adminAudit = require("../services/adminAudit");
 const Configure = require("../models/Configure");
 const { generateOTP, sendAdminLoginOtp } = require("../utils/loginOtpUtils");
 const jwt = require("jsonwebtoken");
@@ -21,15 +23,17 @@ const createAdmin = async (req, res) => {
       dob,
       gender,
       preferences,
-    } = req.body;
+    } = req.body || {};
 
-    // Basic validation for required fields
-    if (!firstName || !email) {
+    // Basic validation for required fields. Strings only: an object here
+    // would reach the findOne filters below as a query operator.
+    const notString = (v) => v !== undefined && v !== null && typeof v !== "string";
+    if (!firstName || !email || [firstName, lastName, email, phoneNumber, countryCode, profilePicture, gender].some(notString)) {
       return res.status(400).json({
         requestType: "CREATE_ADMIN",
         success: false,
         code: "MISSING_FIELDS",
-        message: "First name and email are required",
+        message: "First name and email are required, and every field must be text",
         statusCode: 400,
         fields: { firstName, email },
       });
@@ -63,8 +67,11 @@ const createAdmin = async (req, res) => {
       }
     }
 
-    // Create new admin object
-    const newAdmin = new Admin({
+    // The admin and the audit row naming who added it are written in one
+    // transaction: an account without that record is exactly what the old
+    // open registration produced. Built as a plain object so a retried
+    // transaction inserts a fresh document.
+    const fields = {
       firstName,
       lastName: lastName || "", // Optional field with default empty string
       email,
@@ -89,18 +96,31 @@ const createAdmin = async (req, res) => {
           push: true,
         },
       }, // Use provided preferences or schema defaults
-    });
+    };
 
-    // Save the new admin to the database
-    const savedAdmin = await newAdmin.save();
+    let savedAdmin = null;
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        savedAdmin = null;
+        [savedAdmin] = await Admin.create([fields], { session });
+        await adminAudit.record(req, "admin.create", { targetType: "Admin", targetId: savedAdmin._id }, {}, { session });
+      });
+    } catch (err) {
+      if (err && (err.name === "ValidationError" || err.code === 11000)) throw err;
+      console.error("createAdmin: not recorded", err && (err.code || err.name));
+      return res.status(503).json({
+        requestType: "CREATE_ADMIN",
+        success: false,
+        code: "AUDIT_UNAVAILABLE",
+        message: "The admin could not be recorded. Nothing was saved — please try again.",
+        statusCode: 503,
+      });
+    } finally {
+      await session.endSession().catch(() => {});
+    }
 
-    // Generate JWT token (optional, remove if not needed)
-    const token = jwt.sign(
-      { userId: savedAdmin._id, firstName: savedAdmin.firstName },
-      process.env.JWT_SECRET,
-      { expiresIn: TOKEN_EXPIRATION }
-    );
-
+    // No token for the new account: it signs in with its own e-mail OTP.
     return res.status(201).json({
       requestType: "CREATE_ADMIN",
       success: true,
@@ -113,13 +133,21 @@ const createAdmin = async (req, res) => {
         email: savedAdmin.email,
         createdAt: savedAdmin.createdAt,
       },
-      token: {
-        token,
-        expiresIn: TOKEN_EXPIRATION,
-      },
     });
   } catch (error) {
-    console.error("Error in createAdmin:", error);
+    // Name/code only — a duplicate-key message carries the e-mail.
+    console.error("Error in createAdmin:", error && (error.code || error.name));
+
+    if (error && error.code === 11000) {
+      const phone = error.keyPattern && error.keyPattern.phoneNumber;
+      return res.status(409).json({
+        requestType: "CREATE_ADMIN",
+        success: false,
+        code: phone ? "PHONE_ALREADY_EXISTS" : "EMAIL_ALREADY_EXISTS",
+        message: phone ? "An admin with this phone number already exists" : "An admin with this email already exists",
+        statusCode: 409,
+      });
+    }
 
     // Handle specific Mongoose validation errors
     if (error.name === "ValidationError") {

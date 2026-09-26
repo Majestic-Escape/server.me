@@ -33,11 +33,19 @@ async function resolveActor(req) {
     actor = { kind: u.role === "admin" ? "admin" : "user", id: String(u._id), user: u };
   } else if (u.userId && mongoose.isValidObjectId(u.userId)) {
     const admin = await Admin.findById(u.userId).select("status role").lean();
-    if (admin && !(admin.status && admin.status.banned)) {
-      actor = { kind: "admin", id: String(admin._id), admin };
+    if (admin) {
+      // An Admin record acts as an admin only while it is not banned and has
+      // not been given a non-admin role (records from before the role field
+      // have none: admin by the schema's default). Deactivation is checked by
+      // requireAdmin (it covers both kinds of admin).
+      if (!(admin.status && admin.status.banned) && (!admin.role || admin.role === "admin")) actor = { kind: "admin", id: String(admin._id), admin };
     } else {
       const user = await User.findById(u.userId);
-      if (user && !(user.status && user.status.banned)) {
+      // Tokens of this shape for a User record — the user login of an
+      // admin-role account (admin: 1) and registration (no admin claim) —
+      // are revocable like every other user token: the token's tokenVersion
+      // (none = 0, registration) must match the account's.
+      if (user && !(user.status && user.status.banned) && (u.tokenVersion ?? 0) === (user.tokenVersion ?? 0)) {
         actor = { kind: user.role === "admin" ? "admin" : "user", id: String(user._id), user };
       }
     }
@@ -64,6 +72,10 @@ const requireAdmin = async (req, res, next) => {
   const actor = await resolveActor(req);
   if (!actor) return res.status(401).json({ success: false, code: "AUTH_REQUIRED", message: "Authentication required", statusCode: 401 });
   if (actor.kind !== "admin") return forbid(res, "Admin access required");
+  // A deactivated account keeps no admin rights, whatever token it still
+  // holds (sign-in already refuses it; this closes the tokens issued before).
+  const record = actor.admin || actor.user;
+  if (record && record.status && record.status.active === false) return forbid(res, "This admin account is deactivated");
   next();
 };
 

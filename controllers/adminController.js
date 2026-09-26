@@ -1,5 +1,23 @@
 // controllers/authController.js
 const crypto = require("crypto");
+
+// A new admin's id is derived from its e-mail: two registrations of the same
+// address at once collide on _id — always unique, no extra index needed —
+// and exactly one is created. (Existing admins keep their ids; the e-mail
+// pre-check covers them.)
+function adminIdFor(email) {
+  const hex = crypto.createHash("sha256").update(`admin-email:${String(email).trim().toLowerCase()}`).digest("hex").slice(0, 24);
+  return new (require("mongoose").Types.ObjectId)(hex);
+}
+// Sign-in by e-mail must be unambiguous: with two Admin records for one
+// address, a ban on one could be walked around through the other.
+async function adminByEmail(email) {
+  const found = await Admin.find({ email }).limit(2);
+  return { admin: found[0] || null, ambiguous: found.length > 1 };
+}
+function ambiguousAdmin(res, requestType) {
+  return res.status(409).json({ requestType, success: false, code: "ADMIN_AMBIGUOUS", message: "More than one admin account uses this e-mail. Sign-in is disabled for it until the owner resolves the duplicate.", statusCode: 409 });
+}
 const mongoose = require("mongoose");
 const Admin = require("../models/Admin");
 const adminAudit = require("../services/adminAudit");
@@ -73,6 +91,7 @@ const createAdmin = async (req, res) => {
     // open registration produced. Built as a plain object so a retried
     // transaction inserts a fresh document.
     const fields = {
+      _id: adminIdFor(email),
       firstName,
       lastName: lastName || "", // Optional field with default empty string
       email,
@@ -108,6 +127,10 @@ const createAdmin = async (req, res) => {
         await adminAudit.record(req, "admin.create", { targetType: "Admin", targetId: savedAdmin._id }, {}, { session });
       });
     } catch (err) {
+      if (err && err.code === 11000 && err.keyPattern && err.keyPattern._id) {
+        // the same address registered at the same moment: the other one won
+        return res.status(409).json({ requestType: "CREATE_ADMIN", success: false, code: "EMAIL_ALREADY_EXISTS", message: "An admin with this email already exists", statusCode: 409, fields: { email } });
+      }
       if (err && (err.name === "ValidationError" || err.code === 11000)) throw err;
       console.error("createAdmin: not recorded", err && (err.code || err.name));
       return res.status(503).json({
@@ -187,7 +210,8 @@ const requestOTP = async (req, res) => {
   try {
 
     // Check if admin exists in the system
-    const existingAdmin = await Admin.findOne({ email });
+    const { admin: existingAdmin, ambiguous } = await adminByEmail(email);
+    if (ambiguous) return ambiguousAdmin(res, "LOGIN_OTP_REQUEST");
 
     if (!existingAdmin) {
       return res.status(403).json({
@@ -276,7 +300,8 @@ const verifyOTP = async (req, res) => {
     }
 
     // Find admin by email
-    const admin = await Admin.findOne({ email });
+    const { admin, ambiguous } = await adminByEmail(email);
+    if (ambiguous) return ambiguousAdmin(res, "LOGIN_OTP_VERIFICATION");
 
     if (!admin) {
       return res.status(404).json({

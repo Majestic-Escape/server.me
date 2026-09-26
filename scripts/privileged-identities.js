@@ -31,7 +31,7 @@ const name = (d) => [d.firstName, d.lastName].filter(Boolean).join(" ");
 
 async function report({ log = console.log, json = false } = {}) {
   const [admins, roleAdmins, created] = await Promise.all([
-    Admin.find({}).select("firstName lastName email isVerified status createdAt").sort({ createdAt: 1 }).lean(),
+    Admin.find({}).select("firstName lastName email isVerified status role createdAt").sort({ createdAt: 1 }).lean(),
     User.find({ role: "admin" }).select("firstName lastName email status createdAt").sort({ createdAt: 1 }).lean(),
     AdminAuditLog.find({ action: "admin.create" }).select("actorId targetId createdAt").lean(),
   ]);
@@ -44,7 +44,8 @@ async function report({ log = console.log, json = false } = {}) {
       email: a.email || "",
       created: day(a.createdAt),
       verified: a.isVerified ? "yes" : "no",
-      banned: a.status && a.status.banned ? "BANNED" : "",
+      // no admin rights: banned, deactivated, or a non-admin role (requireAdmin)
+      banned: a.status && a.status.banned ? "BANNED" : a.status && a.status.active === false ? "DEACTIVATED" : a.role && a.role !== "admin" ? `ROLE ${a.role}` : "",
       addedBy: addedBy.get(String(a._id)) || "(no audit record)",
     })),
     ...roleAdmins.map((u) => ({
@@ -54,7 +55,7 @@ async function report({ log = console.log, json = false } = {}) {
       email: u.email || "",
       created: day(u.createdAt),
       verified: "",
-      banned: u.status && u.status.banned ? "BANNED" : "",
+      banned: u.status && u.status.banned ? "BANNED" : u.status && u.status.active === false ? "DEACTIVATED" : "",
       addedBy: "(role set in the database)",
     })),
   ];
@@ -63,6 +64,13 @@ async function report({ log = console.log, json = false } = {}) {
     return rows;
   }
   log(`[privileged] ${admins.length} Admin record(s), ${roleAdmins.length} user(s) with role "admin"`);
+  // Two Admin records with one e-mail: sign-in refuses that address until one is removed or renamed.
+  const byEmail = new Map();
+  for (const a of admins) byEmail.set((a.email || "").toLowerCase(), [...(byEmail.get((a.email || "").toLowerCase()) || []), String(a._id)]);
+  const dupes = [...byEmail.entries()].filter(([e, ids]) => e && ids.length > 1);
+  for (const [e, ids] of dupes) log(`[privileged] DUPLICATE admin e-mail ${e}: ${ids.join(", ")} — sign-in is refused for it until one record is removed`);
+  // Deactivated or non-admin-role Admin records have no admin rights (requireAdmin); listed so they are not mistaken for live admins.
+  for (const a of admins) if ((a.status && a.status.active === false) || (a.role && a.role !== "admin")) log(`[privileged] Admin ${a._id} has no admin rights (${a.status && a.status.active === false ? "deactivated" : "role " + a.role})`);
   if (rows.length) console.table(rows);
   const active = rows.filter((r) => !r.banned);
   log(`[privileged] ${active.length} can act as admin right now. To ban one you do not recognise:`);

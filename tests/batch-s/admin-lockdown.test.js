@@ -164,3 +164,28 @@ test("privileged-identities report lists every admin-capable account, audit prov
   await report({ log: (l) => table.push(l) });
   assert.ok(table.some((l) => /can act as admin right now/.test(l)));
 });
+
+test("login: operator objects are refused before any lookup (no code mailed, nobody's attempts used); a lock that ran out gives fresh attempts", async () => {
+  const target = await h.makeAdmin({ isVerified: true });
+  const mailed = h.sentEmails().length;
+  for (const email of [{ $regex: "^" }, { $ne: null }, ["x"], 42, ""]) {
+    const r = await h.api("POST", "/admin/request-otp", { body: { email } });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(r.body.code, "INVALID_FIELDS");
+  }
+  assert.equal(h.sentEmails().length, mailed, "no code mailed to anyone");
+  assert.equal((await h.api("POST", "/admin/verify-otp", { body: { email: { $regex: "^" }, otp: "000000" } })).status, 400);
+  assert.equal((await h.api("POST", "/admin/verify-otp", { body: { email: target.email, otp: { $ne: "x" } } })).status, 400);
+  assert.equal((await Admin().findById(target._id).lean()).otpRetries || 0, 0, "nobody's attempts were used");
+  // a lock that has run out: a fresh set of attempts, not an instant re-lock
+  await Admin().updateOne({ _id: target._id }, { $set: { otpRetries: 3, lockUntil: new Date(Date.now() - 1000), otp: { value: "123456", expiry: new Date(Date.now() + 60000) } } });
+  const wrong = await h.api("POST", "/admin/verify-otp", { body: { email: target.email, otp: "654321" } });
+  assert.equal(wrong.status, 400, JSON.stringify(wrong.body));
+  assert.equal(wrong.body.code, "INVALID_OTP");
+  assert.equal(wrong.body.otpAttempts.remainingAttempts, 2);
+  const ok = await h.api("POST", "/admin/verify-otp", { body: { email: target.email, otp: "123456" } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  // codes come from crypto: always six digits
+  const { generateOTP } = require("../../utils/loginOtpUtils");
+  for (let i = 0; i < 200; i += 1) assert.match(generateOTP(), /^[1-9]\d{5}$/);
+});

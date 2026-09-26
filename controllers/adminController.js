@@ -172,9 +172,17 @@ const createAdmin = async (req, res) => {
   }
 };
 
+// The login endpoints are public: their inputs must be plain strings, or a
+// JSON object like {"$regex": "^a"} becomes a query operator — enumerating
+// admins, mailing them OTPs and locking their accounts.
+const isEmailInput = (v) => typeof v === "string" && v.length > 0 && v.length <= 254;
+const badLoginInput = (res, requestType) =>
+  res.status(400).json({ requestType, success: false, code: "INVALID_FIELDS", message: "Enter your admin email and the 6-digit code", statusCode: 400 });
+
 const requestOTP = async (req, res) => {
   // Read outside the try: the catch echoes `email` (see loginController).
   const { email } = req.body || {};
+  if (!isEmailInput(email)) return badLoginInput(res, "LOGIN_OTP_REQUEST");
   try {
 
     // Check if admin exists in the system
@@ -251,7 +259,8 @@ const requestOTP = async (req, res) => {
 
 const verifyOTP = async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const { email, otp } = req.body || {};
+    if (!isEmailInput(email) || (otp !== undefined && otp !== null && otp !== "" && typeof otp !== "string")) return badLoginInput(res, "LOGIN_OTP_VERIFICATION");
 
     // Validate OTP presence
     if (!otp) {
@@ -277,6 +286,14 @@ const verifyOTP = async (req, res) => {
         message: "Admin not found",
         statusCode: 404,
       });
+    }
+
+    // A lock that has run out gives a fresh set of attempts (otherwise the
+    // counter stays at the limit and one wrong guess every few minutes keeps
+    // the admin locked out for good).
+    if (admin.lockUntil && !admin.isLocked() && admin.otpRetries >= MAX_RETRIES) {
+      admin.otpRetries = 0;
+      admin.lockUntil = undefined;
     }
 
     // Check if account is locked

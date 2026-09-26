@@ -9,12 +9,19 @@ const {
   getServiceFees,
 } = require("../controllers/adminController");
 const authMiddleware = require("../middleware/authMiddleware");
+const { requireAdmin } = require("../middleware/authz");
+
+// Registration used to be open: anyone could create a verified Admin and got
+// a 7-day admin token back. Only an existing admin may add one now (audited,
+// no token for the new account — it signs in with its own e-mail OTP), and
+// the fee configuration is admin-only like every other admin write.
+const admin = [authMiddleware, requireAdmin];
 
 router.post("/request-otp", requestOTP);
 router.post("/verify-otp", verifyOTP);
-router.post("/register", createAdmin);
-router.post("/service", authMiddleware, serviceFees);
-router.get("/service", authMiddleware, getServiceFees);
+router.post("/register", ...admin, createAdmin);
+router.post("/service", ...admin, serviceFees);
+router.get("/service", ...admin, getServiceFees);
 
 // router.get("/", getAllAdmins);
 // router.post("/", createAdmin);

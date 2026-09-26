@@ -182,6 +182,11 @@ function heicError() {
 function unsupportedError() {
   return new ImageRejected("UNSUPPORTED_FORMAT", "Use a JPEG, PNG, WebP or AVIF image", 415);
 }
+// An AVIF image sequence (brand "avis"): this sharp build can't decode one at
+// all, so it would otherwise be refused as "not an AVIF".
+function animatedAvifError() {
+  return new ImageRejected("ANIMATED_AVIF_NOT_SUPPORTED", "Animated AVIF files can't be used — export the banner as a still image (JPEG, PNG, WebP or a still AVIF)", 415);
+}
 function pixelsError() {
   return new ImageRejected("IMAGE_TOO_LARGE", "The image has too many pixels (at most 25 megapixels)", 413);
 }
@@ -215,6 +220,7 @@ async function identify(buffer) {
     meta = await open(buffer).metadata();
   } catch (err) {
     if (/pixel limit/i.test(String(err && err.message))) throw pixelsError();
+    if (brands && brands.includes("avis")) throw animatedAvifError();
     throw unsupportedError();
   }
   if (meta.format === "heif" && meta.compression !== "av1") throw heicError();

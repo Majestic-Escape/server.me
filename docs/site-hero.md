@@ -76,7 +76,7 @@ Before verification, a desktop draft took about 11 s. Durations on Vercel are un
 | `POST /site/admin/hero/restore-default` | 401 | 403 | 200 | `{opToken, expectedVersion}`; drafts are kept |
 | `GET /site/cron/hero-sweep` | 401 | 401 | 401 | Vercel Cron (`Bearer CRON_SECRET`), daily 21:15 UTC |
 
-Error codes: `HERO_VERSION_CONFLICT`, `HERO_DRAFT_CHANGED`, `HERO_DRAFT_EXPIRED`, `HERO_WRONG_ENVIRONMENT`, `HERO_ACK_REQUIRED` (409), `HERO_BUSY` (409, `retryAfter`), `HERO_BOTH_SLOTS_REQUIRED`, `HERO_NO_SLOTS`, `INVALID_ALT`, `INVALID_FOCAL`, `INVALID_FIELDS` (400), `HERO_RATIO_CONFIRM`, `HERO_TOO_SMALL`, `IMAGE_NOT_ALLOWED`, `HERO_QUALITY_LIMIT`, `HERO_BYTE_BUDGET` (422, strict policy), `HEIC_NOT_SUPPORTED`, `UNSUPPORTED_FORMAT`, `UNSUPPORTED_FILE_TYPE` (415), `FILE_TOO_LARGE`, `IMAGE_TOO_LARGE` (413), `OP_TOKEN_*` (400/403), `OP_EXPIRED` (410), `OP_ID_REUSED` (422), `HERO_TOO_MANY_OPS` (429), `STORAGE_ERROR` (502), `HERO_TIMEOUT`, `HERO_OUTCOME_UNKNOWN`, `AUDIT_UNAVAILABLE`, `HERO_CLEANUP_BACKLOG` (503).
+Error codes: `HERO_VERSION_CONFLICT`, `HERO_DRAFT_CHANGED`, `HERO_DRAFT_EXPIRED`, `HERO_WRONG_ENVIRONMENT`, `HERO_ACK_REQUIRED` (409), `HERO_BUSY` (409, `retryAfter`), `HERO_BOTH_SLOTS_REQUIRED`, `HERO_NO_SLOTS`, `INVALID_ALT`, `INVALID_FOCAL`, `INVALID_FIELDS` (400), `HERO_RATIO_CONFIRM`, `HERO_TOO_SMALL`, `IMAGE_NOT_ALLOWED`, `HERO_QUALITY_LIMIT`, `HERO_BYTE_BUDGET` (422, strict policy), `HEIC_NOT_SUPPORTED`, `ANIMATED_AVIF_NOT_SUPPORTED`, `UNSUPPORTED_FORMAT`, `UNSUPPORTED_FILE_TYPE` (415), `FILE_TOO_LARGE`, `IMAGE_TOO_LARGE` (413), `OP_TOKEN_*` (400/403), `OP_EXPIRED` (410), `OP_ID_REUSED` (422), `HERO_TOO_MANY_OPS` (429), `STORAGE_ERROR` (502), `HERO_TIMEOUT`, `HERO_OUTCOME_UNKNOWN`, `AUDIT_UNAVAILABLE`, `HERO_CLEANUP_BACKLOG` (503).
 
 ## Data
 
@@ -118,6 +118,7 @@ Backward compatible: the public read returns nulls until something is published,
 
 - Tablets (768–1023 px) show the desktop art.
 - QR detection has a size floor relative to the banner (the scan runs on a ≤ 1200 px copy): on a 1920 px banner codes of 100 px and up are caught; on a 3840 px banner 100–120 px codes pass and 160 px and up are caught. A decode with an empty payload is not a QR code (jsQR occasionally reads an empty version-1 symbol out of dithered noise — 3 of 40 noisy animated GIFs in the audit); listings keep the original rule. Admins are trusted — it is a consistency rule.
+- Animated GIF and WebP uploads use their first frame (with a notice). Animated AVIF (an image sequence, brand `avis`) cannot be decoded by this sharp build at all, so it is refused with `ANIMATED_AVIF_NOT_SUPPORTED` and asked for a still export.
 - Drafts are public-read under unguessable keys.
 - The listing pipeline still encodes variants from a re-encoded master (two generations); the hero's single-generation approach could be applied there.
 - Not measured on Vercel yet: a 3840 px draft's duration and memory (targets < 60 s, < 1 GB); the `/_hero` edge cache (expect `x-vercel-cache: HIT` after the first request per region).

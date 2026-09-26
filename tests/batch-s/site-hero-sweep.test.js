@@ -57,6 +57,10 @@ test("cron route: only Vercel Cron's secret runs it", async () => {
 
 test("one runner per window: concurrent sweeps → one runs, the rest skip", async () => {
   await publishPair();
+  // the publish starts a sweep in the background: let it claim its window
+  // first, or it could take the one this test hands out
+  for (let i = 0; i < 200 && !((await heroDoc()) || {}).lastSweepAt; i += 1) await h.sleep(25);
+  await h.sleep(300);
   await SiteSetting().collection.updateOne({ _id: "home_hero" }, { $set: { lastSweepAt: null } });
   const results = await Promise.all([sweeper().sweep(), sweeper().sweep(), sweeper().sweep()]);
   assert.equal(results.filter((r) => r.skipped === "recent").length, 2, JSON.stringify(results));

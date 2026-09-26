@@ -23,6 +23,11 @@ const PHOTO = "https://majestic-escape-host-properties.blr1.cdn.digitaloceanspac
 
 async function main() {
   process.env.E2E_PORT = process.env.E2E_PORT || "5005";
+  // Real Spaces (the banner QA run) only ever under a QA prefix: never the
+  // production site/hero/ namespace, and the run's objects are removable by prefix.
+  if (process.env.E2E_REAL_SPACES === "1" && !/^_qa\/site\/hero\/[a-z0-9-]{1,40}\/$/.test(process.env.SITE_HERO_PREFIX || "")) {
+    throw new Error("E2E_REAL_SPACES=1 needs SITE_HERO_PREFIX=_qa/site/hero/<run>/");
+  }
   await h.start();
   // Canary values (contact lock-down): the counterpart's last name, email and
   // phone are searched for by VALUE in browser-side responses, DOM and storage.

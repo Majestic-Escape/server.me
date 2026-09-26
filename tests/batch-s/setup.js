@@ -10,6 +10,13 @@ const mongoose = require("mongoose");
 let mongod;
 let started;
 
+// E2E_REAL_SPACES=1 (the homepage-banner QA run only): real DigitalOcean
+// Spaces instead of the in-memory fake — the DO_SPACES_* / REGION values come
+// from the caller's environment and nothing else changes (the database is
+// still the in-memory one). tests/batch-s/e2e-server.js refuses this mode
+// unless SITE_HERO_PREFIX is a _qa/site/hero/<run>/ prefix.
+const REAL_SPACES = process.env.E2E_REAL_SPACES === "1";
+
 async function start() {
   if (started) return started;
   mongod = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: "wiredTiger" } });
@@ -19,7 +26,7 @@ async function start() {
     PORT: process.env.E2E_PORT || "0",
     JWT_SECRET: "test-jwt-secret",
     RAZORPAY_MOCK: "1",
-    SPACES_MOCK: "1",
+    SPACES_MOCK: REAL_SPACES ? "0" : "1",
     KYC_PROVIDER_MOCK: "1",
     // Batch P: catalogue notifications are recorded, not sent; the fresh
     // secret exists so the authenticated bypass can be exercised.
@@ -41,11 +48,15 @@ async function start() {
     OPS_FLAG_CACHE_MS: "0",
     NEXT_PUBLIC_ENV: "test",
     // Non-secret placeholders the app constructs clients from at import time.
-    DO_SPACES_ENDPOINT: "https://blr1.digitaloceanspaces.com",
-    DO_SPACES_KEY: "test",
-    DO_SPACES_SECRET: "test",
-    DO_SPACES_BUCKET: "test-bucket",
-    REGION: "blr1",
+    ...(REAL_SPACES
+      ? {}
+      : {
+          DO_SPACES_ENDPOINT: "https://blr1.digitaloceanspaces.com",
+          DO_SPACES_KEY: "test",
+          DO_SPACES_SECRET: "test",
+          DO_SPACES_BUCKET: "test-bucket",
+          REGION: "blr1",
+        }),
     BREVO_API_KEY: "disabled",
     // a second e2e stack (other ports) passes its own site/admin origins
     ALLOWED_ORIGINS: process.env.E2E_ALLOWED_ORIGINS || "http://localhost:3000,http://localhost:3001",

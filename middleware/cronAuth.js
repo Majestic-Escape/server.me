@@ -7,10 +7,10 @@ module.exports = function cronAuth(req, res, next) {
   const secret = process.env.CRON_SECRET;
   const header = req.headers["authorization"] || "";
   const presented = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const ok =
-    !!secret &&
-    presented.length === secret.length &&
-    crypto.timingSafeEqual(Buffer.from(presented), Buffer.from(secret));
+  // Digests have a fixed length, so neither the comparison nor an exception
+  // (a multi-byte header) says anything about the secret's length.
+  const digest = (v) => crypto.createHash("sha256").update(String(v), "utf8").digest();
+  const ok = !!secret && !!presented && crypto.timingSafeEqual(digest(presented), digest(secret));
   if (!ok) {
     return res.status(401).json({ success: false, code: "CRON_UNAUTHORIZED", message: "Unauthorized", statusCode: 401 });
   }

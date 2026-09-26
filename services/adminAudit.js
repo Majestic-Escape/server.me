@@ -4,14 +4,20 @@
 const AdminAuditLog = require("../models/AdminAuditLog");
 const authz = require("../middleware/authz");
 
-async function record(req, action, { targetType, targetId }, details = {}, { session } = {}) {
+async function record(req, action, { targetType, targetId, targetKey }, details = {}, { session } = {}) {
   const actor = await authz.resolveActor(req);
   if (!actor || actor.kind !== "admin") throw new Error("audit: admin actor required");
   const rows = await AdminAuditLog.create(
-    [{ actorId: actor.id, actorKind: "admin", action, targetType, targetId, details }],
+    [{ actorId: actor.id, actorKind: "admin", action, targetType, targetId, targetKey, details }],
     session ? { session } : {},
   );
   return rows[0];
 }
 
-module.exports = { record };
+// Scheduled maintenance (no person acted): actorKind "system", no actorId.
+async function recordSystem(action, { targetType, targetId, targetKey }, details = {}, { session } = {}) {
+  const rows = await AdminAuditLog.create([{ actorKind: "system", action, targetType, targetId, targetKey, details }], session ? { session } : {});
+  return rows[0];
+}
+
+module.exports = { record, recordSystem };

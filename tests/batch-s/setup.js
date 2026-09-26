@@ -10,8 +10,26 @@ const mongoose = require("mongoose");
 let mongod;
 let started;
 
+// E2E_REAL_SPACES=1 (the homepage-banner QA run only): real DigitalOcean
+// Spaces instead of the in-memory fake — the DO_SPACES_* / REGION values come
+// from the caller's environment and nothing else changes (the database is
+// still the in-memory one). tests/batch-s/e2e-server.js refuses this mode
+// unless SITE_HERO_PREFIX is a _qa/site/hero/<run>/ prefix.
+const REAL_SPACES = process.env.E2E_REAL_SPACES === "1";
+
+// Real credentials never run as production, never outside a QA banner
+// prefix, and every write is confined to _qa/ at the storage layer
+// (storage.writeAllowed) — for ANY test file or server that uses this
+// harness, not only the e2e server.
+function assertRealSpacesSafe() {
+  if (!REAL_SPACES) return;
+  if (!/^_qa\/site\/hero\/[a-z0-9-]{1,40}\/$/.test(process.env.SITE_HERO_PREFIX || "")) throw new Error("E2E_REAL_SPACES=1 needs SITE_HERO_PREFIX=_qa/site/hero/<run>/");
+  if (process.env.SITE_HERO_PRODUCTION === "1" || process.env.VERCEL_ENV === "production" || process.env.VERCEL) throw new Error("E2E_REAL_SPACES=1 must not run as production (SITE_HERO_PRODUCTION / VERCEL_ENV / VERCEL)");
+}
+
 async function start() {
   if (started) return started;
+  assertRealSpacesSafe();
   mongod = await MongoMemoryReplSet.create({ replSet: { count: 1, storageEngine: "wiredTiger" } });
   const uri = mongod.getUri("batch_s_test");
   Object.assign(process.env, {
@@ -19,7 +37,7 @@ async function start() {
     PORT: process.env.E2E_PORT || "0",
     JWT_SECRET: "test-jwt-secret",
     RAZORPAY_MOCK: "1",
-    SPACES_MOCK: "1",
+    SPACES_MOCK: REAL_SPACES ? "0" : "1",
     KYC_PROVIDER_MOCK: "1",
     // Batch P: catalogue notifications are recorded, not sent; the fresh
     // secret exists so the authenticated bypass can be exercised.
@@ -41,13 +59,18 @@ async function start() {
     OPS_FLAG_CACHE_MS: "0",
     NEXT_PUBLIC_ENV: "test",
     // Non-secret placeholders the app constructs clients from at import time.
-    DO_SPACES_ENDPOINT: "https://blr1.digitaloceanspaces.com",
-    DO_SPACES_KEY: "test",
-    DO_SPACES_SECRET: "test",
-    DO_SPACES_BUCKET: "test-bucket",
-    REGION: "blr1",
+    ...(REAL_SPACES
+      ? { SPACES_WRITE_PREFIX: "_qa/" }
+      : {
+          DO_SPACES_ENDPOINT: "https://blr1.digitaloceanspaces.com",
+          DO_SPACES_KEY: "test",
+          DO_SPACES_SECRET: "test",
+          DO_SPACES_BUCKET: "test-bucket",
+          REGION: "blr1",
+        }),
     BREVO_API_KEY: "disabled",
-    ALLOWED_ORIGINS: "http://localhost:3000,http://localhost:3001",
+    // a second e2e stack (other ports) passes its own site/admin origins
+    ALLOWED_ORIGINS: process.env.E2E_ALLOWED_ORIGINS || "http://localhost:3000,http://localhost:3001",
     PUBLIC_HOSTNAME: "http://127.0.0.1",
     MAJESTIC_COMMISSION: "12",
     HOST_COMMISSION_OFFER: "0",

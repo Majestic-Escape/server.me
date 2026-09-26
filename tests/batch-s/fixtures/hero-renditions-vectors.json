@@ -1,0 +1,403 @@
+{
+ "about": "Homepage hero contract (server services/siteHeroImage.js). The server test, the site's scripts/check-hero.mjs and the admin's check script must reproduce every vector. Renditions run from renditionMin to renditionCap (the master stops at cap).",
+ "slots": {
+  "desktop": {
+   "ratio": 2.5945945945945947,
+   "cap": 3840,
+   "min": [
+    1920,
+    740
+   ],
+   "renditionCap": 2560,
+   "renditionMin": 768
+  },
+  "mobile": {
+   "ratio": 0.7361111111111112,
+   "cap": 1600,
+   "min": [
+    530,
+    720
+   ],
+   "renditionCap": 1600,
+   "renditionMin": 0
+  }
+ },
+ "ratioTolerance": 0.01,
+ "ratioConfirm": 0.35,
+ "renditionSteps": [
+  640,
+  960,
+  1280,
+  1600,
+  1920,
+  2560,
+  3840
+ ],
+ "variantWidths": [
+  160,
+  320,
+  640,
+  960,
+  1280,
+  1600,
+  1920,
+  2560,
+  3840
+ ],
+ "vectors": [
+  {
+   "slot": "mobile",
+   "masterWidth": 1,
+   "widths": [
+    1
+   ],
+   "keyWidths": [
+    160
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 100,
+   "widths": [
+    100
+   ],
+   "keyWidths": [
+    160
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 530,
+   "widths": [
+    530
+   ],
+   "keyWidths": [
+    640
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 639,
+   "widths": [
+    639
+   ],
+   "keyWidths": [
+    640
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 640,
+   "widths": [
+    640
+   ],
+   "keyWidths": [
+    640
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 641,
+   "widths": [
+    640,
+    641
+   ],
+   "keyWidths": [
+    640,
+    960
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 959,
+   "widths": [
+    640,
+    959
+   ],
+   "keyWidths": [
+    640,
+    960
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 960,
+   "widths": [
+    640,
+    960
+   ],
+   "keyWidths": [
+    640,
+    960
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 1060,
+   "widths": [
+    640,
+    960,
+    1060
+   ],
+   "keyWidths": [
+    640,
+    960,
+    1280
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 1280,
+   "widths": [
+    640,
+    960,
+    1280
+   ],
+   "keyWidths": [
+    640,
+    960,
+    1280
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 1590,
+   "widths": [
+    640,
+    960,
+    1280,
+    1590
+   ],
+   "keyWidths": [
+    640,
+    960,
+    1280,
+    1600
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 1600,
+   "widths": [
+    640,
+    960,
+    1280,
+    1600
+   ],
+   "keyWidths": [
+    640,
+    960,
+    1280,
+    1600
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 1601,
+   "widths": [
+    640,
+    960,
+    1280,
+    1600
+   ],
+   "keyWidths": [
+    640,
+    960,
+    1280,
+    1600
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 2000,
+   "widths": [
+    640,
+    960,
+    1280,
+    1600
+   ],
+   "keyWidths": [
+    640,
+    960,
+    1280,
+    1600
+   ]
+  },
+  {
+   "slot": "mobile",
+   "masterWidth": 4000,
+   "widths": [
+    640,
+    960,
+    1280,
+    1600
+   ],
+   "keyWidths": [
+    640,
+    960,
+    1280,
+    1600
+   ]
+  },
+  {
+   "slot": "desktop",
+   "masterWidth": 1920,
+   "widths": [
+    960,
+    1280,
+    1600,
+    1920
+   ],
+   "keyWidths": [
+    960,
+    1280,
+    1600,
+    1920
+   ]
+  },
+  {
+   "slot": "desktop",
+   "masterWidth": 1937,
+   "widths": [
+    960,
+    1280,
+    1600,
+    1920,
+    1937
+   ],
+   "keyWidths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ]
+  },
+  {
+   "slot": "desktop",
+   "masterWidth": 2560,
+   "widths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ],
+   "keyWidths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ]
+  },
+  {
+   "slot": "desktop",
+   "masterWidth": 2805,
+   "widths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ],
+   "keyWidths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ]
+  },
+  {
+   "slot": "desktop",
+   "masterWidth": 3000,
+   "widths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ],
+   "keyWidths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ]
+  },
+  {
+   "slot": "desktop",
+   "masterWidth": 3839,
+   "widths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ],
+   "keyWidths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ]
+  },
+  {
+   "slot": "desktop",
+   "masterWidth": 3840,
+   "widths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ],
+   "keyWidths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ]
+  },
+  {
+   "slot": "desktop",
+   "masterWidth": 3841,
+   "widths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ],
+   "keyWidths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ]
+  },
+  {
+   "slot": "desktop",
+   "masterWidth": 5000,
+   "widths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ],
+   "keyWidths": [
+    960,
+    1280,
+    1600,
+    1920,
+    2560
+   ]
+  }
+ ]
+}

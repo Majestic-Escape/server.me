@@ -1,22 +1,31 @@
 // Eventual cleanup of the homepage banner's objects (docs/site-hero.md).
 //
-// Idempotent and safe to run at any time, from any instance:
+// It deletes ONLY what this database recorded as its own and no longer needs:
+//  - `retired`: live art that was replaced or restored away, and drafts that
+//    were replaced, discarded or expired — each recorded in the very update
+//    that let go of it, kept 24 h (cached pages and open tabs may still show
+//    it), then deleted;
+//  - `pending`: an image job's uploads, recorded before the first byte is
+//    stored and cleared when the draft is installed — what is left belongs
+//    to a job that crashed, timed out or failed, and is deleted a day later.
+// An object that no record names is never deleted, however old: it may belong
+// to another environment sharing the bucket (they use separate prefixes too —
+// siteHero.keyPrefix) or be something a person put there.
+//
+// Safety:
 //  - one runner per window: a compare-and-set on lastSweepAt;
-//  - expired drafts (7 days) are removed from the document first, each by a
-//    compare-and-set on its opId (a publish of the same draft and the expiry
-//    cannot both win) and a system audit row;
-//  - then the prefix is listed and the document re-read from the primary.
-//    Referenced = the live pair, drafts that have not expired, and retired
-//    entries younger than 24 h (cached pages and open tabs may still show
-//    them). An object is deleted only when it is unreferenced AND either
-//    belongs to a retired entry older than 24 h or was uploaded more than
-//    24 h ago (a crash between upload and commit, an abandoned or replaced
-//    draft, a job that lost its lease);
-//  - a retired record is pulled only after a fresh listing shows none of its
-//    objects left; a failed delete or listing keeps it for the next run.
+//  - expired drafts (7 days) leave the document by a compare-and-set on their
+//    opId and are retired in the same update (a publish of the same draft and
+//    the expiry cannot both win), with a system audit row;
+//  - whatever the document still points at — the live pair and every draft —
+//    is never deleted, whatever the records say; a live or draft URL that
+//    does not parse to a key stops the run before anything is deleted;
+//  - only keys under this environment's prefix are ever touched;
+//  - a record is pulled only after a fresh listing shows none of its objects
+//    left; a failed delete or listing keeps it for the next run.
 // Eligible objects are deleted by a later successful run: with the daily
 // cron (Hobby: once a day, ±59 min) that can be more than a day after they
-// became eligible. Nothing here can make a referenced object disappear.
+// became eligible.
 const SiteSetting = require("../models/SiteSetting");
 const storage = require("./storage");
 const adminAudit = require("./adminAudit");
@@ -24,6 +33,7 @@ const mongoose = require("mongoose");
 
 const GRACE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_WINDOW_MS = 20 * 60 * 60 * 1000;
+const SLOTS = ["desktop", "mobile"];
 const coll = () => SiteSetting.collection;
 const docOf = (res) => (res && Object.prototype.hasOwnProperty.call(res, "value") && Object.prototype.hasOwnProperty.call(res, "ok") ? res.value : res);
 
@@ -34,13 +44,16 @@ function hero() {
 async function expireDrafts(now, log) {
   const doc = await hero().readDoc();
   let expired = 0;
-  for (const slot of ["desktop", "mobile"]) {
+  for (const slot of SLOTS) {
     const d = doc && doc.draft && doc.draft[slot];
     if (!d || !d.expiresAt || new Date(d.expiresAt).getTime() > now.getTime()) continue;
+    const key = storage.keyFromUrl(d.url);
+    const update = { $set: { [`draft.${slot}`]: null } };
+    if (key) update.$push = { retired: { masterKeys: [key], retiredAt: now } };
     const session = await mongoose.startSession();
     try {
       await session.withTransaction(async () => {
-        const res = await coll().updateOne({ _id: hero().DOC_ID, [`draft.${slot}.opId`]: d.opId, [`draft.${slot}.expiresAt`]: { $lte: now } }, { $set: { [`draft.${slot}`]: null } }, { session });
+        const res = await coll().updateOne({ _id: hero().DOC_ID, [`draft.${slot}.opId`]: d.opId, [`draft.${slot}.expiresAt`]: { $lte: now } }, update, { session });
         if (res.matchedCount !== 1) return;
         await adminAudit.recordSystem("site.hero.draft_expire", { targetType: "SiteSetting", targetKey: hero().DOC_ID }, { slot, opId: d.opId }, { session });
         expired += 1;
@@ -68,11 +81,39 @@ async function sweep({ now = new Date(), window = DEFAULT_WINDOW_MS, dryRun = fa
     );
     if (!docOf(claim)) return { skipped: "recent" };
   }
-  const summary = { dryRun, expiredDrafts: 0, listed: 0, candidates: 0, deleted: 0, failed: 0, retiredPulled: 0, retiredKept: 0 };
+  const summary = { dryRun, expiredDrafts: 0, records: 0, listed: 0, candidates: 0, deleted: 0, failed: 0, retiredPulled: 0, pendingPulled: 0, kept: 0, unrecorded: 0 };
   if (!dryRun) summary.expiredDrafts = await expireDrafts(now, log);
 
   const prefix = hero().keyPrefix();
   const doc = await hero().readDoc();
+
+  // What the document points at is off limits. A reference that does not
+  // parse means something is wrong with this environment: delete nothing.
+  const referenced = new Set();
+  for (const s of SLOTS) {
+    for (const a of [doc[s], doc.draft && doc.draft[s]]) {
+      if (!a) continue;
+      const k = storage.keyFromUrl(a.url);
+      if (!k) {
+        log(`[site-hero sweep] a ${s} reference does not parse to a key — nothing deleted`);
+        return { ...summary, error: "unparseable-reference" };
+      }
+      referenced.add(k);
+    }
+  }
+
+  // Records past their grace period, and which of their keys may go.
+  const graceStart = now.getTime() - GRACE_MS;
+  const due = [];
+  for (const r of doc.retired || []) if (new Date(r.retiredAt).getTime() < graceStart) due.push({ kind: "retired", record: r, keys: r.masterKeys || [] });
+  for (const p of doc.pending || []) if (new Date(p.at).getTime() < graceStart) due.push({ kind: "pending", record: p, keys: [p.masterKey] });
+  summary.records = due.length;
+  const deletable = (k) => typeof k === "string" && k.startsWith(prefix) && !referenced.has(k);
+  const masters = new Set(due.flatMap((d) => d.keys).filter(deletable));
+  const recorded = new Set([...(doc.retired || []).flatMap((r) => r.masterKeys || []), ...(doc.pending || []).map((p) => p.masterKey)]);
+
+  // One listing a day, also when nothing is due: it reports objects nobody
+  // has a record of (left alone — but worth knowing about).
   let objects;
   try {
     objects = await storage.listKeys(prefix);
@@ -81,32 +122,12 @@ async function sweep({ now = new Date(), window = DEFAULT_WINDOW_MS, dryRun = fa
     return { ...summary, error: "list" };
   }
   summary.listed = objects.length;
-  const graceStart = now.getTime() - GRACE_MS;
-  const referenced = new Set();
-  const refUrl = (url) => {
-    const k = storage.keyFromUrl(url);
-    if (k) referenced.add(k);
-  };
-  for (const s of ["desktop", "mobile"]) {
-    if (doc[s]) refUrl(doc[s].url);
-    const d = doc.draft && doc.draft[s];
-    // An expired draft is no longer publishable; in a dry run it has not been
-    // removed from the document yet, so treat it the way the real run will.
-    if (d && new Date(d.expiresAt).getTime() > now.getTime()) refUrl(d.url);
-  }
-  const oldRetired = [];
-  for (const r of doc.retired || []) {
-    if (new Date(r.retiredAt).getTime() >= graceStart) for (const k of r.masterKeys || []) referenced.add(k);
-    else oldRetired.push(r);
-  }
-  const oldRetiredMasters = new Set(oldRetired.flatMap((r) => r.masterKeys || []));
-  const candidates = objects.filter((o) => {
-    const master = storage.masterKeyOf(o.key);
-    if (referenced.has(master)) return false;
-    if (oldRetiredMasters.has(master)) return true;
-    return !!o.lastModified && new Date(o.lastModified).getTime() < graceStart;
-  });
+  const candidates = objects.filter((o) => masters.has(storage.masterKeyOf(o.key)));
   summary.candidates = candidates.length;
+  summary.unrecorded = objects.filter((o) => {
+    const m = storage.masterKeyOf(o.key);
+    return !referenced.has(m) && !recorded.has(m);
+  }).length;
   if (dryRun) return { ...summary, sample: candidates.slice(0, 10).map((o) => o.key) };
 
   if (candidates.length) {
@@ -116,25 +137,29 @@ async function sweep({ now = new Date(), window = DEFAULT_WINDOW_MS, dryRun = fa
     if (res.deleted.length) await storage.purgeCdn(res.deleted);
   }
 
-  // Retired records go only once a fresh listing confirms their objects are gone.
-  if (oldRetired.length) {
-    let remaining;
+  // A record goes only once a fresh listing confirms its objects are gone.
+  // Keys it may not delete (another prefix, referenced again) are simply let
+  // go of — never deleted.
+  let remaining = new Set();
+  if (masters.size) {
     try {
       remaining = new Set((await storage.listKeys(prefix)).map((o) => storage.masterKeyOf(o.key)));
     } catch (err) {
-      log(`[site-hero sweep] confirmation listing failed, retired records kept: ${err && (err.code || err.message)}`);
-      return { ...summary, retiredKept: oldRetired.length, error: "confirm-list" };
-    }
-    for (const r of oldRetired) {
-      if ((r.masterKeys || []).some((k) => remaining.has(k))) {
-        summary.retiredKept += 1;
-        continue;
-      }
-      const res = await coll().updateOne({ _id: hero().DOC_ID }, { $pull: { retired: { retiredAt: r.retiredAt, masterKeys: r.masterKeys } } });
-      if (res.modifiedCount) summary.retiredPulled += 1;
+      log(`[site-hero sweep] confirmation listing failed, records kept: ${err && (err.code || err.message)}`);
+      return { ...summary, kept: due.length, error: "confirm-list" };
     }
   }
+  for (const d of due) {
+    if (d.keys.some((k) => deletable(k) && remaining.has(k))) {
+      summary.kept += 1;
+      continue;
+    }
+    const pull = d.kind === "retired" ? { retired: { retiredAt: d.record.retiredAt, masterKeys: d.record.masterKeys } } : { pending: { masterKey: d.record.masterKey, at: d.record.at } };
+    const res = await coll().updateOne({ _id: hero().DOC_ID }, { $pull: pull });
+    if (res.modifiedCount) summary[d.kind === "retired" ? "retiredPulled" : "pendingPulled"] += 1;
+  }
   if (summary.failed) log(`[site-hero sweep] ${summary.failed} object(s) could not be deleted; the next run retries`);
+  if (summary.unrecorded) log(`[site-hero sweep] ${summary.unrecorded} object(s) under ${prefix} are not this database's — left alone`);
   return summary;
 }
 

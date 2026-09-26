@@ -38,25 +38,45 @@ const PUT_CONCURRENCY = 3;
 const PUT_RETRIES = 1;
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // under Vercel's 4.5 MB request cap
 const ALT_MAX = 150;
+const PENDING_CAP = 200; // records of uploads not yet installed (one image job at a time)
 const leaseMs = () => Number(process.env.SITE_HERO_LEASE_MS) || 150_000;
 const budgetMs = () => Number(process.env.SITE_HERO_BUDGET_MS) || 120_000;
 const putTimeoutMs = () => Number(process.env.SITE_HERO_PUT_TIMEOUT_MS) || 20_000;
 
-// Objects go under `site/hero/`. A QA run on a developer machine may use
-// `_qa/site/hero/<runId>/` (never in production: a stray env var there is
-// ignored and logged rather than taking the whole API down).
+// Where this environment's objects live. Every environment shares the bucket
+// (a developer's machine, a Vercel preview and production all have the same
+// Spaces keys), so only PRODUCTION may use `site/hero/` — the namespace the
+// live site reads. Anything else gets its own `_qa/site/hero/<name>/`:
+// SITE_HERO_PREFIX when it is a valid one, otherwise `_qa/site/hero/dev/`.
+// Otherwise a non-production server would stage, retire — and its sweep
+// delete — objects in the live banner's namespace. Production is a Vercel
+// production deployment (VERCEL_ENV=production) or an explicit
+// SITE_HERO_PRODUCTION=1 (e.g. a maintenance script run against the
+// production database); getting it wrong the other way round is visible and
+// harmless: the site only accepts `site/hero/` keys, so it keeps showing its
+// built-in banner, and the admin page says it is not production.
+const PRODUCTION_PREFIX = "site/hero/";
+const NON_PRODUCTION_PREFIX = "_qa/site/hero/dev/";
 const QA_PREFIX_RE = /^_qa\/site\/hero\/[a-z0-9-]{1,40}\/$/;
 let prefixWarned = false;
+function isProduction() {
+  return process.env.VERCEL_ENV === "production" || process.env.SITE_HERO_PRODUCTION === "1";
+}
 function keyPrefix() {
   const p = process.env.SITE_HERO_PREFIX;
-  if (!p || p === "site/hero/") return "site/hero/";
-  const production = !!process.env.VERCEL || process.env.NODE_ENV === "production";
-  if (QA_PREFIX_RE.test(p) && !production) return p;
-  if (!prefixWarned) {
-    prefixWarned = true;
-    console.error("[site-hero] SITE_HERO_PREFIX ignored:", production ? "QA prefixes are not allowed in production" : "invalid value");
+  if (isProduction()) {
+    if (p && p !== PRODUCTION_PREFIX && !prefixWarned) {
+      prefixWarned = true;
+      console.error("[site-hero] SITE_HERO_PREFIX ignored: production always uses site/hero/");
+    }
+    return PRODUCTION_PREFIX;
   }
-  return "site/hero/";
+  if (p && QA_PREFIX_RE.test(p)) return p;
+  if (p && !prefixWarned) {
+    prefixWarned = true;
+    console.error("[site-hero] SITE_HERO_PREFIX ignored (not a _qa/site/hero/<name>/ prefix); using", NON_PRODUCTION_PREFIX);
+  }
+  return NON_PRODUCTION_PREFIX;
 }
 
 const coll = () => SiteSetting.collection;
@@ -66,7 +86,7 @@ const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
 const docOf = (res) => (res && Object.prototype.hasOwnProperty.call(res, "value") && Object.prototype.hasOwnProperty.call(res, "ok") ? res.value : res);
 
 function defaults() {
-  return { version: 0, alt: null, desktop: null, mobile: null, draft: { desktop: null, mobile: null }, retired: [], receipts: [], lease: null, lastSweepAt: null, updatedBy: null, updatedAt: null };
+  return { version: 0, alt: null, desktop: null, mobile: null, draft: { desktop: null, mobile: null }, retired: [], pending: [], receipts: [], lease: null, lastSweepAt: null, updatedBy: null, updatedAt: null };
 }
 // The singleton exists before any compare-and-set, so publishing never upserts.
 async function ensureDoc() {
@@ -153,6 +173,8 @@ async function adminView(doc, actor) {
     updatedAt: doc.updatedAt || null,
     updatedBy: doc.updatedBy ? names.get(String(doc.updatedBy)) || null : null,
     spec: specView(),
+    // where this server keeps banner objects; the site only shows production's
+    environment: { production: isProduction(), prefix: keyPrefix() },
   };
 }
 
@@ -185,8 +207,8 @@ function parseDraftOpId(v, { required = false } = {}) {
   if (typeof v !== "string" || !ops.UUID_RE.test(v)) throw bad("INVALID_FIELDS", "expectedDraftOpId must be a draft id");
   return v;
 }
-// eslint-disable-next-line no-control-regex
-const CONTROL_RE = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/g;
+// Control and format characters (bidi controls, zero-width marks, tag characters…)
+const CONTROL_RE = /[\p{Cc}\p{Cf}]/gu;
 function parseAlt(v) {
   if (typeof v !== "string") throw bad("INVALID_ALT", "Add a description of the banner");
   const alt = v.replace(CONTROL_RE, " ").replace(/\s+/g, " ").trim();
@@ -363,6 +385,8 @@ async function stageDraft(req, actor, slot, file, body) {
   const leaseToken = crypto.randomUUID();
   if (!(await acquireLease(leaseToken, op.opId, actor.id, now))) {
     const busy = await readDoc();
+    // the same operation, sent twice at once: it is being prepared
+    if (busy && busy.lease && busy.lease.opId === op.opId) return { status: 202, body: { success: true, status: "processing", opId: op.opId } };
     const until = busy && busy.lease ? new Date(busy.lease.until).getTime() : now + 60_000;
     throw new HeroError(409, "HERO_BUSY", "Another banner image is being prepared — try again in a minute", { retryAfter: Math.max(1, Math.ceil((until - Date.now()) / 1000)) });
   }
@@ -371,19 +395,29 @@ async function stageDraft(req, actor, slot, file, body) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(0, deadline - Date.now()));
   const attempted = new Set();
+  const inflight = new Set();
   let installAttempted = false;
   const target = slot;
-  const cleanup = () =>
-    attempted.size ? storage.deleteObjects([...attempted], { allowProtected: true }).catch((err) => console.error("[site-hero] cleanup failed", err && err.message)) : null;
+  // Stop the uploads still running, then delete what was stored: nothing can
+  // land after the delete. (Anything left is in `pending`; the sweep removes it.)
+  const cleanup = async () => {
+    if (!controller.signal.aborted) controller.abort();
+    await Promise.allSettled([...inflight]);
+    if (attempted.size) await storage.deleteObjects([...attempted], { allowProtected: true }).catch((err) => console.error("[site-hero] cleanup failed", err && err.message));
+  };
   // A definitive failure before anything was installed: our objects are
-  // unreferenced (delete them), the failure is recorded, the lease released —
-  // all only while the lease is still ours.
+  // unreferenced (delete them), the failure is recorded (once), the lease
+  // released — only while the lease is still ours. A job that lost its lease
+  // records nothing: a same-token retry may be running and owns the outcome.
   const fail = async (err) => {
     await cleanup();
     const r = ops.receipt({ opId: op.opId, actorId: oid(actor.id), action: "stage", target, fingerprint: fp, status: "failed", result: errorResult(err) });
-    await coll()
-      .updateOne({ _id: DOC_ID, "lease.token": leaseToken }, { $set: { lease: null }, $push: { receipts: ops.pushReceipt(r) } })
-      .catch((e) => console.error("[site-hero] could not record the failure", e && e.message));
+    try {
+      const res = await coll().updateOne({ _id: DOC_ID, "lease.token": leaseToken, "receipts.opId": { $ne: op.opId } }, { $set: { lease: null }, $push: { receipts: ops.pushReceipt(r) } });
+      if (res.matchedCount !== 1) await coll().updateOne({ _id: DOC_ID, "lease.token": leaseToken }, { $set: { lease: null } });
+    } catch (e) {
+      console.error("[site-hero] could not record the failure", e && e.message);
+    }
   };
 
   try {
@@ -407,8 +441,16 @@ async function stageDraft(req, actor, slot, file, body) {
     if (await img.hasQrCode(raster)) throw new ImageRejected("IMAGE_NOT_ALLOWED", "Images with QR codes aren't allowed", 422);
 
     const masterKey = `${keyPrefix()}${slot}/${crypto.randomUUID()}.jpg`;
-    let masterUrl = null;
-    const inflight = new Set();
+    // The URL is built from the key — never taken from the storage reply,
+    // whose format differs for multipart uploads — and must parse back to it:
+    // the site, the admin and the sweep all find the objects through it.
+    const masterUrl = storage.publicUrl(masterKey);
+    if (storage.keyFromUrl(masterUrl) !== masterKey) throw new HeroError(500, "STORAGE_MISCONFIGURED", "Image storage is not configured correctly");
+    // Recorded before anything is stored: if this job dies between upload and
+    // install, the sweep knows these objects are ours and removes them. The
+    // sweep deletes nothing it has no record of.
+    const recorded = await coll().updateOne({ _id: DOC_ID, "lease.token": leaseToken, "lease.until": { $gt: new Date() } }, { $push: { pending: { $each: [{ masterKey, at: new Date() }], $slice: -PENDING_CAP } } });
+    if (recorded.matchedCount !== 1) throw timedOut(); // the lease is gone — nothing was stored
     const putErrors = [];
     const put = (key, buffer, type) => {
       attempted.add(key);
@@ -427,7 +469,7 @@ async function stageDraft(req, actor, slot, file, body) {
       async (o) => {
         if (putErrors.length) throw putErrors[0];
         if (o.kind === "master") {
-          masterUrl = await put(masterKey, o.buffer, "image/jpeg");
+          await put(masterKey, o.buffer, "image/jpeg");
           if (putErrors.length) throw putErrors[0];
           return;
         }
@@ -444,7 +486,7 @@ async function stageDraft(req, actor, slot, file, body) {
     if (info.animated) notices.push("ANIMATION_FIRST_FRAME");
     if (region.cropped) notices.push("CROPPED");
     if (region.deviation > img.RATIO_CONFIRM) notices.push("RATIO_ACCEPTED");
-    if (raster.width < spec.recommended[0]) notices.push("BELOW_RECOMMENDED");
+    if (raster.width < Math.round(spec.recommended[0] * 0.9)) notices.push("BELOW_RECOMMENDED");
     if (clientReencoded) notices.push("CLIENT_REENCODED");
     const stagedAt = new Date();
     const draft = {
@@ -462,11 +504,17 @@ async function stageDraft(req, actor, slot, file, body) {
 
     installAttempted = true;
     const r = ops.receipt({ opId: op.opId, actorId: oid(actor.id), action: "stage", target, fingerprint: fp, status: "completed", result: { draftOpId: op.opId } }, stagedAt);
+    // A replaced draft is retired in the same update (the filter proves which
+    // one it is), so its objects are deleted a day later; this job's own
+    // objects are now referenced and leave `pending`.
+    const replacedKey = current && keyOf(current.url);
     const tx = await inTransaction(async (session) => {
       const filter = { _id: DOC_ID, "lease.token": leaseToken, "lease.until": { $gt: new Date() } };
       if (expectedDraftOpId) filter[`draft.${slot}.opId`] = expectedDraftOpId;
       else filter[`draft.${slot}`] = null;
-      const res = await coll().updateOne(filter, { $set: { [`draft.${slot}`]: draft, lease: null, updatedAt: stagedAt }, $push: { receipts: ops.pushReceipt(r) } }, { session });
+      const push = { receipts: ops.pushReceipt(r) };
+      if (replacedKey) push.retired = { masterKeys: [replacedKey], retiredAt: stagedAt };
+      const res = await coll().updateOne(filter, { $set: { [`draft.${slot}`]: draft, lease: null, updatedAt: stagedAt }, $push: push, $pull: { pending: { masterKey } } }, { session });
       if (res.matchedCount !== 1) return { abort: true };
       await adminAudit.record(req, "site.hero.stage", { targetType: "SiteSetting", targetKey: DOC_ID }, { slot, opId: op.opId, width: draft.width, height: draft.height, notices }, { session });
       return { ok: true };
@@ -491,9 +539,13 @@ async function stageDraft(req, actor, slot, file, body) {
     // compare-and-set miss: lost the lease (took too long) or the draft changed
     const after = await readDoc();
     if (!after || !after.lease || after.lease.token !== leaseToken) {
+      // Someone else may hold the lease now (possibly a retry of this very
+      // operation): delete our unreferenced objects, record nothing.
       await cleanup();
-      const failed = ops.receipt({ opId: op.opId, actorId: oid(actor.id), action: "stage", target, fingerprint: fp, status: "failed", result: errorResult(timedOut()) });
-      await coll().updateOne({ _id: DOC_ID }, { $push: { receipts: ops.pushReceipt(failed) } }).catch(() => {});
+      throw timedOut();
+    }
+    if (new Date(after.lease.until).getTime() <= Date.now()) {
+      await fail(timedOut()); // still ours, but it ran out: a timeout, not a conflict
       throw timedOut();
     }
     const changed = new HeroError(409, "HERO_DRAFT_CHANGED", "This draft was changed by someone else — reload and review again", { draftOpId: draftOf(after, slot) ? draftOf(after, slot).opId : null });
@@ -530,8 +582,13 @@ async function discardDraft(req, actor, slot, body) {
   const current = draftOf(doc, slot);
   if (!current || current.opId !== expectedDraftOpId) throw new HeroError(409, "HERO_DRAFT_CHANGED", "This draft was changed by someone else — reload and review again", { draftOpId: current ? current.opId : null });
   const r = ops.receipt({ opId: op.opId, actorId: oid(actor.id), action: "discard", target: slot, fingerprint: fp, status: "completed", result: {} });
+  // the discarded draft's objects are retired with it: deleted a day later
+  const discardedKey = keyOf(current.url);
   const tx = await inTransaction(async (session) => {
-    const res = await coll().updateOne({ _id: DOC_ID, [`draft.${slot}.opId`]: expectedDraftOpId }, { $set: { [`draft.${slot}`]: null, updatedAt: new Date() }, $push: { receipts: ops.pushReceipt(r) } }, { session });
+    const at = new Date();
+    const push = { receipts: ops.pushReceipt(r) };
+    if (discardedKey) push.retired = { masterKeys: [discardedKey], retiredAt: at };
+    const res = await coll().updateOne({ _id: DOC_ID, [`draft.${slot}.opId`]: expectedDraftOpId }, { $set: { [`draft.${slot}`]: null, updatedAt: at }, $push: push }, { session });
     if (res.matchedCount !== 1) return { abort: true };
     await adminAudit.record(req, "site.hero.discard", { targetType: "SiteSetting", targetKey: DOC_ID }, { slot, opId: expectedDraftOpId }, { session });
     return { ok: true };
@@ -712,6 +769,9 @@ module.exports = {
   ALT_MAX,
   HeroError,
   keyPrefix,
+  isProduction,
+  PRODUCTION_PREFIX,
+  NON_PRODUCTION_PREFIX,
   ensureDoc,
   readDoc,
   publicView,

@@ -22,7 +22,7 @@ const storage = require("./storage");
 // 768 px up, mobile below. `cap` bounds the master and every rendition — no
 // screen ever shows more pixels than that.
 const SLOTS = Object.freeze({
-  desktop: Object.freeze({ ratio: 1920 / 740, box: [1920, 740], min: [1920, 740], cap: 3840, recommended: [3840, 1480] }),
+  desktop: Object.freeze({ ratio: 1920 / 740, box: [1920, 740], min: [1920, 740], cap: 3840, recommended: [2880, 1110] }),
   mobile: Object.freeze({ ratio: 530 / 720, box: [530, 720], min: [530, 720], cap: 1600, recommended: [1060, 1440] }),
 });
 const SLOT_NAMES = Object.freeze(["desktop", "mobile"]);

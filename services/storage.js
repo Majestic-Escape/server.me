@@ -169,6 +169,9 @@ const mock = {
   listCalls: 0,
   putDelayMs: 0, // tests: each mocked PUT takes this long (abortable)
   aborted: [], // keys whose PUT was aborted through its signal
+  // tests: "path" answers a PUT with a path-style location, as a multipart
+  // upload's reply may be (callers must not rely on the returned URL's format)
+  locationStyle: null,
   // the photos deleted: master keys only (tests reason in photos)
   get photosDeleted() {
     return this.deleted.filter((k) => !isVariantKey(k));
@@ -187,6 +190,7 @@ function resetMock() {
   mock.listCalls = 0;
   mock.putDelayMs = 0;
   mock.aborted = [];
+  mock.locationStyle = null;
 }
 class MockFailure extends Error {
   constructor(message, code = "MockFailure") {
@@ -233,7 +237,7 @@ async function putObject(key, body, contentType, { cacheControl = IMMUTABLE_CACH
     if (mockFails("put", key)) throw new MockFailure(`mock: put failed for ${key}`);
     mock.uploaded.push({ key, contentType, cacheControl, bytes: body ? body.length : 0 });
     mock.objects.set(key, { body: Buffer.isBuffer(body) ? Buffer.from(body) : Buffer.from(String(body || "")), contentType, cacheControl, lastModified: new Date() });
-    return publicUrl(key);
+    return mock.locationStyle === "path" ? `https://${region()}.digitaloceanspaces.com/${bucket()}/${encodeKey(key)}` : publicUrl(key);
   }
   const s3 = require("../config/digitalOcean.config");
   const upload = s3.upload({ Bucket: bucket(), Key: key, Body: body, ACL: "public-read", ContentType: contentType, CacheControl: cacheControl });

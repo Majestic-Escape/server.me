@@ -9,6 +9,10 @@ const sharp = require("sharp");
 const h = require("./setup");
 const hh = require("./hero-helpers");
 
+// In-memory storage only (SPACES_MOCK): these suites use production's key
+// layout (site/hero/…); the environment rules have their own tests.
+process.env.SITE_HERO_PRODUCTION = "1";
+
 const storage = () => require("../../services/storage");
 const SiteSetting = () => require("../../models/SiteSetting");
 const AdminAuditLog = () => require("../../models/AdminAuditLog");

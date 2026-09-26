@@ -28,6 +28,11 @@ async function main() {
   if (process.env.E2E_REAL_SPACES === "1" && !/^_qa\/site\/hero\/[a-z0-9-]{1,40}\/$/.test(process.env.SITE_HERO_PREFIX || "")) {
     throw new Error("E2E_REAL_SPACES=1 needs SITE_HERO_PREFIX=_qa/site/hero/<run>/");
   }
+  // …and never as "production": that would ignore the QA prefix and write
+  // (and sweep) the live banner's namespace in the real bucket.
+  if (process.env.E2E_REAL_SPACES === "1" && (process.env.SITE_HERO_PRODUCTION === "1" || process.env.VERCEL_ENV === "production")) {
+    throw new Error("E2E_REAL_SPACES=1 must not run with SITE_HERO_PRODUCTION=1 or VERCEL_ENV=production");
+  }
   await h.start();
   // Canary values (contact lock-down): the counterpart's last name, email and
   // phone are searched for by VALUE in browser-side responses, DOM and storage.

@@ -9,9 +9,21 @@ deploy and without Vercel Image Optimization (whose quota is exhausted).
 ```
 admin   POST /api/v1/site/admin/hero/:slot/draft   (image → master + AVIF/WebP renditions, a draft)
         POST /api/v1/site/admin/hero/publish        (drafts → live, one transaction)
-site    GET  /api/v1/site/hero  (ISR, tag site-hero) → <picture> of CDN renditions, bundled banner otherwise
-visitor browser → <bucket>.blr1.cdn.digitaloceanspaces.com/site/hero/<slot>/<uuid>.jpg/v1/w<width>.avif
+site    GET  /api/v1/site/hero  (ISR, tag site-hero) → <picture> of the renditions, bundled banner otherwise
+visitor browser → majesticescape.in/_hero/<slot>/<uuid>.jpg/v1/w<width>.avif
+        (site rewrite, cached at Vercel's edge) → <bucket>.blr1.cdn.digitaloceanspaces.com/site/hero/…
 ```
+
+**Delivery.** The site serves the renditions from its own domain (`/_hero/…`,
+a rewrite in user.website `next.config.ts` that forwards only the exact shape
+of a rendition to the Spaces CDN; `vercel.json` opts the path into Vercel's
+edge cache, which honours the objects' `s-maxage`). Measured locally, a
+second origin costs a first visit a new connection before the LCP image
+(connect + TLS ≈ 100–250 ms on desktop, `tests/pw-final/evidence/site-hero-perf-notes.md`);
+the page's own connection has none. The objects are immutable, so a repeat
+visit makes no request at all (today's static files revalidate on every
+visit). The site's `HERO_DELIVERY=cdn` links the CDN directly instead; either
+way the first fallback step goes straight to the Spaces origin.
 
 A **banner** is two artworks — desktop (≥ 768 px) and mobile — and **one
 description** (alt text) that fits both. The first custom banner needs both;
@@ -25,7 +37,7 @@ both to the site's built-in banner. A custom/default mix never exists.
   - AVIF q60 effort 4 (primary) and WebP (`variantWebp` + smart chroma) for every rendition width;
   - a JPEG q95 4:4:4 master (long-term source, last-resort fallback);
   - a 24 px WebP placeholder (≈ 300 B).
-- **The exact box, never upscaled.** The image is cropped to 1920:740 or 530:720 around the admin's focal point (within 1% it is used whole); more than 35% off needs an explicit "use anyway"; smaller than the box (1920×740 / 530×720, 1% slack) is refused; the master and renditions are capped at 3840 / 1600 px.
+- **The exact box, never upscaled.** The image is cropped to 1920:740 or 530:720 around the admin's focal point (within 1% it is used whole); more than 35% off needs an explicit "use anyway"; smaller than the box (1920×740 / 530×720, 1% slack) is refused; the master and renditions are capped at 3840 / 1600 px. Recommended artwork: 2880×1110 desktop (what a 1440 px screen at 2× needs — a 3840 px file would make every such laptop download 1.8× the pixels) and 1060×1440 mobile; the draft notes *below recommended* under 90% of that width.
 - **Safe retries.** Every mutation carries a server-issued op token and records a receipt in the same transaction as the change and its audit row (`services/siteHeroOps.js`): a retry after a lost response returns the recorded result — even if other admins changed the banner since — and is never applied or audited twice.
 - **One image job at a time** (the lease), really cancelled at its budget (sharp timeouts, `ManagedUpload.abort()`), unable to install after it lost the lease.
 - **Nothing referenced is ever deleted.** Objects live under the protected `site/` prefix: `storage.deleteObjects` refuses them unless the hero service or its sweep asks explicitly, users can't reference them (`isOurImageUrl`), `/uploads/delete` answers 409, maintenance scripts filter them out. Cleanup is the sweep's job.
@@ -73,7 +85,14 @@ One document `sitesettings/home_hero` (no new index): `version`, `alt`, `desktop
 
 ## Sweep (`services/siteHeroSweep.js`)
 
-Once per window (compare-and-set on `lastSweepAt`): expired drafts leave the document (system audit row), then objects under the prefix that are unreferenced **and** either retired more than 24 h ago or uploaded more than 24 h ago are deleted; a retired record is pulled only after a fresh listing confirms its objects are gone. Triggered by the daily cron, after a publish/restore and by an admin read (6 h window); `node scripts/site-hero-sweep.js --uri=… [--apply]` by hand (dry run by default). Objects become *eligible* 24 h after they stop being referenced and are deleted by a later successful run — with the Hobby cron (once a day, ±59 min) that can take more than a day.
+It deletes **only what this database recorded as its own and no longer needs** — never an object merely because nothing references it:
+
+- `retired`: live art that was replaced or restored away, and drafts that were replaced, discarded or expired, each recorded in the very update that let go of it; kept 24 h (cached pages, open tabs), then deleted;
+- `pending`: an image job's master key, recorded before its first upload and cleared by the install; what remains belongs to a job that crashed, timed out or failed and is deleted a day later.
+
+Anything the document still points at (the live pair, every draft) is never deleted; a live or draft URL that does not parse to a key stops the run; only keys under this environment's prefix are touched; a record is pulled only after a fresh listing confirms its objects are gone. Objects no record names are left alone and counted (`unrecorded`). Once per window (compare-and-set on `lastSweepAt`); triggered by the daily cron, after a publish/restore and by an admin read (6 h window); `node scripts/site-hero-sweep.js --uri=… [--apply]` by hand (dry run by default). Objects become *eligible* 24 h after they are let go of and are deleted by a later successful run — with the Hobby cron (once a day, ±59 min) that can take more than a day.
+
+**Environments.** Every environment shares the bucket, so only production writes `site/hero/` (the namespace the site reads): a Vercel production deployment (`VERCEL_ENV=production`) or an explicit `SITE_HERO_PRODUCTION=1` (a maintenance script run against the production database). Everything else — a developer's machine, a Vercel preview, a QA run — uses `SITE_HERO_PREFIX` when it is a valid `_qa/site/hero/<name>/`, otherwise `_qa/site/hero/dev/`. A non-production server therefore can neither overwrite nor sweep the live banner's objects, even with a copy of the production database. The admin page shows which namespace a server uses; a production server that shows `_qa/…` is missing `VERCEL_ENV` (set `SITE_HERO_PRODUCTION=1`). The real-bucket QA server refuses to start as production.
 
 ## Cost
 
@@ -81,7 +100,7 @@ No new service, no Redis. Mongo: public read ≤ 1 op per CDN/data-cache miss; a
 
 ## Rollout / kill switches
 
-Backward compatible: the public read returns nulls until something is published, and the site falls back to its bundled banner. *Restore bundled default* is the instant lever; the site's `HERO_DYNAMIC=off` (redeploy) ignores the API entirely. `SITE_HERO_PREFIX=_qa/site/hero/<run>/` isolates a local QA run (ignored in production). Tunables for tests: `SITE_HERO_LEASE_MS`, `SITE_HERO_BUDGET_MS`, `SITE_HERO_PUT_TIMEOUT_MS`, `SITE_HERO_WARMUP=off`.
+Backward compatible: the public read returns nulls until something is published, and the site falls back to its bundled banner. *Restore bundled default* is the instant lever; the site's `HERO_DYNAMIC=off` (redeploy) ignores the API entirely; `HERO_DELIVERY=cdn` (redeploy) serves the renditions from the CDN host instead of the site's `/_hero` path. `SITE_HERO_PREFIX=_qa/site/hero/<run>/` isolates a QA run (see *Environments*). Tunables for tests: `SITE_HERO_LEASE_MS`, `SITE_HERO_BUDGET_MS`, `SITE_HERO_PUT_TIMEOUT_MS`, `SITE_HERO_WARMUP=off`.
 
 ## Limits and follow-ups
 
@@ -89,4 +108,4 @@ Backward compatible: the public read returns nulls until something is published,
 - QR detection has a size floor (measured: ≥ 100 px codes on a 1920 px banner are caught). Admins are trusted — it is a consistency rule.
 - Drafts are public-read under unguessable keys.
 - The listing pipeline still encodes variants from a re-encoded master (two generations); the hero's single-generation approach could be applied there.
-- Not measured on Vercel yet: a 3840 px draft's duration and memory (targets < 60 s, < 1 GB).
+- Not measured on Vercel yet: a 3840 px draft's duration and memory (targets < 60 s, < 1 GB); the `/_hero` edge cache (expect `x-vercel-cache: HIT` after the first request per region).

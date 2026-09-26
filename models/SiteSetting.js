@@ -32,6 +32,9 @@ const draft = new Schema(
   { _id: false },
 );
 const retired = new Schema({ masterKeys: [String], retiredAt: Date }, { _id: false });
+// An image job's master key, recorded before its first upload and cleared by
+// the install: what remains belongs to a job that never installed.
+const pending = new Schema({ masterKey: String, at: Date }, { _id: false });
 const receipt = new Schema(
   {
     opId: String,
@@ -59,6 +62,7 @@ const siteSettingSchema = new Schema(
       mobile: { type: draft, default: null },
     },
     retired: { type: [retired], default: [] },
+    pending: { type: [pending], default: [] },
     receipts: { type: [receipt], default: [] },
     lease: { type: lease, default: null },
     lastSweepAt: { type: Date, default: null },

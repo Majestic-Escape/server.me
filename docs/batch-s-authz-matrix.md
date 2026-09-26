@@ -304,3 +304,20 @@ chat: 0 stored last names, 13 legacy messages, none contact-bearing. Images:
   booking / transaction endpoints parse `M/D/YYYY`: in a D/M/YYYY browser locale
   the admin lists are empty. Pre-existing, unrelated to this change; the fix is
   `format(date, "M/d/yyyy")` as done for the host pages in user.website.
+
+## Homepage banner (`/api/v1/site`) — docs/site-hero.md
+
+| Action | anon | other user | guest | host | admin | Notes |
+|---|---|---|---|---|---|---|
+| `GET /hero` | 200 | 200 | 200 | 200 | 200 | public; no admin data; CDN-cached under `site-hero` |
+| `GET /admin/hero`, `GET /admin/hero/ops/:opId` | 401 | 403 | 403 | 403 | 200 | no-store; ops: own operations only |
+| `POST /admin/hero/:slot/draft` | 401 | 403 | 403 | 403 | 201 | auth before any multipart parsing; ≤ 4 MB |
+| `DELETE /admin/hero/:slot/draft`, `POST /admin/hero/publish`, `PATCH /admin/hero/alt`, `POST /admin/hero/restore-default` | 401 | 403 | 403 | 403 | 200 | op token + compare-and-set; audited |
+| `GET /cron/hero-sweep` | 401 | 401 | 401 | 401 | 401 | Vercel Cron only (`Bearer CRON_SECRET`) |
+
+## Admin accounts (`/api/v1/admin`)
+
+| Action | anon | other user | guest | host | admin | Notes |
+|---|---|---|---|---|---|---|
+| `POST /register` | 401 | 403 | 403 | 403 | 201 | was anonymous; audited `admin.create`; no token returned |
+| `GET/POST /service` | 401 | 403 | 403 | 403 | 200 | was any signed-in user |

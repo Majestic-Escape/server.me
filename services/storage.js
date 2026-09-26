@@ -23,6 +23,13 @@
 // beside the old one instead of overwriting objects that browsers and the
 // CDN may cache for a year (Cache-Control: immutable).
 //
+// Protected namespace: objects under `site/` (the admin-managed homepage
+// hero, services/siteHero.js) — and their QA twins under `_qa/site/` — are
+// referenced by the site settings document, not by listings or profiles.
+// deleteObjects() refuses them unless the caller passes allowProtected (only
+// the hero service and its sweep do), so no listing, profile or maintenance
+// path can delete a live banner, whatever it believes about references.
+//
 // SPACES_MOCK=1 (tests only) swaps the S3 client for an in-memory fake that
 // records uploads and deletions, serves HEAD/GET/LIST from what was put, and
 // can be told to fail wholly, partially or for one key.
@@ -68,7 +75,9 @@ function keyFromUrl(url) {
   if (!key) return null;
   if (CONTROL_RE.test(key)) return null;
   if (key.startsWith("/") || key.includes("//")) return null;
-  if (key.split("/").some((seg) => seg === "..")) return null;
+  // "." and ".." segments: a key that only looks like another one (e.g.
+  // "./site/…" via %2F) must not slip past the protected-prefix check.
+  if (key.split("/").some((seg) => seg === ".." || seg === ".")) return null;
   return key;
 }
 
@@ -117,7 +126,23 @@ const VARIANT_CONTENT_TYPE = "image/webp";
 // it, measured): a deleted photo leaves every edge within 24 h even without
 // a purge, and purgeCdn() removes it at once when DO_API_TOKEN is configured.
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, s-maxage=86400, immutable";
-const VARIANT_KEY_RE = /^(.+)\/(v[0-9]+)\/w([0-9]{2,4})\.webp$/;
+// Listing variants are WebP; the hero also stores AVIF renditions beside them.
+const VARIANT_KEY_RE = /^(.+)\/(v[0-9]+)\/w([0-9]{2,4})\.(?:webp|avif)$/;
+const PROTECTED_RE = /^(?:_qa\/)?site\//;
+
+function isProtectedKey(key) {
+  return typeof key === "string" && PROTECTED_RE.test(key);
+}
+
+// SPACES_WRITE_PREFIX — set only by the real-bucket QA harness
+// (tests/batch-s/setup.js, E2E_REAL_SPACES=1) to "_qa/": every put and delete
+// outside that prefix is refused, whatever route or script asks, so a QA
+// server holding real credentials can't change a production object.
+// Unset (production, every other environment): no effect.
+function writeAllowed(key) {
+  const p = process.env.SPACES_WRITE_PREFIX;
+  return !p || (typeof key === "string" && key.startsWith(p));
+}
 
 function isVariantKey(key) {
   return typeof key === "string" && VARIANT_KEY_RE.test(key);
@@ -154,6 +179,11 @@ const mock = {
   failMode: null,
   calls: 0,
   listCalls: 0,
+  putDelayMs: 0, // tests: each mocked PUT takes this long (abortable)
+  aborted: [], // keys whose PUT was aborted through its signal
+  // tests: "path" answers a PUT with a path-style location, as a multipart
+  // upload's reply may be (callers must not rely on the returned URL's format)
+  locationStyle: null,
   // the photos deleted: master keys only (tests reason in photos)
   get photosDeleted() {
     return this.deleted.filter((k) => !isVariantKey(k));
@@ -170,6 +200,9 @@ function resetMock() {
   mock.failMode = null;
   mock.calls = 0;
   mock.listCalls = 0;
+  mock.putDelayMs = 0;
+  mock.aborted = [];
+  mock.locationStyle = null;
 }
 class MockFailure extends Error {
   constructor(message, code = "MockFailure") {
@@ -187,17 +220,51 @@ function mockFails(op, key) {
   return what === op && (needle === undefined || String(key).includes(needle));
 }
 
-// Uploads one public-read object; resolves to its origin URL.
-async function putObject(key, body, contentType, { cacheControl = IMMUTABLE_CACHE_CONTROL } = {}) {
+function abortError() {
+  return Object.assign(new Error("upload aborted"), { name: "AbortError", code: "ABORTED" });
+}
+
+// Uploads one public-read object; resolves to its origin URL. An AbortSignal
+// really stops the request (ManagedUpload.abort()), it does not merely stop
+// waiting for it; callers without a signal behave exactly as before.
+async function putObject(key, body, contentType, { cacheControl = IMMUTABLE_CACHE_CONTROL, signal } = {}) {
+  if (signal && signal.aborted) throw abortError();
+  if (!writeAllowed(key)) throw Object.assign(new Error("storage: write outside SPACES_WRITE_PREFIX refused"), { code: "WRITE_PREFIX" });
   if (process.env.SPACES_MOCK === "1") {
+    if (mock.putDelayMs > 0) {
+      await new Promise((resolve, reject) => {
+        const t = setTimeout(resolve, mock.putDelayMs);
+        if (signal) {
+          signal.addEventListener(
+            "abort",
+            () => {
+              clearTimeout(t);
+              mock.aborted.push(key);
+              reject(abortError());
+            },
+            { once: true },
+          );
+        }
+      });
+    }
     if (mockFails("put", key)) throw new MockFailure(`mock: put failed for ${key}`);
     mock.uploaded.push({ key, contentType, cacheControl, bytes: body ? body.length : 0 });
     mock.objects.set(key, { body: Buffer.isBuffer(body) ? Buffer.from(body) : Buffer.from(String(body || "")), contentType, cacheControl, lastModified: new Date() });
-    return publicUrl(key);
+    return mock.locationStyle === "path" ? `https://${region()}.digitaloceanspaces.com/${bucket()}/${encodeKey(key)}` : publicUrl(key);
   }
   const s3 = require("../config/digitalOcean.config");
-  const result = await s3.upload({ Bucket: bucket(), Key: key, Body: body, ACL: "public-read", ContentType: contentType, CacheControl: cacheControl }).promise();
-  return result.Location;
+  const upload = s3.upload({ Bucket: bucket(), Key: key, Body: body, ACL: "public-read", ContentType: contentType, CacheControl: cacheControl });
+  const onAbort = () => upload.abort();
+  if (signal) signal.addEventListener("abort", onAbort, { once: true });
+  try {
+    const result = await upload.promise();
+    return result.Location;
+  } catch (err) {
+    if (signal && signal.aborted) throw abortError();
+    throw err;
+  } finally {
+    if (signal) signal.removeEventListener("abort", onAbort);
+  }
 }
 
 // HEAD of one object: { size, contentType, cacheControl, etag, lastModified } or null when missing.
@@ -251,14 +318,27 @@ async function listKeys(prefix, { limit = Infinity } = {}) {
   do {
     const page = await s3.listObjectsV2({ Bucket: bucket(), Prefix: prefix, ContinuationToken: token, MaxKeys: 1000 }).promise();
     for (const o of page.Contents || []) out.push({ key: o.Key, size: Number(o.Size) || 0, lastModified: o.LastModified || null });
+    // A truncated page without a continuation token would silently end the
+    // listing early — callers (the sweep's confirmation) must not act on it.
+    if (page.IsTruncated && !page.NextContinuationToken) throw Object.assign(new Error("listing truncated without a continuation token"), { code: "LIST_INCOMPLETE" });
     token = page.IsTruncated ? page.NextContinuationToken : undefined;
   } while (token && out.length < limit);
   return out.length > limit ? out.slice(0, limit) : out;
 }
 
-async function deleteObjects(keys) {
-  const unique = [...new Set((keys || []).filter((k) => typeof k === "string" && k))];
+async function deleteObjects(keys, { allowProtected = false } = {}) {
+  const requested = [...new Set((keys || []).filter((k) => typeof k === "string" && k))];
   const out = { deleted: [], failed: [] };
+  // The lowest delete boundary: a protected object is never deleted by a
+  // caller that did not ask for it explicitly (see the header).
+  const unique = (allowProtected ? requested : requested.filter((k) => !isProtectedKey(k))).filter(writeAllowed);
+  if (unique.length !== requested.length) {
+    for (const key of requested) {
+      if (!allowProtected && isProtectedKey(key)) out.failed.push({ key, code: "PROTECTED", message: "managed by the homepage banner settings" });
+      else if (!writeAllowed(key)) out.failed.push({ key, code: "WRITE_PREFIX", message: "outside SPACES_WRITE_PREFIX" });
+    }
+    console.error("storage: refused to delete object(s)", requested.length - unique.length);
+  }
   if (!unique.length) return out;
   if (process.env.SPACES_MOCK === "1") {
     mock.calls += 1;
@@ -340,7 +420,7 @@ async function purgeCdn(keys) {
 // successful delete for S3, and a failed listing only narrows the sweep to
 // the derived keys. Variant keys passed directly are deleted as themselves.
 // The deleted objects are purged from the CDN edges (best effort).
-async function deleteImages(keys) {
+async function deleteImages(keys, { allowProtected = false } = {}) {
   const masters = [...new Set((keys || []).filter((k) => typeof k === "string" && k))];
   const all = new Set();
   for (const key of masters) {
@@ -353,7 +433,7 @@ async function deleteImages(keys) {
       console.error("storage: variant listing failed, deleting the derived keys only", key, err && err.message);
     }
   }
-  const result = await deleteObjects([...all]);
+  const result = await deleteObjects([...all], { allowProtected });
   if (result.deleted.length) await purgeCdn(result.deleted);
   // Results are per photo. A master counts as deleted only when every object
   // under it went: a leftover variant is still a public object of a deleted
@@ -398,6 +478,8 @@ module.exports = {
   VARIANT_CONTENT_TYPE,
   IMMUTABLE_CACHE_CONTROL,
   isVariantKey,
+  isProtectedKey,
+  writeAllowed,
   masterKeyOf,
   variantKey,
   variantKeys,

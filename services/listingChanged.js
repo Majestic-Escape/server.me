@@ -54,39 +54,68 @@ async function invalidateCdn(tags, deadline) {
   try {
     ({ invalidateByTag } = require("@vercel/functions"));
   } catch {
-    return { skipped: "no-@vercel/functions" };
+    return { skipped: "no-@vercel/functions", status: "skipped" };
   }
   let done = 0;
   for (const batch of chunk(tags, CDN_BATCH)) {
     const remaining = deadline - Date.now();
-    if (remaining <= 0) return { done, skipped: "deadline" };
-    await Promise.race([
-      invalidateByTag(batch), // resolves immediately outside Vercel
-      new Promise((resolve) => setTimeout(resolve, Math.min(REQUEST_TIMEOUT_MS, remaining))),
-    ]);
+    if (remaining <= 0) return { done, skipped: "deadline", status: "timeout" };
+    // A batch counts only when the purge answered: when the timeout wins the
+    // race the purge was merely attempted (it used to be counted as done).
+    let timer;
+    const outcome = await Promise.race([
+      Promise.resolve(invalidateByTag(batch)).then(() => "ok"), // resolves immediately outside Vercel
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve("timeout"), Math.min(REQUEST_TIMEOUT_MS, remaining));
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (outcome === "timeout") return { done, status: "timeout" };
     done += batch.length;
   }
-  return { done };
+  return { done, status: "ok" };
 }
 
 async function notifySite(tags, deadline) {
   const url = process.env.SITE_REVALIDATE_URL;
   const secret = process.env.REVALIDATE_SECRET;
-  if (!url || !secret) return { skipped: "unconfigured" };
+  if (!url || !secret) return { skipped: "unconfigured", status: "skipped" };
   let done = 0;
   for (const batch of chunk(tags, SITE_BATCH)) {
     const remaining = deadline - Date.now();
-    if (remaining <= 0) return { done, skipped: "deadline" };
+    if (remaining <= 0) return { done, skipped: "deadline", status: "timeout" };
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json", "x-revalidate-secret": secret },
       body: JSON.stringify({ tags: batch }),
       signal: AbortSignal.timeout(Math.min(REQUEST_TIMEOUT_MS, remaining)),
     });
-    if (!res.ok) return { done, failed: res.status };
+    if (!res.ok) return { done, failed: res.status, status: "error" };
     done += batch.length;
   }
-  return { done };
+  return { done, status: "ok" };
+}
+
+// A rejected channel: an abort / timeout of the site call is "timeout",
+// anything else "error".
+function rejected(reason) {
+  const name = (reason && reason.name) || "failed";
+  return { error: name, status: name === "TimeoutError" || name === "AbortError" ? "timeout" : "error" };
+}
+
+// Both caches, one deadline. Every channel reports a confirmed status —
+// ok | timeout | error | skipped — so a caller can tell a refresh that
+// happened from one that was only attempted.
+async function send(tags, reason) {
+  const deadline = Date.now() + TOTAL_DEADLINE_MS;
+  const [cdn, site] = await Promise.allSettled([invalidateCdn(tags, deadline), notifySite(tags, deadline)]);
+  const summary = {
+    reason,
+    tags: tags.length,
+    cdn: cdn.status === "fulfilled" ? cdn.value : rejected(cdn.reason),
+    site: site.status === "fulfilled" ? site.value : rejected(site.reason),
+  };
+  if (summary.cdn.error || summary.site.error || summary.site.failed || summary.cdn.status === "timeout" || summary.site.status === "timeout") log("error", "notify incomplete", JSON.stringify(summary));
+  return summary;
 }
 
 // ids: listing ObjectIds (any number). reason: short code for the log.
@@ -96,22 +125,24 @@ async function notifyListingChanged(ids, reason = "change") {
     mock.calls.push({ tags, reason, batches: chunk(tags, SITE_BATCH).length });
     return { mocked: true };
   }
-  const deadline = Date.now() + TOTAL_DEADLINE_MS;
-  const [cdn, site] = await Promise.allSettled([invalidateCdn(tags, deadline), notifySite(tags, deadline)]);
-  const summary = {
-    reason,
-    tags: tags.length,
-    cdn: cdn.status === "fulfilled" ? cdn.value : { error: cdn.reason && cdn.reason.name },
-    site: site.status === "fulfilled" ? site.value : { error: site.reason && (site.reason.name || "failed") },
-  };
-  if (summary.cdn.error || summary.site.error || summary.site.failed) log("error", "notify incomplete", JSON.stringify(summary));
-  return summary;
+  return send(tags, reason);
+}
+
+// Any other cached public content (the homepage hero: "site-hero"). The site
+// route allow-lists the tags it accepts.
+async function notifyTags(tags, reason = "change") {
+  const list = [...new Set((Array.isArray(tags) ? tags : [tags]).filter((t) => typeof t === "string" && t))];
+  if (mock) {
+    mock.calls.push({ tags: list, reason, batches: chunk(list, SITE_BATCH).length });
+    return { mocked: true, reason, tags: list.length, cdn: { status: "mocked" }, site: { status: "mocked" } };
+  }
+  return send(list, reason);
 }
 
 function __setMock(m) {
   mock = m;
 }
 
-module.exports = { notifyListingChanged, tagsFor, tagFor, chunk, TAG_ALL, SITE_BATCH, CDN_BATCH, __setMock };
+module.exports = { notifyListingChanged, notifyTags, tagsFor, tagFor, chunk, TAG_ALL, SITE_BATCH, CDN_BATCH, __setMock };
 
 if (process.env.LISTING_CHANGE_MOCK === "1") __setMock({ calls: [] });

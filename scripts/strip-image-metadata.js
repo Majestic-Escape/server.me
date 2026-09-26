@@ -96,7 +96,8 @@ async function main() {
   const refs = [];
   for (const l of await ListingProperty.find({ photos: { $exists: true, $ne: [] } }).select("photos status").lean()) for (const url of l.photos || []) refs.push({ owner: `listing ${l._id} (${l.status})`, url });
   for (const u of await User.find({ profilePicture: { $exists: true, $ne: null } }).select("profilePicture").lean()) if (u.profilePicture) refs.push({ owner: `user ${u._id}`, url: u.profilePicture });
-  const unique = [...new Map(refs.map((r) => [r.url, r])).values()].filter((r) => storage.keyFromUrl(r.url));
+  // our bucket only, and never the homepage banner's own objects (site/…)
+  const unique = [...new Map(refs.map((r) => [r.url, r])).values()].filter((r) => storage.keyFromUrl(r.url) && !storage.isProtectedKey(storage.keyFromUrl(r.url)));
   console.log(`[images] ${refs.length} references, ${unique.length} unique objects in our bucket${LIMIT ? `, scanning ${LIMIT}` : ""}`);
   const stats = { scanned: 0, withMetadata: 0, withGps: 0, qr: 0, invalid: 0, rewritten: 0, cdnStale: 0 };
   const flagged = [];

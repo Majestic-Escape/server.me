@@ -19,7 +19,10 @@
 // byte of a photo descends from one sanitised source.
 const sharp = require("sharp");
 const jsQR = require("jsqr");
-const { VARIANT_WIDTHS } = require("./storage");
+// Vendored from origin/dev 788384e (services/imageSanitizer.js) as the byte-identity
+// baseline for listing and profile uploads; only this line differs (the original
+// reads the same constant from ./storage).
+const VARIANT_WIDTHS = [160, 320, 640, 960, 1280, 1600, 1920, 2560, 3840];
 
 const MAX_DIMENSION = 6000; // pixels; larger images are scaled down
 const QR_SCAN_MAX = 1200; // pixels; the QR scan runs on a downscaled copy
@@ -66,21 +69,6 @@ function rejectFor(err) {
   return new ImageRejected("INVALID_IMAGE", "The file is not a valid image", 400);
 }
 
-// True when a QR code is readable anywhere in the picture: the pipeline is
-// downscaled to at most QR_SCAN_MAX px and handed to jsQR as RGBA. Shared by
-// the listing/profile sanitiser (on the upload) and the homepage hero (on
-// its prepared raster), so both refuse exactly the same pictures.
-// requirePayload (the homepage banner): a "code" that decodes to nothing is
-// not a QR code — jsQR occasionally reads one out of dithered noise (an empty
-// version-1 symbol at a degenerate location), and an empty code can carry no
-// contact details. Listings keep the original rule (default).
-async function detectQr(pipeline, { requirePayload = false } = {}) {
-  const { data, info } = await pipeline.resize({ width: QR_SCAN_MAX, height: QR_SCAN_MAX, fit: "inside", withoutEnlargement: true }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
-  const found = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, { inversionAttempts: "attemptBoth" });
-  if (!found) return false;
-  return requirePayload ? !!(found.binaryData && found.binaryData.length > 0) : true;
-}
-
 /**
  * @param {Buffer} buffer the uploaded bytes
  * @param {string} mimetype as declared by the client (only a hint)
@@ -96,13 +84,16 @@ async function sanitizeImage(buffer, mimetype) {
   if (!meta.width || !meta.height) throw new ImageRejected("INVALID_IMAGE", "The file is not a valid image", 400);
   if (meta.width * meta.height > MAX_INPUT_PIXELS) throw new ImageRejected("IMAGE_TOO_LARGE", "The image has too many pixels", 413);
 
-  let qr;
+  let data;
+  let info;
   try {
     // QR detection on a bounded raster (the decode also proves the image is real)
-    qr = await detectQr(open(buffer).rotate());
+    const scan = open(buffer).rotate().resize({ width: QR_SCAN_MAX, height: QR_SCAN_MAX, fit: "inside", withoutEnlargement: true }).ensureAlpha().raw();
+    ({ data, info } = await scan.toBuffer({ resolveWithObject: true }));
   } catch (err) {
     throw rejectFor(err);
   }
+  const qr = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, { inversionAttempts: "attemptBoth" });
   if (qr) throw new ImageRejected("IMAGE_NOT_ALLOWED", "Images with QR codes aren't allowed");
 
   // Re-encode without metadata (sharp strips it unless withMetadata() is called)
@@ -227,4 +218,4 @@ function outputName(originalname, extension) {
   return `${base}.${extension}`;
 }
 
-module.exports = { sanitizeImage, makeVariants, stripJpegMetadataLossless, hasMetadata, outputName, ImageRejected, MAX_INPUT_PIXELS, variantQuality, variantWebp, VARIANT_EFFORT, detectQr, rejectFor };
+module.exports = { sanitizeImage, makeVariants, stripJpegMetadataLossless, hasMetadata, outputName, ImageRejected, MAX_INPUT_PIXELS, variantQuality, variantWebp, VARIANT_EFFORT };

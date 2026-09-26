@@ -13,6 +13,7 @@ const ACTIONS = [
   "kyc.document.view",
   "kyc.document.download",
   "kyc.document.manual_verify",
+  "admin.create",
 ];
 
 const adminAuditLogSchema = new mongoose.Schema(

@@ -17,6 +17,8 @@
 // have no place in a banner.
 const sharp = require("sharp");
 const { ImageRejected, detectQr, variantWebp } = require("./imageSanitizer");
+const quality = require("./imageQuality");
+const { HeroError } = require("./siteHeroOps");
 const storage = require("./storage");
 
 // The two boxes the site renders (user.website hero-section): desktop from
@@ -36,21 +38,53 @@ const RATIO_TOLERANCE = 0.01; // within 1% of the box: used whole (object-cover 
 const RATIO_CONFIRM = 0.35; // beyond 35%: only with the admin's explicit "use anyway"
 const RENDITION_STEPS = Object.freeze([640, 960, 1280, 1600, 1920, 2560, 3840]);
 const AVIF = Object.freeze({ quality: 60, effort: 4 });
-// Smaller renditions carry more detail per pixel: q60 — measured best from
-// 1920 px up — misses the plan's bars below it (SSIM-Y p1 ≥ 0.94, chroma
-// ≥ 43 dB; mobile SSIM-Y ≥ 0.988; WebP SSIM-Y ≥ 0.985). Measured on both
-// designer artworks (tests/pw-final/evidence/audit/quality-tune.json): the
-// lowest quality that meets them at each width. w1280 at q64 costs +9% bytes
-// over q60 (the one width where the bars and "≤ today + 20%" at that
-// viewport can't both hold — see the audit report).
-// Mobile q62 everywhere else: at q60 the mobile renditions scored a hair
-// below the static files made from the same art (SSIM 0.9893 vs 0.9894);
-// q62 is above them and keeps w1060 within the 150 KB budget (149 KB).
-const AVIF_QUALITY = Object.freeze({ desktop: Object.freeze({ 960: 76, 1280: 64, 1600: 64 }), mobile: Object.freeze({ 640: 72 }) });
+// Every rendition is VERIFIED while it is prepared (encodeVerified below),
+// scored against the prepared raster at its width — SSIM-Y mean and 1st
+// percentile, chroma PSNR, unrounded — on two tiers:
+//  1. the FLOOR (always enforced): at least as good as today's static hero
+//     pipeline (scripts/optimize-static-images.mjs: AVIF q55 effort 6, WebP
+//     q75 effort 5) would make of the SAME artwork at the same width — "no
+//     drop in quality", for every upload: a rendition that can't beat
+//     today's encode on every measure IS today's encode.
+//  2. the plan's TARGETS (measured on the real banners; photographic grain
+//     can make them unreachable at any reasonable size):
+//       AVIF: SSIM-Y ≥ 0.986 desktop (≥ every value today's static files
+//             measured, 0.983–0.986) / ≥ 0.988 mobile, p1 ≥ 0.94, chroma ≥ 43 dB
+//       WebP: SSIM-Y ≥ 0.985, p1 ≥ 0.93
+//     The quality is raised until they hold. A rendition that can't reach
+//     them (or only over the size budget) is flagged on the draft
+//     (BELOW_QUALITY_TARGET / OVER_BYTE_BUDGET, with the numbers), and
+//     publishing it needs an explicit acknowledgment; with
+//     SITE_HERO_QUALITY_POLICY=strict such a draft is refused instead.
+//     Which of the two applies is the owner's decision.
+const TODAY_PIPELINE = Object.freeze({ avif: Object.freeze({ quality: 55, effort: 6 }), webp: Object.freeze({ quality: 75, effort: 5 }) });
+const strictPolicy = () => process.env.SITE_HERO_QUALITY_POLICY === "strict";
+const BARS = Object.freeze({
+  avif: Object.freeze({ desktop: Object.freeze({ ssim: 0.986, p1: 0.94, chroma: 43 }), mobile: Object.freeze({ ssim: 0.988, p1: 0.94, chroma: 43 }) }),
+  webp: Object.freeze({ desktop: Object.freeze({ ssim: 0.985, p1: 0.93, chroma: 0 }), mobile: Object.freeze({ ssim: 0.985, p1: 0.93, chroma: 0 }) }),
+});
+// Where the search starts (measured on both designer artworks,
+// tests/pw-final/evidence/audit/quality-tune.json, w1280-alternatives.json):
+// smaller renditions carry more detail per pixel and need more quality.
+const AVIF_START = Object.freeze({
+  desktop: Object.freeze({ 960: Object.freeze({ quality: 76, effort: 4 }), 1280: Object.freeze({ quality: 62, effort: 8 }), 1600: Object.freeze({ quality: 64, effort: 4 }) }),
+  mobile: Object.freeze({ 640: Object.freeze({ quality: 72, effort: 4 }) }),
+});
 const AVIF_DEFAULT = Object.freeze({ desktop: 60, mobile: 62 });
 const WEBP_BOOST = Object.freeze({ desktop: Object.freeze({ 960: 4 }), mobile: Object.freeze({}) });
+const AVIF_MAX_QUALITY = 90;
+const WEBP_MAX_QUALITY = 95;
+const STEP_UP = 6; // the one extra quality step a rendition may take
+// The size budget (plan: today's static files + 20% on desktop, 150 KB for
+// the mobile w1060): only at the widths the static hero had (tier 2 above).
+const BYTE_BUDGET = Object.freeze({ desktop: Object.freeze({ 1280: 153074, 1920: 236004, 2560: 302665 }), mobile: Object.freeze({ 1060: 153600 }) });
+const budgetFor = (slot, width) => {
+  const b = BYTE_BUDGET[slot][width];
+  const scale = Number(process.env.SITE_HERO_BYTE_BUDGET_SCALE) || 1; // tests only
+  return b ? Math.round(b * scale) : null;
+};
 function avifFor(width, slot) {
-  return { ...AVIF, quality: AVIF_QUALITY[slot][width] || AVIF_DEFAULT[slot] };
+  return { ...AVIF, ...(AVIF_START[slot][width] || { quality: AVIF_DEFAULT[slot] }) };
 }
 function webpFor(width, slot) {
   const base = variantWebp(width);
@@ -261,16 +295,81 @@ async function renderOutputs(raster, slot, onOutput, { deadline, signal } = {}) 
   const lqipBuf = await encode(fromRaster(raster).resize({ width: LQIP_WIDTH }).webp({ quality: 40 }));
   const lqip = `data:image/webp;base64,${lqipBuf.toString("base64")}`;
   const widths = heroRenditionWidths(raster.width, slot);
+  const overBudget = [];
+  const belowTarget = [];
+  const settings = [];
   for (const width of widths) {
+    // the reference: the raster at this width (every attempt encodes it)
+    checkAbort(signal);
+    let refPipe = fromRaster(raster);
+    if (width < raster.width) refPipe = refPipe.resize({ width, kernel: "lanczos3" });
+    let ref;
+    try {
+      ref = await refPipe.raw().timeout(limit()).toBuffer({ resolveWithObject: true });
+    } catch (err) {
+      throw encodeError(err);
+    }
+    const refPlanes = quality.planes(ref.data, ref.info.channels);
     for (const format of ["avif", "webp"]) {
-      let p = fromRaster(raster);
-      if (width < raster.width) p = p.resize({ width, kernel: "lanczos3" });
-      p = format === "avif" ? p.avif(avifFor(width, slot)) : p.webp(webpFor(width, slot));
-      const buffer = await encode(p);
-      await onOutput({ kind: "rendition", format, width, keyWidth: renditionKeyWidth(width), buffer });
+      const chosen = await encodeVerified({ ref, refPlanes, slot, width, format, encode, signal });
+      settings.push({ width, format, quality: chosen.quality, effort: chosen.effort, bytes: chosen.buffer.length, metrics: chosen.metrics, floor: chosen.floor });
+      if (chosen.belowTarget) {
+        belowTarget.push({ width, format, metrics: chosen.metrics, target: BARS[format][slot] });
+        if (strictPolicy()) throw new HeroError(422, "HERO_QUALITY_LIMIT", `At ${width} px (${format.toUpperCase()}) this artwork stays below the website's quality target: fine grain or noise, tiny patterns or very fine coloured lettering don't survive web compression well. Reduce grain or noise, simplify the finest texture, and export it again.`, { slot, width, format, metrics: chosen.metrics, target: BARS[format][slot] });
+      }
+      const budget = format === "avif" ? budgetFor(slot, width) : null;
+      if (budget && chosen.buffer.length > budget) {
+        overBudget.push({ width, bytes: chosen.buffer.length, budget });
+        if (strictPolicy()) {
+          throw new HeroError(422, "HERO_BYTE_BUDGET", `At ${width} px this artwork needs ${Math.round(chosen.buffer.length / 1024)} KB to keep its quality — the website's limit there is ${Math.round(budget / 1024)} KB. Simplify fine texture or grain, or reduce noise, and export it again.`, { slot, width, bytes: chosen.buffer.length, budget });
+        }
+      }
+      await onOutput({ kind: "rendition", format, width, keyWidth: renditionKeyWidth(width), buffer: chosen.buffer, metrics: chosen.metrics });
     }
   }
-  return { lqip: lqip.length <= LQIP_MAX_CHARS ? lqip : "", widths };
+  return { lqip: lqip.length <= LQIP_MAX_CHARS ? lqip : "", widths, overBudget, belowTarget, settings };
+}
+
+// One rendition, verified (see the tiers above), with a bounded cost — at
+// most three encodes: today's (the floor), the measured start setting, and
+// one step up (+STEP_UP quality) when the start misses the targets and the
+// step still fits the size budget. The best of them that beats the floor on
+// every measure is used (targets first); if none does, today's encode
+// itself. Whatever remains below target or over budget is reported.
+async function encodeVerified({ ref, refPlanes, slot, width, format, encode, signal }) {
+  const bars = BARS[format][slot];
+  const w = ref.info.width;
+  const h = ref.info.height;
+  const src = () => sharp(ref.data, { raw: ref.info });
+  const measure = async (buffer) => {
+    const got = await sharp(buffer).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+    return quality.compare(refPlanes, got.data, got.info.channels, w, h);
+  };
+  const meets = (m, t) => m.ssim >= t.ssim && m.p1 >= t.p1 && m.chroma >= t.chroma;
+  const tryOne = async (q, effort) => {
+    checkAbort(signal);
+    const buffer = await encode(format === "avif" ? src().avif({ quality: q, effort }) : src().webp({ ...webpFor(width, slot), quality: q }));
+    return { buffer, metrics: await measure(buffer), quality: q, effort: format === "avif" ? effort : webpFor(width, slot).effort };
+  };
+  // the floor: what today's static pipeline makes of this raster
+  checkAbort(signal);
+  const t = TODAY_PIPELINE[format];
+  const floorBuf = await encode(format === "avif" ? src().avif({ quality: t.quality, effort: t.effort }) : src().webp({ quality: t.quality, effort: t.effort }));
+  const floor = await measure(floorBuf);
+  const today = { buffer: floorBuf, metrics: floor, quality: t.quality, effort: t.effort, todayEncode: true };
+  const budget = format === "avif" ? budgetFor(slot, width) : null;
+  const start = format === "avif" ? avifFor(width, slot) : { quality: webpFor(width, slot).quality, effort: undefined };
+  const maxQ = format === "avif" ? AVIF_MAX_QUALITY : WEBP_MAX_QUALITY;
+  const tried = [await tryOne(start.quality, start.effort)];
+  const first = tried[0];
+  const firstFits = !budget || first.buffer.length <= budget;
+  if (!(meets(first.metrics, bars) && meets(first.metrics, floor)) && firstFits && start.quality < maxQ) {
+    const up = await tryOne(Math.min(maxQ, start.quality + STEP_UP), start.effort);
+    if (!budget || up.buffer.length <= budget) tried.push(up);
+  }
+  const valid = tried.filter((c) => meets(c.metrics, floor));
+  const chosen = valid.find((c) => meets(c.metrics, bars)) || valid[valid.length - 1] || today;
+  return { ...chosen, floor, belowTarget: !meets(chosen.metrics, bars) };
 }
 
 module.exports = {
@@ -282,7 +381,12 @@ module.exports = {
   RENDITION_STEPS,
   RENDITION_TYPES,
   AVIF,
-  AVIF_QUALITY,
+  AVIF_START,
+  BARS,
+  BYTE_BUDGET,
+  budgetFor,
+  TODAY_PIPELINE,
+  encodeVerified,
   avifFor,
   webpFor,
   MASTER_JPEG,

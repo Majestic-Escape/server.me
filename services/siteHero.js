@@ -142,6 +142,8 @@ function artworkView(a, slot) {
     height: a.height,
     lqip: a.lqip || "",
     source: a.source || null,
+    overBudget: a.overBudget || [],
+    belowTarget: a.belowTarget || [],
     renditions: key
       ? img.heroRenditionWidths(a.width, slot).map((w) => ({ width: w, avif: storage.cdnUrl(img.renditionKey(key, w, "avif")), webp: storage.cdnUrl(img.renditionKey(key, w, "webp")) }))
       : [],
@@ -535,6 +537,8 @@ async function stageDraft(req, actor, slot, file, body) {
     if (region.deviation > img.RATIO_CONFIRM) notices.push("RATIO_ACCEPTED");
     if (raster.width < Math.round(spec.recommended[0] * 0.9)) notices.push("BELOW_RECOMMENDED");
     if (clientReencoded) notices.push("CLIENT_REENCODED");
+    if (rendered.overBudget.length) notices.push("OVER_BYTE_BUDGET");
+    if (rendered.belowTarget.length) notices.push("BELOW_QUALITY_TARGET");
     const stagedAt = new Date();
     const draft = {
       url: masterUrl,
@@ -547,6 +551,12 @@ async function stageDraft(req, actor, slot, file, body) {
       stagedAt,
       expiresAt: new Date(stagedAt.getTime() + DRAFT_TTL_MS),
       notices,
+      // widths where the verified file is over the size budget: { width, bytes, budget }
+      overBudget: rendered.overBudget,
+      // renditions that met the floor (today's pipeline) but not the plan's targets
+      belowTarget: rendered.belowTarget,
+      // the encoder settings each rendition needed to meet the quality bars
+      encoding: rendered.settings,
     };
 
     installAttempted = true;
@@ -563,7 +573,7 @@ async function stageDraft(req, actor, slot, file, body) {
       if (replacedKey) push.retired = { masterKeys: [replacedKey], retiredAt: stagedAt };
       const res = await coll().updateOne(filter, { $set: { [`draft.${slot}`]: draft, lease: null, updatedAt: stagedAt }, $push: push, $pull: { pending: { masterKey } } }, { session });
       if (res.matchedCount !== 1) return { abort: true };
-      await adminAudit.record(req, "site.hero.stage", { targetType: "SiteSetting", targetKey: DOC_ID }, { slot, opId: op.opId, width: draft.width, height: draft.height, notices }, { session });
+      await adminAudit.record(req, "site.hero.stage", { targetType: "SiteSetting", targetKey: DOC_ID }, { slot, opId: op.opId, width: draft.width, height: draft.height, notices, overBudget: draft.overBudget, belowTarget: draft.belowTarget }, { session });
       return { ok: true };
     });
 
@@ -718,7 +728,8 @@ async function publish(req, actor, body) {
   const expectedVersion = parseVersion(body.expectedVersion);
   const slots = parseSlots(body.slots);
   const alt = parseAlt(body.alt);
-  const fp = ops.fingerprint({ action: "publish", expectedVersion, slots, alt });
+  const acknowledgeShortfall = parseBool(body.acknowledgeShortfall, "acknowledgeShortfall");
+  const fp = ops.fingerprint({ action: "publish", expectedVersion, slots, alt, acknowledgeShortfall });
   await ensureDoc();
   const doc = await readDoc();
   await assertEnvironment(doc);
@@ -733,6 +744,12 @@ async function publish(req, actor, body) {
     const d = draftOf(doc, s);
     if (!d || d.opId !== slots[s]) throw new HeroError(409, "HERO_DRAFT_CHANGED", `The ${s} draft was changed by someone else — reload and review again`, { slot: s });
     if (new Date(d.expiresAt).getTime() <= now) throw new HeroError(409, "HERO_DRAFT_EXPIRED", `The ${s} draft expired — prepare it again`, { slot: s });
+  }
+  // A draft below the quality target or over the size budget goes live only
+  // when the admin has seen that and said so.
+  const shortfalls = selected.filter((s) => (draftOf(doc, s).notices || []).some((n) => n === "BELOW_QUALITY_TARGET" || n === "OVER_BYTE_BUDGET"));
+  if (shortfalls.length && !acknowledgeShortfall) {
+    throw new HeroError(409, "HERO_ACK_REQUIRED", `The ${shortfalls.join(" and ")} image is below the website's quality target or over its size budget — review the details and confirm to publish it anyway`, { slots: shortfalls });
   }
 
   const at = new Date(now);
@@ -753,7 +770,7 @@ async function publish(req, actor, body) {
   const twin = await commitBannerChange(req, {
     filter,
     update: { $set, $push: { receipts: ops.pushReceipt(r), ...(retired.length ? { retired: { $each: retired } } : {}) } },
-    audit: { action: "site.hero.publish", details: { version, slots: selected, replaced: retired.length } },
+    audit: { action: "site.hero.publish", details: { version, slots: selected, replaced: retired.length, acknowledgedShortfall: shortfalls.length ? shortfalls : undefined } },
     slots,
     op,
     fp,

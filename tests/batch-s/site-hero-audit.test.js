@@ -785,3 +785,97 @@ test("SEC-H: five registrations of one new e-mail at once create exactly one adm
   await require("../../scripts/privileged-identities").report({ log: (l) => lines.push(String(l)) });
   assert.ok(lines.some((l) => l.includes("DUPLICATE admin e-mail") && l.includes(dup)), lines.join("\n"));
 });
+
+// --- batch 4: verified quality — floor always, targets flagged, acknowledgment, strict policy -------
+const meetsFloor = (e) => e.metrics.ssim >= e.floor.ssim && e.metrics.p1 >= e.floor.p1 && e.metrics.chroma >= e.floor.chroma;
+function resetPolicy() {
+  delete process.env.SITE_HERO_QUALITY_POLICY;
+  delete process.env.SITE_HERO_BYTE_BUDGET_SCALE;
+}
+
+test("quality floor: every rendition of clean, flat, grainy and colourful art is at least as good as today's pipeline on every measure (verified per upload)", async () => {
+  resetPolicy();
+  const fixtures = [
+    ["desktop", await hh.photo(1920, 740, { hue: 15 })],
+    ["desktop", await hh.photo(2000, 771, { hue: 300, grain: 8 })],
+    ["mobile", await hh.photo(530, 720, { hue: 200, grain: 8 })],
+    ["mobile", await require("sharp")({ create: { width: 540, height: 734, channels: 3, background: { r: 30, g: 120, b: 200 } } }).png().toBuffer()],
+  ];
+  for (const [slot, buf] of fixtures) {
+    await reset();
+    const r = await hh.stage(AT, slot, buf, { type: "image/png" });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const d = (await heroDoc()).draft[slot];
+    assert.ok(d.encoding && d.encoding.length >= 2, "every rendition's settings and scores are recorded");
+    for (const e of d.encoding) assert.ok(meetsFloor(e), `${slot} ${e.format}@${e.width}: ${JSON.stringify(e)}`);
+  }
+});
+
+test("targets: art that can't reach them is prepared, flagged with the numbers; publishing it needs an explicit acknowledgment (audited)", async () => {
+  resetPolicy();
+  const d = await hh.stage(AT, "desktop", await hh.photo(1920, 740, { hue: 15, grain: 8 }));
+  const m = await hh.stage(AT, "mobile", await hh.photo(530, 720, { hue: 200 }));
+  assert.equal(d.status, 201);
+  assert.equal(m.status, 201);
+  const dd = d.body.state.draft.desktop;
+  assert.ok(dd.notices.includes("BELOW_QUALITY_TARGET"), JSON.stringify(dd.notices));
+  assert.ok(dd.belowTarget.length >= 1 && dd.belowTarget.every((b) => b.width && b.format && b.metrics && b.target), JSON.stringify(dd.belowTarget));
+  const st = await hh.adminState(AT);
+  const body = { opToken: st.opToken, expectedVersion: st.version, slots: { desktop: st.draft.desktop.opId, mobile: st.draft.mobile.opId }, alt: "Grainy banner" };
+  const refused = await h.api("POST", "/site/admin/hero/publish", { token: AT, body });
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.code, "HERO_ACK_REQUIRED");
+  assert.deepEqual(refused.body.slots, ["desktop"]);
+  assert.equal((await heroDoc()).version, 0, "nothing went live");
+  const st2 = await hh.adminState(AT);
+  const ok = await h.api("POST", "/site/admin/hero/publish", { token: AT, body: { ...body, opToken: st2.opToken, acknowledgeShortfall: true } });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  const row = await AdminAuditLog().findOne({ action: "site.hero.publish" }).sort({ createdAt: -1 }).lean();
+  assert.deepEqual(row.details.acknowledgedShortfall, ["desktop"]);
+});
+
+test("strict policy: art below the targets is refused at preparation (422) — nothing stored, lease released, failure recorded, the live banner untouched", async () => {
+  resetPolicy();
+  await banner(); // a live custom banner
+  const live = (await heroDoc()).desktop.url;
+  const uploadsBefore = objects().length;
+  process.env.SITE_HERO_QUALITY_POLICY = "strict";
+  try {
+    const st = await hh.adminState(AT);
+    const r = await hh.stage(AT, "desktop", await hh.photo(1920, 740, { hue: 15, grain: 8 }), { opToken: st.opToken, expectedDraftOpId: "" });
+    assert.equal(r.status, 422, JSON.stringify(r.body));
+    assert.equal(r.body.code, "HERO_QUALITY_LIMIT");
+    assert.ok(r.body.width && r.body.format && r.body.metrics && r.body.target, "the response says where and by how much");
+    assert.match(r.body.message, /grain|noise/i, "actionable advice");
+    const doc = await heroDoc();
+    assert.equal(doc.draft.desktop, null);
+    assert.equal(doc.lease, null);
+    assert.equal(doc.receipts.find((x) => x.opId === opIdOf(st.opToken)).status, "failed");
+    assert.equal(doc.desktop.url, live, "the live banner is unchanged");
+    assert.equal(objects().length, uploadsBefore, "everything the job stored was removed");
+  } finally {
+    resetPolicy();
+  }
+});
+
+test("size budget: over the budget is flagged (bytes and budget per width); strict refuses it (HERO_BYTE_BUDGET)", async () => {
+  resetPolicy();
+  process.env.SITE_HERO_BYTE_BUDGET_SCALE = "0.01";
+  try {
+    const r = await hh.stage(AT, "desktop", await hh.photo(2600, 1002, { hue: 45 }));
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    const d = r.body.state.draft.desktop;
+    assert.ok(d.notices.includes("OVER_BYTE_BUDGET"));
+    assert.ok(d.overBudget.length >= 1 && d.overBudget.every((o) => o.bytes > o.budget && [1280, 1920, 2560].includes(o.width)), JSON.stringify(d.overBudget));
+    process.env.SITE_HERO_QUALITY_POLICY = "strict";
+    await reset();
+    process.env.SITE_HERO_BYTE_BUDGET_SCALE = "0.01";
+    const s = await hh.stage(AT, "desktop", await hh.photo(2600, 1002, { hue: 45 }));
+    assert.equal(s.status, 422, JSON.stringify(s.body));
+    assert.equal(s.body.code, "HERO_BYTE_BUDGET");
+    assert.ok(s.body.bytes > s.body.budget);
+    assert.equal(objects().length, 0);
+  } finally {
+    resetPolicy();
+  }
+});

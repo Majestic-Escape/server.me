@@ -42,20 +42,25 @@ both to the site's built-in banner. A custom/default mix never exists.
 - **One image job at a time** (the lease), really cancelled at its budget (sharp timeouts, `ManagedUpload.abort()`), unable to install after it lost the lease. The lease records the request's fingerprint: only the very same request is told "processing"; its id with other content is `OP_ID_REUSED`.
 - **Nothing referenced is ever deleted.** Objects live under the protected `site/` prefix: `storage.deleteObjects` refuses them unless the hero service or its sweep asks explicitly, users can't reference them (`isOurImageUrl`), `/uploads/delete` answers 409, maintenance scripts filter them out. Cleanup is the sweep's job.
 
-## Quality and speed (measured, sharp 0.34.5, the real banners, strict gates)
+## Quality: verified for every upload
 
-Every output is scored against the ORIGINAL file resized to the same width (SSIM-Y mean / 1st percentile, chroma PSNR, and the lettering region), next to today's static files at equal widths — `tests/pw-final/hero-quality-strict.cjs`, `evidence/audit/quality-strict-final.json`. The plan's bars apply at EVERY delivered width with no slack: AVIF SSIM-Y ≥ today (desktop) / ≥ 0.988 (mobile), p1 ≥ 0.94, chroma ≥ 43 dB, lettering ≥ today; WebP SSIM-Y ≥ today and ≥ 0.985, p1 ≥ 0.93; JPEG master ≥ 0.995. All 18 outputs of both artworks pass.
+A fixed encoder setting can't promise quality (or size) for artwork nobody has measured, so every rendition is **verified while the draft is prepared** (`services/siteHeroImage.js`, `encodeVerified`). It is scored against the prepared raster at its width: SSIM-Y mean and 1st percentile, and chroma PSNR (`services/imageQuality.js`), unrounded.
 
-A single AVIF quality misses the bars at the smaller widths (more detail per pixel after downscaling), so the quality is set per width — the lowest that meets them (`AVIF_QUALITY`, measured: `evidence/audit/quality-tune.json`):
+1. **The floor, always.** A rendition must be at least as good, on every measure, as today's static hero pipeline would make of the same artwork (`scripts/optimize-static-images.mjs`: AVIF q55 effort 6, WebP q75 effort 5). If no setting tried beats today's encode on every measure, today's encode itself is used. "No drop in quality" therefore holds by construction for every upload.
+2. **The plan's targets.** AVIF: SSIM-Y ≥ 0.986 desktop (at least every value today's static files measured, 0.983–0.986) or ≥ 0.988 mobile, p1 ≥ 0.94, chroma ≥ 43 dB. WebP: SSIM-Y ≥ 0.985, p1 ≥ 0.93. The encoder starts from the per-width setting measured on the real banners and, if that misses the targets, tries one step up (+6 quality), but only when the step still fits the size budget. That makes at most three encodes per rendition.
+3. **The size budget.** Today's static files + 20% at the widths the static hero had (desktop 1280 / 1920 / 2560 px: 153,074 / 236,004 / 302,665 bytes), and 150 KB for mobile at 1060 px.
 
-| desktop | w960 | w1280 | w1600 | w1920 | w2560 |
-|---|---|---|---|---|---|
-| AVIF quality / KB / SSIM-Y / p1 / chroma | q76 · 132 · .9887 · .961 · 43.4 | q64 · 156 · .9885 · .944 · 43.0 | q64 · 203 · .9898 · .950 · 43.8 | q60 · 222 · .9876 · .941 · 43.7 | q60 · 286 · .9880 · .943 · 44.7 |
-| today's static AVIF (q55) | — | 125 · .9830 · .915 · 41.6 | — | 192 · .9849 · .927 · 43.1 | 246 · .9860 · .932 · 44.1 |
+**Acceptance policy.** A draft whose renditions miss the targets, or exceed the budget, is prepared and flagged: `BELOW_QUALITY_TARGET` / `OVER_BYTE_BUDGET`, with the widths, bytes and scores. Publishing it needs the admin's explicit confirmation (`acknowledgeShortfall`; otherwise `409 HERO_ACK_REQUIRED`), and the confirmation is audited. With `SITE_HERO_QUALITY_POLICY=strict`, such a draft is refused at preparation instead (`422 HERO_QUALITY_LIMIT` / `HERO_BYTE_BUDGET`, with actionable advice); nothing is kept and the live banner is untouched. **Which mode ships is the owner's decision**; the default is the confirmation mode.
 
-Mobile (1060 px art): w640 q72 · 109 KB · .9880 · .950; w960 q62 · 135 KB · .9894 · .946; w1060 q62 · **149 KB** · .9901 · .948 (q60 was a hair below the static files of the same art: .9893 vs .9894; the 150 KB budget holds with 1 KB to spare on this art — there is no byte guard, a more detailed upload can exceed it). JPEG q95 4:4:4 masters: .9996 / .9953. Desktop renditions start at 960 px (the desktop art is shown from 768 px) and stop at 2560 px.
+**Measured locally** (`tests/pw-final/evidence/audit/verified-encode-profile-v2.json`):
 
-Bytes per viewport against today: 1440@1 +6% (w1600 203 KB vs w1920 192 KB), 1440@2 +16%, 1920@1 +16%, 768@1 +6%, mobile w1060 141 KB (≤ 150 KB). **1280@1 is +25%** (w1280 q64 156 KB vs 125 KB): at that width the absolute bars and "≤ today + 20%" can't both hold (q60: 143 KB, +14%, p1 .935, chroma 42.3 — still well above today's 1280 file). The plan's byte gate is defined at the 1440 viewports; this one is recorded for the owner, not hidden.
+| Artwork | Preparation time | Result |
+|---|---|---|
+| Designer desktop (2805 px) | ~26 s | every target met; w1280 is **792 bytes (0.5%) over its budget** at the only setting that meets the targets there (q62 effort 8) — flagged |
+| Designer mobile | ~16 s | every target met, within budget |
+| Grain-heavy 3840 px stress image | ~39 s | within every budget; 4 renditions below target — flagged |
+
+Before verification, a desktop draft took about 11 s. Durations on Vercel are unmeasured (deployment check).
 
 ## Routes
 
@@ -71,11 +76,11 @@ Bytes per viewport against today: 1440@1 +6% (w1600 203 KB vs w1920 192 KB), 144
 | `POST /site/admin/hero/restore-default` | 401 | 403 | 200 | `{opToken, expectedVersion}`; drafts are kept |
 | `GET /site/cron/hero-sweep` | 401 | 401 | 401 | Vercel Cron (`Bearer CRON_SECRET`), daily 21:15 UTC |
 
-Error codes: `HERO_VERSION_CONFLICT`, `HERO_DRAFT_CHANGED`, `HERO_DRAFT_EXPIRED`, `HERO_WRONG_ENVIRONMENT` (409), `HERO_BUSY` (409, `retryAfter`), `HERO_BOTH_SLOTS_REQUIRED`, `HERO_NO_SLOTS`, `INVALID_ALT`, `INVALID_FOCAL`, `INVALID_FIELDS` (400), `HERO_RATIO_CONFIRM`, `HERO_TOO_SMALL`, `IMAGE_NOT_ALLOWED` (422), `HEIC_NOT_SUPPORTED`, `UNSUPPORTED_FORMAT`, `UNSUPPORTED_FILE_TYPE` (415), `FILE_TOO_LARGE`, `IMAGE_TOO_LARGE` (413), `OP_TOKEN_*` (400/403), `OP_EXPIRED` (410), `OP_ID_REUSED` (422), `HERO_TOO_MANY_OPS` (429), `STORAGE_ERROR` (502), `HERO_TIMEOUT`, `HERO_OUTCOME_UNKNOWN`, `AUDIT_UNAVAILABLE`, `HERO_CLEANUP_BACKLOG` (503).
+Error codes: `HERO_VERSION_CONFLICT`, `HERO_DRAFT_CHANGED`, `HERO_DRAFT_EXPIRED`, `HERO_WRONG_ENVIRONMENT`, `HERO_ACK_REQUIRED` (409), `HERO_BUSY` (409, `retryAfter`), `HERO_BOTH_SLOTS_REQUIRED`, `HERO_NO_SLOTS`, `INVALID_ALT`, `INVALID_FOCAL`, `INVALID_FIELDS` (400), `HERO_RATIO_CONFIRM`, `HERO_TOO_SMALL`, `IMAGE_NOT_ALLOWED`, `HERO_QUALITY_LIMIT`, `HERO_BYTE_BUDGET` (422, strict policy), `HEIC_NOT_SUPPORTED`, `UNSUPPORTED_FORMAT`, `UNSUPPORTED_FILE_TYPE` (415), `FILE_TOO_LARGE`, `IMAGE_TOO_LARGE` (413), `OP_TOKEN_*` (400/403), `OP_EXPIRED` (410), `OP_ID_REUSED` (422), `HERO_TOO_MANY_OPS` (429), `STORAGE_ERROR` (502), `HERO_TIMEOUT`, `HERO_OUTCOME_UNKNOWN`, `AUDIT_UNAVAILABLE`, `HERO_CLEANUP_BACKLOG` (503).
 
 ## Data
 
-One document `sitesettings/home_hero` (no new index): `namespace` (the key prefix of the environment that created it — see *Environments*), `version`, `alt`, `desktop`, `mobile`, `draft.{desktop,mobile}` (7-day expiry), `retired[]` (until the sweep confirms deletion), `pending[]` (≤ 200, never trimmed: when full, new image jobs get `HERO_CLEANUP_BACKLOG` until the sweep has run), `receipts[]` (≥ 7 days, ≤ 500), `lease`, `lastSweepAt`. The admin read and the operation lookup never load the bookkeeping arrays (projections; measured with a full document: 1.2 KB and 0.3 KB instead of 148 KB). Objects: `site/hero/<slot>/<uuid>.jpg` + `…/v1/w<key>.{avif,webp}` — a rendition of an actual width *w* lives under the smallest standard width ≥ *w* (1060 → `w1280`); the site derives the same keys (`tests/batch-s/fixtures/hero-renditions-vectors.json`).
+One document `sitesettings/home_hero` (no new index): `namespace` (the key prefix of the environment that created it — see *Environments*), `version`, `alt`, `desktop`, `mobile`, `draft.{desktop,mobile}` (7-day expiry; each carries `encoding` — the setting, bytes, scores and floor of every rendition — plus `overBudget` / `belowTarget`), `retired[]` (until the sweep confirms deletion), `pending[]` (≤ 200, never trimmed: when full, new image jobs get `HERO_CLEANUP_BACKLOG` until the sweep has run), `receipts[]` (≥ 7 days, ≤ 500), `lease`, `lastSweepAt`. The admin read and the operation lookup never load the bookkeeping arrays (projections; measured with a full document: 1.2 KB and 0.3 KB instead of 148 KB). Objects: `site/hero/<slot>/<uuid>.jpg` + `…/v1/w<key>.{avif,webp}` — a rendition of an actual width *w* lives under the smallest standard width ≥ *w* (1060 → `w1280`); the site derives the same keys (`tests/batch-s/fixtures/hero-renditions-vectors.json`).
 
 ## Outcome rules
 
@@ -107,7 +112,7 @@ No new service, no Redis. Mongo: public read ≤ 1 op per CDN/data-cache miss (p
 
 ## Rollout / kill switches
 
-Backward compatible: the public read returns nulls until something is published, and the site falls back to its bundled banner. *Restore bundled default* is the instant lever; the site's `HERO_DYNAMIC=off` (redeploy) ignores the API entirely; `HERO_DELIVERY=cdn` (redeploy) serves the renditions from the CDN host instead of the site's `/_hero` path. `SITE_HERO_PREFIX=_qa/site/hero/<run>/` isolates a QA run (see *Environments*). Tunables for tests: `SITE_HERO_LEASE_MS`, `SITE_HERO_BUDGET_MS`, `SITE_HERO_PUT_TIMEOUT_MS`, `SITE_HERO_WARMUP=off`, `SPACES_WRITE_PREFIX` (the QA harness), `LISTEN_HOST` (the e2e server).
+Backward compatible: the public read returns nulls until something is published, and the site falls back to its bundled banner. *Restore bundled default* is the instant lever; the site's `HERO_DYNAMIC=off` (redeploy) ignores the API entirely; `HERO_DELIVERY=cdn` (redeploy) serves the renditions from the CDN host instead of the site's `/_hero` path. `SITE_HERO_PREFIX=_qa/site/hero/<run>/` isolates a QA run (see *Environments*). Tunables for tests: `SITE_HERO_LEASE_MS`, `SITE_HERO_BUDGET_MS`, `SITE_HERO_PUT_TIMEOUT_MS`, `SITE_HERO_WARMUP=off`, `SPACES_WRITE_PREFIX` (the QA harness), `LISTEN_HOST` (the e2e server), `SITE_HERO_BYTE_BUDGET_SCALE` (tests). Policy: `SITE_HERO_QUALITY_POLICY=strict` (see *Quality*).
 
 ## Limits and follow-ups
 

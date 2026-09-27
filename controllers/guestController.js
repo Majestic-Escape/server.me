@@ -220,9 +220,25 @@ exports.renameUser = async (req, res) => {
     await session.endSession().catch(() => {});
   }
   if (!outcome) return fail(res, 500, "SERVER_ERROR", "Rename failed");
-  if (outcome.body) return res.status(outcome.status).json(outcome.body);
+  if (outcome.body) {
+    // Batch P: a host's name is shown on their public stay pages — after a
+    // committed rename, purge the catalogue caches for exactly their active
+    // listings (like banUser). notifyListingChanged never throws and is
+    // bounded (~4 s); a failed id read only costs the 5-minute TTL.
+    if (outcome.body.changed) await purgeRenamedHost(outcome.body.data._id);
+    return res.status(outcome.status).json(outcome.body);
+  }
   return fail(res, outcome.status, outcome.code, outcome.message, outcome.extra || {});
 };
+
+async function purgeRenamedHost(userId) {
+  try {
+    const ids = await ListingProperty.distinct("_id", { host: userId, status: "active" });
+    if (ids.length) await notifyListingChanged(ids, "host-rename");
+  } catch (err) {
+    console.error("renameUser: catalogue purge skipped", err && err.message);
+  }
+}
 
 // PATCH /guests/ban/:userId  { active } — active=true bans, false unbans.
 exports.banUser = async (req, res) => {

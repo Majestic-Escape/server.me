@@ -7,6 +7,8 @@ const {
   createAdmin,
   serviceFees,
   getServiceFees,
+  getMyProfile,
+  renameMe,
 } = require("../controllers/adminController");
 const authMiddleware = require("../middleware/authMiddleware");
 const { requireAdmin } = require("../middleware/authz");
@@ -22,6 +24,12 @@ router.post("/verify-otp", verifyOTP);
 router.post("/register", ...admin, createAdmin);
 router.post("/service", ...admin, serviceFees);
 router.get("/service", ...admin, getServiceFees);
+
+// The signed-in admin's own profile. No id in the URL: the target is always
+// the caller (an Admin record, or a User with role "admin"), so one admin can
+// never read or rename another through these.
+router.get("/me", ...admin, getMyProfile);
+router.patch("/me/name", ...admin, renameMe);
 
 // router.get("/", getAllAdmins);
 // router.post("/", createAdmin);

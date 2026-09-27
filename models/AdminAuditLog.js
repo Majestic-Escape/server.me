@@ -14,6 +14,8 @@ const ACTIONS = [
   "kyc.document.download",
   "kyc.document.manual_verify",
   "admin.create",
+  // an admin renaming their own account (PATCH /admin/me/name); target: Admin, or User for a role-admin user
+  "admin.rename",
   // homepage hero (services/siteHero.js); target: SiteSetting "home_hero"
   "site.hero.stage",
   "site.hero.discard",

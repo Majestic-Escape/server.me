@@ -349,6 +349,38 @@ test("countstays and the suggestion index use the same rules; the index carries 
 });
 
 // ---------------------------------------------------------------------------
+test("countstays: a card's number is what its page lists — the stays in the place, else the nearest (≤ 250 km); the search's own number in every mode", async () => {
+  // what the home cards link to: /location/<name> → search-properties?location=<name>
+  const names = ["Panjim", "Mapusa", "Nashik", "Ayodhya", "Lucknow", "Margao", "Unknownville", "panjm", "Panaji Loft", "North Goa", "Goa", "Calangute", "Seraulim", "villas in goa", "403001"];
+  const c = await raw(`/properties/countstays?city=${encodeURIComponent(names.join(","))}`);
+  assert.equal(c.status, 200);
+  assert.equal(c.json.data.length, names.length);
+  for (const [i, name] of names.entries()) {
+    const s = await q({ location: name });
+    assert.equal(c.json.data[i].city, name.toLowerCase());
+    assert.equal(c.json.data[i].count, s.json.pagination.totalCount, `${name} (${s.json.search.mode})`);
+  }
+  const by = Object.fromEntries(c.json.data.map((d) => [d.city, d.count]));
+  // Mapusa (40k people: no radius of its own) has no stay inside; its page
+  // lists the nearest Goa stays and its card used to say 0
+  assert.equal((await q({ location: "Mapusa" })).json.search.mode, "nearby");
+  assert.equal(by.mapusa, 9, "every Goa stay with a point (Calangute's have none)");
+  assert.equal(by.ayodhya, 1, "Lucknow House, ~120 km away");
+  assert.equal(by.nashik, 0, "nothing within 250 km");
+  assert.equal(by.panjim, 2, "in the place: unchanged");
+  assert.equal(by.unknownville, 0);
+  // a name longer than the search accepts counts nothing (the search refuses it)
+  const long = "x".repeat(201);
+  const l = await raw(`/properties/countstays?city=Panjim,${long}`);
+  assert.deepEqual(l.json.data, [{ city: "panjim", count: 2 }, { city: long, count: 0 }]);
+  assert.equal((await q({ location: long })).status, 400);
+  // inactive, draft and in-review listings count nowhere (Vasco only has an inactive one)
+  const v = await raw("/properties/countstays?city=Vasco");
+  assert.equal(v.json.data[0].count, (await q({ location: "Vasco" })).json.pagination.totalCount);
+  assert.ok(!(await q({ location: "Vasco", limit: "50" })).json.data.some((d) => /Inactive|Draft|Review/.test(d.title)));
+});
+
+// ---------------------------------------------------------------------------
 test("wards and area names: a shared unknown ward joins its village; a taluka-named city is the taluka", async () => {
   const S = placeSearch();
   const P = places();
@@ -563,10 +595,15 @@ test("performance: resolution p95, classification and planning at 3,000 listings
   const scope = S.resolveScope({ location: "vasco" }, { live, stays: (id) => counts.get(id) || 0, inv });
   const planned = S.plan(scope, { inv, openIds, booked: new Set() });
   const planMs = Date.now() - t;
+  // countstays: the nine home cards, each through the same scope + plan
+  t = Date.now();
+  const cards = ["Panjim", "Ujjain", "Nashik", "Mapusa", "Margao", "Lucknow", "Varanasi", "Ayodhya", "Kutch"];
+  const cardRows = cards.map((location) => S.plan(S.resolveScope({ location }, { live, stays: (id) => counts.get(id) || 0, inv }), { inv, openIds, booked: new Set() }).rows.length);
+  const cardsMs = Date.now() - t;
   t = Date.now();
   inv.length = 0;
   docs.map(S.classify); // memoised
   const warmMs = Date.now() - t;
-  console.log(`[perf] 3000 listings: classify ${classifyMs} ms cold / ${warmMs} ms warm, counts+resolve+plan ${planMs} ms, ${planned.rows.length} rows`);
-  assert.ok(classifyMs < 1500 && warmMs < 300 && planMs < 1500);
+  console.log(`[perf] 3000 listings: classify ${classifyMs} ms cold / ${warmMs} ms warm, counts+resolve+plan ${planMs} ms, ${planned.rows.length} rows; 9 home cards ${cardsMs} ms (${cardRows.join("/")})`);
+  assert.ok(classifyMs < 1500 && warmMs < 300 && planMs < 1500 && cardsMs < 1500);
 });

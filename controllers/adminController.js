@@ -20,7 +20,9 @@ function ambiguousAdmin(res, requestType) {
 }
 const mongoose = require("mongoose");
 const Admin = require("../models/Admin");
+const User = require("../models/User");
 const adminAudit = require("../services/adminAudit");
+const { normalizeName, validateName } = require("../utils/names");
 const Configure = require("../models/Configure");
 const { generateOTP, sendAdminLoginOtp } = require("../utils/loginOtpUtils");
 const jwt = require("jsonwebtoken");
@@ -516,10 +518,96 @@ const getServiceFees = async (req, res) => {
       .json({ message: "Failed to store data", error: error.message });
   }
 };
+// --- The signed-in admin's own profile (/admin/me) ---------------------------
+// The target is always the caller: requireAdmin has resolved req.actor to an
+// Admin record (actor.admin) or a User with role "admin" (actor.user). Only
+// the name is writable here; e-mail, role and status are not.
+function selfTarget(actor) {
+  return actor.admin ? { Model: Admin, targetType: "Admin" } : { Model: User, targetType: "User" };
+}
+function selfFail(res, status, code, message, extra = {}) {
+  return res.status(status).json({ success: false, code, message, statusCode: status, ...extra });
+}
+
+// GET /admin/me → { firstName, lastName, email }
+const getMyProfile = async (req, res) => {
+  try {
+    const actor = req.actor;
+    const { Model } = selfTarget(actor);
+    const me = await Model.findById(actor.id).select("firstName lastName email").lean();
+    if (!me) return selfFail(res, 404, "ADMIN_NOT_FOUND", "Your account no longer exists");
+    return res.status(200).json({ success: true, data: { firstName: me.firstName, lastName: me.lastName || "", email: me.email } });
+  } catch (err) {
+    console.error("getMyProfile error", err && (err.code || err.name));
+    return selfFail(res, 500, "SERVER_ERROR", "Could not load your profile");
+  }
+};
+
+// PATCH /admin/me/name  { firstName, lastName, expected: { firstName, lastName } }
+// Same semantics as the admin rename of a user (guestController.renameUser):
+// validated, optimistic (expected), transactional with its audit row.
+const renameMe = async (req, res) => {
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const firstName = normalizeName(body.firstName);
+  const lastName = normalizeName(body.lastName);
+  const firstError = validateName(firstName, { required: true, label: "First name" });
+  if (firstError) return selfFail(res, 400, "INVALID_NAME", firstError, { field: "firstName" });
+  const lastError = validateName(lastName, { required: false, label: "Last name" });
+  if (lastError) return selfFail(res, 400, "INVALID_NAME", lastError, { field: "lastName" });
+  const expected = body.expected && typeof body.expected === "object" ? body.expected : null;
+  if (!expected || typeof expected.firstName !== "string") return selfFail(res, 400, "EXPECTED_REQUIRED", "expected.firstName and expected.lastName are required");
+
+  const actor = req.actor;
+  const { Model, targetType } = selfTarget(actor);
+  const session = await mongoose.startSession();
+  let outcome;
+  try {
+    await session.withTransaction(async () => {
+      outcome = null;
+      const me = await Model.findById(actor.id).select("firstName lastName").session(session);
+      if (!me) {
+        outcome = { status: 404, code: "ADMIN_NOT_FOUND", message: "Your account no longer exists" };
+        return;
+      }
+      const currentLast = me.lastName || "";
+      if (me.firstName === firstName && currentLast === lastName) {
+        outcome = { status: 200, body: { success: true, changed: false, data: { firstName: me.firstName, lastName: currentLast } } };
+        return;
+      }
+      const expectedLast = typeof expected.lastName === "string" ? expected.lastName : "";
+      const match = {
+        _id: me._id,
+        firstName: expected.firstName,
+        $or: expectedLast === "" ? [{ lastName: "" }, { lastName: null }, { lastName: { $exists: false } }] : [{ lastName: expectedLast }],
+      };
+      const updated = await Model.updateOne(match, { $set: { firstName, lastName } }, { session });
+      if (updated.matchedCount === 0) {
+        outcome = { status: 409, code: "NAME_CHANGED", message: "Your name was changed elsewhere. Refresh and try again.", extra: { data: { firstName: me.firstName, lastName: currentLast } } };
+        // Abort: nothing else must be written.
+        throw Object.assign(new Error("NAME_CHANGED"), { abort: true });
+      }
+      await adminAudit.record(req, "admin.rename", { targetType, targetId: me._id }, { before: { firstName: me.firstName, lastName: currentLast }, after: { firstName, lastName } }, { session });
+      outcome = { status: 200, body: { success: true, changed: true, data: { firstName, lastName } } };
+    });
+  } catch (err) {
+    if (!(err && err.abort)) {
+      console.error("renameMe error", err && (err.code || err.name));
+      return selfFail(res, 503, "AUDIT_UNAVAILABLE", "The change could not be recorded. Nothing was saved — please try again.");
+    }
+  } finally {
+    await session.endSession().catch(() => {});
+  }
+  if (!outcome) return selfFail(res, 500, "SERVER_ERROR", "Rename failed");
+  if (outcome.body) return res.status(outcome.status).json(outcome.body);
+  return selfFail(res, outcome.status, outcome.code, outcome.message, outcome.extra || {});
+};
+
 module.exports = {
   requestOTP,
   verifyOTP,
   createAdmin,
   serviceFees,
   getServiceFees,
+  getMyProfile,
+  renameMe,
 };

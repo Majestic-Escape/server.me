@@ -170,7 +170,7 @@ Verdict table (`services/kycVerdict.js`): `http_response_code === 200` and `resu
 Repo-wide search of `ListingProperty`, `propertyId`, `property:` across models/controllers/services/jobs: `Booking.propertyId`, `BookingNight.propertyId`, `Payment.propertyId`, `HostPayout.propertyId`, `Review.property`, `HostReview.property`, `ExternalCalendar.propertyId`, `BookingInterest.propertyId` (String), `KycHostForm`/`BankDetail` (keyed by host, untouched), `Chat` (by bookingId), legacy `Calendar/Share/Host/Experience` (reference the unused `Property`/`Experience` models). Wishlist lives in the customer site's localStorage; chat conversations live in the separate `majestic-chat` database and already degrade to "Property" when a listing is missing. Writers that can target a pending listing: host calendar blocks and iCal imports — both re-check the listing after inserting and withdraw when it is gone.
 
 ## Admin audit trail (`adminauditlogs`)
-`user.rename` (before/after names), `listing.delete` (host id, title, photo keys, cleanup and sweep outcomes), `kyc.document.view`, `kyc.document.download` (log id, host id, mime, bytes), `kyc.document.manual_verify`. Written in the same transaction as the change or before the bytes leave the server; never emails, document bytes or full URLs. Indexes: `{targetId, createdAt}`, `{action, createdAt}` — created by `scripts/ensure-indexes.js` together with `kyclogs {userId, type, createdAt}` (`--explain` proves the IXSCAN).
+`user.rename` (before/after names), `admin.rename` (an admin's own name, before/after), `listing.delete` (host id, title, photo keys, cleanup and sweep outcomes), `kyc.document.view`, `kyc.document.download` (log id, host id, mime, bytes), `kyc.document.manual_verify`. Written in the same transaction as the change or before the bytes leave the server; never emails, document bytes or full URLs. Indexes: `{targetId, createdAt}`, `{action, createdAt}` — created by `scripts/ensure-indexes.js` together with `kyclogs {userId, type, createdAt}` (`--explain` proves the IXSCAN).
 
 ---
 
@@ -321,3 +321,5 @@ chat: 0 stored last names, 13 legacy messages, none contact-bearing. Images:
 |---|---|---|---|---|---|---|
 | `POST /register` | 401 | 403 | 403 | 403 | 201 | was anonymous; audited `admin.create`; no token returned |
 | `GET/POST /service` | 401 | 403 | 403 | 403 | 200 | was any signed-in user |
+| `GET /me` | 401 | 403 | 403 | 403 | 200 | self only (no id in the URL): the caller's own `firstName`, `lastName`, `email` — an Admin record or a role-admin user; deactivated admin 403 |
+| `PATCH /me/name` | 401 | 403 | 403 | 403 | 200 | self only; `{ firstName, lastName, expected }` — same validation, optimistic `expected` (409 `NAME_CHANGED`) and transaction as `PATCH /guests/name/:userId`; audited `admin.rename` (target `Admin`, or `User` for a role-admin user; unchanged → no row); audit failure → 503, nothing saved; every other body field ignored |

@@ -11,6 +11,7 @@ const SCALARS = ["location", "placeId", "lat", "lng", "from", "to", "guests", "p
 const PLACE_ID = /^(st|gn|l):[a-z0-9][a-z0-9:-]{0,79}$/;
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MAX_AMENITIES = 30;
+const MAX_LOCATION_LENGTH = 200;
 
 class SearchParamError extends Error {
   constructor(param, message) {
@@ -92,7 +93,7 @@ function parseSearchQuery(q) {
     if (q[name] !== undefined && typeof q[name] !== "string") throw new SearchParamError(name, "must be a single value");
   }
   const location = text(q, "location");
-  if (location.length > 200) throw new SearchParamError("location", "is too long");
+  if (location.length > MAX_LOCATION_LENGTH) throw new SearchParamError("location", "is too long");
   const placeId = text(q, "placeId");
   if (placeId && !PLACE_ID.test(placeId)) throw new SearchParamError("placeId", "is not a place id");
 
@@ -154,4 +155,4 @@ function parseSearchQuery(q) {
   return { location, placeId, point, from: fromS, to: toS, nightFrom, nightTo, filter };
 }
 
-module.exports = { parseSearchQuery, refuseSearchParam, SearchParamError, searchDay };
+module.exports = { parseSearchQuery, refuseSearchParam, SearchParamError, searchDay, MAX_LOCATION_LENGTH };

@@ -29,9 +29,8 @@ const { checkListingWrite, refusePublicText, LISTING_TEXT_SELECT, checkListingIm
 const { notifyListingChanged } = require("../services/listingChanged");
 const authz = require("../middleware/authz");
 // Place-aware search (docs/place-search.md).
-const places = require("../utils/places");
 const placeSearch = require("../services/placeSearch");
-const { parseSearchQuery, refuseSearchParam, SearchParamError } = require("../utils/searchParams");
+const { parseSearchQuery, refuseSearchParam, SearchParamError, MAX_LOCATION_LENGTH } = require("../utils/searchParams");
 
 // Host listing writes were `$set: req.body`: a host could activate their own
 // listing (no admin review), mark it KYC-complete / bank-verified, unban it,
@@ -199,20 +198,26 @@ exports.getPropertyCount = async (req, res) => {
       });
     }
     if (!catalogueCache(req, res)) return;
-    // A name counts the stays IN that place (same rules as the search), so
-    // the home card "Panjim" counts listings saved as "Panaji"; a name the
-    // gazetteer does not know keeps the old exact city match. One read.
+    // A home card's number is the number of stays its page lists: each name
+    // goes through the search's own scope + plan with no filters and no
+    // dates, exactly as /location/<name> asks for it — the stays in the
+    // place ("Panjim" counts listings saved as "Panaji"), or, when it has
+    // none, the nearest ones the page falls back to (≤ 250 km). Counting
+    // only the stays inside made a card say 0 while its page listed 13.
+    // One read for every name.
     const docs = await ListingProperty.find({ status: "active" }).select(placeSearch.LOCATION_PROJECTION).lean();
     const inv = placeSearch.classifyAll(docs);
     const live = placeSearch.livePlaces(inv);
-    const extra = [...live.values()];
+    const openIds = new Set(inv.map((c) => c.id));
+    const booked = new Set();
+    let counts = null;
+    const stays = (id) => (counts || (counts = placeSearch.countPlaces(inv, live))).get(id) || 0;
     const result = cities.map((name) => {
       const lower = name.toLowerCase();
-      const r = places.resolveQuery(name, { extra });
-      if (r && r.place && !r.corrected) {
-        return { city: lower, count: inv.filter((c) => placeSearch.inPlace(c, r.place)).length };
-      }
-      return { city: lower, count: inv.filter((c) => typeof c.raw.city === "string" && c.raw.city.trim().toLowerCase() === lower).length };
+      // the search refuses a longer location (utils/searchParams.js)
+      if (name.length > MAX_LOCATION_LENGTH) return { city: lower, count: 0 };
+      const scope = placeSearch.resolveScope({ location: name }, { live, stays, inv });
+      return { city: lower, count: placeSearch.plan(scope, { inv, openIds, booked }).rows.length };
     });
 
     return res.status(200).json({

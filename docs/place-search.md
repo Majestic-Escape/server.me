@@ -118,7 +118,15 @@ previous UTC day in India, and checked the wrong nights.
 rows: [id, name, type, labelIndex, "alias|…", stays, populationK] }`
 (states, districts, talukas, Goa places, 50k+ cities, curated destinations,
 anything with stays, live places). No coordinates, no listing ids. ~44 KB
-gzip. `countstays` uses the same rules ("Panjim" counts `Panaji` listings).
+gzip; its `stays` are the strict counts (the stays IN a place).
+
+`GET /properties/countstays?city=<name,…>` — the home page's destination
+cards. Each card links to `/location/<name>`, whose search asks for
+`location=<name>` with no filters and no dates; a card's `count` is exactly
+that search's `totalCount` (same `resolveScope` + `plan`, one read for every
+name): the stays in the place ("Panjim" counts `Panaji` listings), or — when
+it has none — the nearest ones the page falls back to (≤ 250 km). It used to
+count only the stays inside, so a card said 0 while its page listed 13.
 
 ## Cost
 | Read | DB operations | Notes |

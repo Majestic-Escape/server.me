@@ -35,6 +35,7 @@ Predicate: **notify when the listing was publicly visible before the write or is
 | `updateListingProperty` (wizard PUTs on every step) | `PUT /properties/update-listing-property/:id` | PUBLIC_CHANGE when active before/after, else NON_PUBLIC (drafts) | ✔ conditional `host-update` |
 | `timing` | `POST /properties/timings` | PUBLIC_CHANGE when active (stay page) | ✔ conditional `timing` |
 | `banUser` / unban | `PATCH /guests/ban/:userId` | PUBLIC_CHANGE for the flipped ids | ✔ `ban` / `unban` (ids read first, indexed) |
+| `renameUser` (admin renames a user; no ListingProperty write) | `PATCH /guests/name/:userId` | PUBLIC_CHANGE (host name on stay pages) for the host's `active` ids, only after a committed rename that changed the name | ✔ `host-rename` (ids read after the commit, indexed; unchanged / refused / no active listings → ✘) |
 | `submitReview` / `updateReview` | `POST /review/`, `PATCH /review/update` | PUBLIC_CHANGE (rating on cards) when active | ✔ `review` / `review-update` |
 | `PropListingController.createPListing` | `POST /prop-listing/` | PUBLIC_CHANGE only if created `active` | ✔ conditional `admin-create` |
 | `PropListingController.updatePListing` | `PUT /prop-listing/:id` | PUBLIC_CHANGE when active before/after | ✔ conditional `admin-prop-update` |

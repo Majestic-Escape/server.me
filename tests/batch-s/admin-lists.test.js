@@ -249,3 +249,76 @@ test("reviews admin list: filters/search in the pipeline, stats over the filtere
   const dated = await h.api("GET", "/hostData/review/admin?checkin=7/3/2026&checkout=7/6/2026&page=1&limit=100", { token: AT });
   assert.equal(dated.body.total, 4);
 });
+
+test("SM-REG-01 users admin list: registration date (createdAt) on every row; sort=createdAt:asc|desc ordered with the _id tiebreak; paging across a tie is stable", async () => {
+  // Two accounts registered at the very same instant, in the middle of the
+  // seeded range (Guest09 = Jan 10, Guest10 = Jan 11). Set on the raw
+  // collection so Mongoose's timestamps cannot touch the value.
+  const tie = new Date(Date.UTC(2026, 0, 10, 12));
+  const A = await h.makeUser({ firstName: "Tie", lastName: "First", email: "tie-a@lists.test" });
+  const B = await h.makeUser({ firstName: "Tie", lastName: "Second", email: "tie-b@lists.test" });
+  await User().collection.updateMany({ _id: { $in: [A._id, B._id] } }, { $set: { createdAt: tie } });
+  const tieIds = new Set([String(A._id), String(B._id)]);
+
+  const all = async (dir) => {
+    const r = await h.api("GET", `/guests/?page=1&limit=100&sort=createdAt:${dir}`, { token: AT });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.sort, `createdAt:${dir}`);
+    assert.equal(r.body.data.length, r.body.total, "one page holds every row");
+    return r.body.data;
+  };
+  const asc = await all("asc");
+  const desc = await all("desc");
+  assert.ok(asc.length >= N + 3);
+
+  // every row carries a parseable registration date
+  for (const row of asc) {
+    assert.equal(typeof row.createdAt, "string", `${row._id} createdAt`);
+    assert.ok(!Number.isNaN(Date.parse(row.createdAt)), `${row._id} createdAt ${row.createdAt}`);
+  }
+  const tieRows = asc.filter((r) => tieIds.has(String(r._id)));
+  assert.equal(tieRows.length, 2);
+  assert.ok(tieRows.every((r) => Date.parse(r.createdAt) === tie.getTime()), "the stored instant is what the API returns");
+
+  // ordering: by createdAt, then _id descending (utils/listQuery.js appends
+  // `_id: -1` whatever the direction) — deterministic for equal dates
+  const ordered = (rows, dir) => {
+    for (let i = 1; i < rows.length; i++) {
+      const [p, c] = [Date.parse(rows[i - 1].createdAt), Date.parse(rows[i].createdAt)];
+      if (p === c) assert.ok(String(rows[i - 1]._id) > String(rows[i]._id), `tie at ${i} broken by _id desc (${dir})`);
+      else assert.ok(dir === "asc" ? p < c : p > c, `row ${i} out of ${dir} order: ${rows[i - 1].createdAt} → ${rows[i].createdAt}`);
+    }
+  };
+  ordered(asc, "asc");
+  ordered(desc, "desc");
+  const [hi, lo] = [A._id, B._id].map(String).sort().reverse();
+  const at = (rows) => rows.findIndex((r) => tieIds.has(String(r._id)));
+  for (const rows of [asc, desc]) {
+    const i = at(rows);
+    assert.deepEqual([String(rows[i]._id), String(rows[i + 1]._id)], [hi, lo], "the tied pair sits together, higher _id first");
+  }
+  // the tie is surrounded by the seeded neighbours
+  const iAsc = at(asc);
+  assert.equal(asc[iAsc - 1].firstName, "Guest09");
+  assert.equal(asc[iAsc + 2].firstName, "Guest10");
+
+  // pages split exactly between the two tied rows: every page, read twice,
+  // concatenates to the full list — no duplicate, no miss
+  for (const [dir, rows] of [["asc", asc], ["desc", desc]]) {
+    const limit = at(rows) + 1; // page 1 ends on the first tied row
+    const pages = Math.ceil(rows.length / limit);
+    for (let round = 0; round < 2; round++) {
+      const seen = [];
+      for (let page = 1; page <= pages; page++) {
+        const r = await h.api("GET", `/guests/?page=${page}&limit=${limit}&sort=createdAt:${dir}`, { token: AT });
+        assert.equal(r.status, 200);
+        assert.equal(r.body.total, rows.length);
+        if (page === 1) assert.equal(String(r.body.data[r.body.data.length - 1]._id), hi, `${dir}: page 1 ends on the first tied row`);
+        if (page === 2) assert.equal(String(r.body.data[0]._id), lo, `${dir}: page 2 starts on the second tied row`);
+        seen.push(...ids(r.body.data));
+      }
+      assert.equal(new Set(seen).size, seen.length, `${dir}: no duplicates across pages`);
+      assert.deepEqual(seen, ids(rows), `${dir}: pages cover the list in order, nothing missed`);
+    }
+  }
+});

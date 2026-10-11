@@ -309,3 +309,42 @@ period before bank details existed).
 | Attention-queue outcomes are manual (refund via admin cancel, or keep). | `services/attention.js` | By design. |
 | Failed/reversed payouts are retried only inside the 3-day check-in window; older ones stay as-is. | `services/payouts.js` | Unchanged policy. |
 | Maintenance gate fails closed: a cold instance that cannot read the flag refuses booking writes (`MAINTENANCE_UNKNOWN`). | `services/maintenance.js` | Intentional. |
+
+
+## 13. Booking e-mails (2026-10-11 audit — `tests/batch-s/booking-mail-flows.test.js`)
+
+Every journey is tested with the real sender running and only the HTTP call to
+Brevo replaced: instant, request-to-book, host reject / terminate, admin
+cancel, guest cancel (inside / outside the refund window), stranger and wrong-
+role refusals. Template ids and recipients are unchanged (§ the table in
+`services/bookingNotifications.js`).
+
+What changed after the audit:
+
+* **Independent mails.** A step (guest, host, each admin) sends every mail
+  whatever happens to the others; each delivered mail is recorded in
+  `booking.notifications.sent` (`"<flow>:<recipient>"`), so a retried step
+  never mails the same person twice. Before, one failing mail (the guest's)
+  silently dropped the host's and admins' mails, and a retry after a partial
+  failure mailed the host twice.
+* **Payment captured, browser never came back** (tab closed, UPI app switch):
+  the Razorpay webhook now starts the same exactly-once notifications (after
+  the response, via `waitUntil`), and `GET /booking/cron/notify-sweep` (Vercel
+  cron daily; `CRON_SECRET` or the scoped `CALENDAR_SYNC_CRON_SECRET`) sends
+  anything still outstanding for paid, live bookings of the last 3 days
+  (10-minute grace, 25 per run, 45 s budget). Mobile instant bookings never
+  called `instant/confirm`, so their post-stay review reminder was never
+  scheduled; the sweep schedules it. An external clock can call the route
+  every 15 minutes for faster recovery (same URL pattern as the calendar
+  sweep) — optional.
+* **Review reminder** (Agenda job, scheduled at confirmation) re-reads the
+  booking when it fires and is skipped for a cancelled stay.
+* **Dates** in booking mails read `12 Oct 2026` (UTC day) instead of the
+  server-locale `10/12/2026`, which is ambiguous for Indian readers.
+* A guest abandoning an **unpaid** hold no longer mails the host and admins.
+* Brevo requests have a 15 s timeout (`EMAIL_TIMEOUT_MS`).
+
+Known limits: a cancellation / rejection mail that fails after all attempts is
+logged (`<label>: notifications failed`) but not retried; the sweep covers
+payment and confirmation mails only. Template content lives in Brevo and is
+not verifiable from this repository.

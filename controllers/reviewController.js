@@ -14,6 +14,7 @@ const HostReview = require("../models/HostReview");
 const User = require("../models/User");
 const { sendEmail } = require("../utils/sendEmail");
 const { changeToUpperCase } = require("../utils/convertToUpperCase");
+const { stayDate } = require("../utils/paramsObject");
 
 // exports.submitReview = async (req, res) => {
 //   try {
@@ -570,8 +571,8 @@ exports.updateReview = async (req, res) => {
         review.user.firstName + " " + review.user.lastName
       ),
       bookingId: review.bookingId._id,
-      from: new Date(review.bookingId.checkIn).toLocaleDateString(),
-      to: new Date(review.bookingId.checkOut).toLocaleDateString(),
+      from: stayDate(review.bookingId.checkIn),
+      to: stayDate(review.bookingId.checkOut),
       userId: new Date(review.user._id),
       propertyTitle: review.property.title,
       rating: review.rating,

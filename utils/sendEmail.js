@@ -35,6 +35,8 @@ async function sendEmail(recipientEmail, templateId, params, attachments = []) {
         "api-key": process.env.BREVO_API_KEY,
         "content-type": "application/json",
       },
+      // A hung provider must fail the one mail (which is then retried), not hold the request until the platform kills it.
+      timeout: Number(process.env.EMAIL_TIMEOUT_MS) || 15000,
     });
 
     console.log("Email sent successfully:", {

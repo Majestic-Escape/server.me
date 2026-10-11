@@ -25,6 +25,10 @@
     {
       "path": "/api/v1/calendarSync/cron/sweep?mode=full",
       "schedule": "45 0 * * *"
+    },
+    {
+      "path": "/api/v1/booking/cron/notify-sweep",
+      "schedule": "30 5 * * *"
     }
   ]
 }

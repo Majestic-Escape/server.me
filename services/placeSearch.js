@@ -553,6 +553,7 @@ function plan(scope, { inv, openIds, booked }) {
     meta.mode = "near";
     const rows = byDistance(scope.point, inv.filter(available));
     meta.nearestKm = rows.length ? rows[0].distanceKm : null;
+    if (!rows.length) meta.reason = emptyReason(byDistance(scope.point, inv.filter(typeOk)), open);
     return { rows, search: meta };
   }
   // place
@@ -574,7 +575,21 @@ function plan(scope, { inv, openIds, booked }) {
   meta.reason = !inside.length ? "no_inventory" : !inside.some((c) => open(c)) ? "filters" : "dates";
   const near = origin ? byDistance(origin, inv.filter((c) => available(c) && !inPlace(c, place))) : [];
   meta.nearestKm = near.length ? near[0].distanceKm : null;
+  // nothing in the place and nothing near it either: say what blocked the
+  // nearby stays when there are some (a price filter, the dates) instead of
+  // "no stays yet"
+  if (!near.length && !inside.length && origin) {
+    meta.reason = emptyReason(byDistance(origin, inv.filter((c) => typeOk(c) && !inPlace(c, place))), open) || meta.reason;
+  }
   return { rows: near, search: meta };
+}
+
+// Why a search with stays around it came back empty: the stays nearby
+// (type respected) exist but none passes the filters ("filters") or all are
+// booked on the dates ("dates"). null when there are none nearby at all.
+function emptyReason(nearbyAnyFilter, open) {
+  if (!nearbyAnyFilter.length) return null;
+  return nearbyAnyFilter.some((c) => open(c)) ? "dates" : "filters";
 }
 
 // Compact suggestion index for the customer site (GET /places/index):

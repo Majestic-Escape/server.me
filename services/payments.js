@@ -70,7 +70,8 @@ function quoteShape(q) {
 async function freshQuoteForBooking(booking) {
   const listing = await ListingProperty.findById(booking.propertyId).lean();
   if (!listing) throw new PaymentError(404, "LISTING_NOT_FOUND", "Listing not found");
-  if (listing.status && listing.status !== "active") {
+  // (a moderation ban is never bookable either, whatever the status says)
+  if ((listing.status && listing.status !== "active") || listing.ban === true) {
     throw new PaymentError(409, "LISTING_INACTIVE", "This stay is no longer available for booking");
   }
   const nights = inventory.nightsBetween(booking.checkIn, booking.checkOut);

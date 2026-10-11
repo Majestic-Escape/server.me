@@ -59,4 +59,27 @@ function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-module.exports = { CARD_FIELDS, CARD_PROJECTION, MAX_PAGE_SIZE, pageParams, escapeRegex };
+// Masking context for a card: sanitizeProperty masks a listing's public text
+// against its OWN exact address (street, line1, line2). The card projection
+// leaves those fields out, so a title quoting the street went out unmasked.
+// Select this next to CARD_PROJECTION — .select(CARD_PROJECTION)
+// .select(CARD_MASK_CONTEXT) — wherever the cards are sanitized;
+// sanitizeProperty strips the three fields again before anything is sent.
+// Never merge it into CARD_FIELDS (a projection without a sanitizer would
+// then emit the exact address).
+const CARD_MASK_CONTEXT = { "address.street": 1, line1: 1, line2: 1 };
+
+// What "publicly visible" means for a listing, everywhere it is read for the
+// public (catalogue, search, places, related stays, the detail and calendar
+// read policy): live AND not under a moderation ban. The ban flow already
+// takes listings out of "active" (services/listingPublish.js); the ban check
+// is defence in depth against an inconsistent row.
+// A fresh object per call: query casting must never share a nested operator.
+function publicListingFilter(extra) {
+  return { status: "active", ban: { $ne: true }, ...(extra || {}) };
+}
+function isPublicListing(listing) {
+  return !!listing && listing.status === "active" && listing.ban !== true;
+}
+
+module.exports = { CARD_FIELDS, CARD_PROJECTION, CARD_MASK_CONTEXT, publicListingFilter, isPublicListing, MAX_PAGE_SIZE, pageParams, escapeRegex };

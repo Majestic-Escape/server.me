@@ -8,7 +8,8 @@
 //  - an admin sees the document unchanged.
 // Shapes are otherwise identical to before, so existing consumers keep working.
 const authz = require("../middleware/authz");
-const { toPublicUser, toSelfUser, sanitizeProperty, sanitizePropertyForBookedGuest, SENSITIVE_PROPERTY_FIELDS } = require("./sanitizeResponse");
+const { toPublicUser, toSelfUser, sanitizeProperty, sanitizePropertyForBookedGuest, bookedGuestListingView, listingStubView, SENSITIVE_PROPERTY_FIELDS } = require("./sanitizeResponse");
+const { isPublicListing } = require("./listingProjection");
 
 function plain(v) {
   if (!v) return v;
@@ -56,8 +57,23 @@ function bookingForActor(booking, actor) {
   if (isPopulated(b.hostId)) out.hostId = isHost ? toSelfUser(b.hostId) : toPublicUser(b.hostId, { fallbackName: "Host" });
   if (isPopulated(b.propertyId)) {
     if (isHost) out.propertyId = listingForHost(b.propertyId);
-    else if (isGuest && exactLocationForGuest(b)) out.propertyId = sanitizePropertyForBookedGuest(b.propertyId);
-    else out.propertyId = sanitizeProperty(b.propertyId);
+    else {
+      const view = isGuest && exactLocationForGuest(b) ? sanitizePropertyForBookedGuest(b.propertyId) : sanitizeProperty(b.propertyId);
+      // A listing that is no longer public (delisted, in review again,
+      // banned): the guest keeps the operational facts of THIS stay — the
+      // booking's own snapshot of the rules / hours — never the host's
+      // current, possibly unpublished, listing text (docs/listing-visibility.md).
+      // (A populate that did not select `status` carries only the few fields
+      // it selected and is left as it was.)
+      // Same entitlement as the detail route (services/listingAccess.js):
+      // only a confirmed, paid guest booking earns the operational view; any
+      // other booking (pending, unpaid, cancelled, expired hold) the stub.
+      const listing = plain(b.propertyId);
+      const hidden = listing && listing.status !== undefined && !isPublicListing(listing);
+      if (!hidden) out.propertyId = view;
+      else if (isGuest && exactLocationForGuest(b)) out.propertyId = bookedGuestListingView(view, b.listingSnapshot);
+      else out.propertyId = listingStubView(sanitizeProperty(b.propertyId));
+    }
   }
   if (isPopulated(b.payment)) {
     const p = plain(b.payment);

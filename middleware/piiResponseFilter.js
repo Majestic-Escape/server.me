@@ -11,6 +11,7 @@
 // is preferable to one leaked record.
 const mongoose = require("mongoose");
 const { PUBLIC_USER_FIELDS, SELF_USER_FIELDS } = require("../utils/sanitizeResponse");
+const authz = require("./authz");
 
 const MAX_DEPTH = 16;
 const PUBLIC = new Set(PUBLIC_USER_FIELDS);
@@ -111,7 +112,8 @@ function toPlain(body) {
 
 function actorOf(req) {
   const actor = req.actor;
-  if (actor) return { isAdmin: actor.kind === "admin", selfId: actor.id ? String(actor.id) : null };
+  // A deactivated admin is not an admin here either (authz.isAdmin).
+  if (actor) return { isAdmin: authz.isAdmin(actor), selfId: actor.id ? String(actor.id) : null };
   const u = req.user;
   if (u && u._id) return { isAdmin: u.role === "admin", selfId: String(u._id) };
   return { isAdmin: false, selfId: null };
@@ -134,6 +136,14 @@ function piiResponseFilter(req, res, next) {
     } catch (error) {
       console.error("pii_filter_error", { path: req.originalUrl, method: req.method, error: error && error.name });
       if (res.headersSent) return res;
+      // A cacheable handler (utils/httpCache.js) may already have stamped
+      // public / CDN headers for the 200 it meant to send: an error must
+      // never be stored at the edge or tagged as catalogue content.
+      res.removeHeader("CDN-Cache-Control");
+      res.removeHeader("Vercel-CDN-Cache-Control");
+      res.removeHeader("Vercel-Cache-Tag");
+      res.removeHeader("Surrogate-Control");
+      res.set("Cache-Control", "no-store");
       res.status(500);
       return originalJson({ success: false, code: "RESPONSE_FILTER_ERROR", message: "The response could not be prepared safely. Please try again.", statusCode: 500 });
     }

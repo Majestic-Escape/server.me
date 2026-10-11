@@ -6,7 +6,7 @@
 const ListingProperty = require("../models/ListingProperty");
 const placeSearch = require("../services/placeSearch");
 const { catalogueCache } = require("../utils/httpCache");
-const { CARD_PROJECTION } = require("../utils/listingProjection");
+const { CARD_PROJECTION, CARD_MASK_CONTEXT, publicListingFilter } = require("../utils/listingProjection");
 const { sanitizeProperty } = require("../utils/sanitizeResponse");
 const { normalizePlaceText } = require("../utils/placeText");
 
@@ -28,7 +28,7 @@ exports.suggestStays = async (req, res) => {
     const tokens = placeSearch.keywordTokens(normalizePlaceText(q));
     if (!tokens.length || tokens.join("").length < 3) return res.json({ stays: [] });
     const phrase = tokens.join(" ");
-    const docs = await ListingProperty.find({ status: "active" }).select(placeSearch.LOCATION_PROJECTION).lean();
+    const docs = await ListingProperty.find(publicListingFilter()).select(placeSearch.LOCATION_PROJECTION).lean();
     const scored = [];
     for (const c of placeSearch.classifyAll(docs)) {
       const s = placeSearch.keywordScore(c, tokens, phrase);
@@ -39,7 +39,7 @@ exports.suggestStays = async (req, res) => {
     scored.sort((x, y) => x[1] - y[1] || (new Date(y[0].createdAt) - new Date(x[0].createdAt)) || (x[0].id < y[0].id ? 1 : -1));
     const ids = scored.slice(0, MAX_STAYS).map(([c]) => c.id);
     if (!ids.length) return res.json({ stays: [] });
-    const cards = await ListingProperty.find({ _id: { $in: ids }, status: "active" }).select(CARD_PROJECTION).lean();
+    const cards = await ListingProperty.find(publicListingFilter({ _id: { $in: ids } })).select(CARD_PROJECTION).select(CARD_MASK_CONTEXT).lean();
     const byId = new Map(cards.map((d) => [String(d._id), sanitizeProperty(d)]));
     const stays = ids
       .map((id) => byId.get(id))
@@ -60,7 +60,7 @@ exports.suggestStays = async (req, res) => {
 exports.getPlacesIndex = async (req, res) => {
   try {
     if (!catalogueCache(req, res)) return;
-    const docs = await ListingProperty.find({ status: "active" }).select(placeSearch.LOCATION_PROJECTION).lean();
+    const docs = await ListingProperty.find(publicListingFilter()).select(placeSearch.LOCATION_PROJECTION).lean();
     const inv = placeSearch.classifyAll(docs);
     const live = placeSearch.livePlaces(inv);
     res.json(placeSearch.clientIndex(placeSearch.countPlaces(inv, live), live));

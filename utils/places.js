@@ -14,6 +14,15 @@ const GRID = 0.25; // degrees per spatial-index cell (~27 km)
 const CITY_POP = 100000;
 // Words people add around a place name: "candolim beach", "near baga", "goa, india".
 const GENERIC_WORDS = new Set(["beach", "beaches", "city", "town", "village", "district", "taluka", "area", "near", "in", "the", "state", "india"]);
+// Everyday words a guest types next to (or instead of) a place: never "fixed"
+// into a place by the typo tolerance ("best" is one letter from "West" — and
+// "West Delhi" is no answer to "best villa"). An exact place name still wins.
+const NOT_FUZZY = new Set(
+  ("best top good nice great fine cheap cheapest affordable budget luxury luxurious premium deluxe standard classic cozy cosy quiet peaceful family couple " +
+    "romantic honeymoon group party friends private shared entire whole big large small tiny new old modern royal grand scenic beautiful lovely perfect ideal " +
+    "safe clean spacious comfortable comfy popular famous central nearby close free view views pool wifi parking kitchen garden terrace balcony rooftop " +
+    "mountain mountains hill hills lake river forest valley sunset sunrise getaway weekend holiday vacation trip stay stays rooms bedroom bedrooms").split(" "),
+);
 
 let idx = null;
 
@@ -306,7 +315,7 @@ function resolveQuery(text, { extra = [], stays = null, nearStock = null, fuzzy 
   // where the others have none, or ten times the population).
   const sc = compactKey(stripped);
   const budget = fuzzyBudget(sc.length);
-  if (!budget) return null;
+  if (!budget || NOT_FUZZY.has(sc)) return null;
   const { bestD, hits } = fuzzyHits(sc, budget, extra);
   const top = hits.filter(([d]) => d === bestD).map(([, p]) => p);
   if (!top.length) return null;
@@ -322,10 +331,15 @@ function resolveQuery(text, { extra = [], stays = null, nearStock = null, fuzzy 
   return { place: null, alternatives: [], corrected: false, suggestions: order.slice(0, 3) };
 }
 
+/** Whether a normalised word is an everyday word ("best", "romantic", "pool") rather than a place. */
+function isEverydayWord(word) {
+  return NOT_FUZZY.has(compactKey(word));
+}
+
 /** Close names for a query that resolved to nothing (for "did you mean"). */
 function suggestFor(text, { extra = [], stays = null, nearStock = null, limit = 3 } = {}) {
   const c = compactKey(stripGeneric(normalizePlaceText(text)));
-  if (c.length < 3) return [];
+  if (c.length < 3 || NOT_FUZZY.has(c)) return [];
   const budget = Math.max(1, fuzzyBudget(c.length));
   const { hits } = fuzzyHits(c, budget, extra);
   const ctx = { stays, nearStock };
@@ -350,6 +364,7 @@ module.exports = {
   parentLabel,
   publicPlace,
   resolveQuery,
+  isEverydayWord,
   suggestFor,
   allPlaces,
   version: () => index().version,

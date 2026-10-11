@@ -4,7 +4,7 @@
 |---|---|
 | Feature | SyncGuard: Majestic Escape's own OTA calendar-sync hub (iCal) with commitment-time verification |
 | Gate run | 2026-10-03 → 2026-10-04, local only |
-| Verdict | **READY FOR READ-ONLY PRODUCTION PREFLIGHT** (§A) |
+| Verdict | **READY FOR READ-ONLY PRODUCTION PREFLIGHT** (§A) — then **released to production on 2026-10-11** (see "Production release" below) |
 | Design / runbook | [`docs/syncguard.md`](syncguard.md) — §20–§25 log every review finding and fix |
 | Earlier closure report | [`docs/syncguard-closure.md`](syncguard-closure.md) — superseded where this report differs |
 | Evidence (outside the repos) | `D:\majestic-escape\tests\syncguard-evidence\` (logs, JSON, JSONL, screenshots); scripts in `D:\majestic-escape\tests\syncguard-ui\` and `…\syncguard-perf\` |
@@ -279,7 +279,9 @@ refuses while conflicts remain; every legacy feed URL keeps serving.
 **Dev cluster preflight (read-only, re-run on the final code 2026-10-04)**: 4 Airbnb import
 connections, 26 legacy rows, 8 wrong-host rows, 7 listings with duplicate
 legacy feeds (20 links), **0 unique-index conflicts**, 31 repairs, no human
-decisions. **Production preflight: not authorized, not run.** The script
+decisions. **Production preflight**: not authorized at the time of this report;
+run read-only on 2026-10-11 before the release (0 conflicts — see
+"Production release" at the end). The script
 refuses a cluster it is not told to target (`--confirm-db=master-db`).
 The `--apply` backfill added during the gate was removed again (F2: it could
 mark owed admin flags as done; SyncGuard has never run in production).
@@ -442,3 +444,31 @@ failed with status code 409" for booking refusals (follow-up); the
 403-vs-404 listing-ownership difference elsewhere in the API (listing IDs are
 public); the KYC in-flight marker is released after the response is sent (the
 "provider cost guard" test race, §D).
+
+---
+
+## Production release (2026-10-11)
+
+Released after the owner's approval, in the documented order:
+
+1. **Read-only production preflight**: 0 unique-index conflicts; index
+   creation safe after `--apply`. One import connection held text that is not
+   a URL (saved through the pre-SyncGuard form, which accepted any text); it
+   had no imported bookings.
+2. **Backend** promoted (`dev` → `dev-deployment` → production branch) and
+   verified live: API, legacy feed links (200 `text/calendar`, previously
+   500), cron authentication, authorization (another host's listing refused).
+3. **Migration**: `--apply`, then `--create-indexes` (created, 0 conflicts).
+4. **Admin and site** promoted and verified live (new pages served).
+5. One sweep run to confirm OTA calendars answer from production: all valid
+   connections synced. Rows left over from the pre-SyncGuard sync (old
+   "not available" window blocks that the OTA no longer lists) went through
+   the normal disappearance rules — kept blocking, released automatically
+   after confirmation; their hosts received the one-time anomaly notice.
+6. The non-URL connection was disconnected (nothing to keep) and its unused
+   Majestic link stopped, so that listing takes direct bookings again.
+7. **10-minute clock** configured: scoped `CALENDAR_SYNC_CRON_SECRET` on the
+   backend and in GitHub, `SYNCGUARD_SWEEP_URL` variable, workflow on the
+   default branch; first run succeeded and the scheduler heartbeat updated.
+
+Rollback remains as in §14 (kill switch first).

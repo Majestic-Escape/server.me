@@ -233,12 +233,38 @@ by the host's explicit release under Calendar sync.
   due; every processed connection moves ~15 min (±20 %) ahead → no starvation;
   failures back off.
 * Triggers: Vercel cron daily full pass (`/api/v1/calendarSync/cron/sweep?mode=full`,
-  `CRON_SECRET`); optional external clock every 10 min
-  (`.github/workflows/calendar-sync-clock.yml`, scoped
-  `CALENDAR_SYNC_CRON_SECRET`, inert until configured); stay calendar views
+  `CRON_SECRET`); external clocks, all calling the same sweep endpoint with
+  the same scoped `CALENDAR_SYNC_CRON_SECRET` (it cannot trigger payouts) —
+  the GitHub schedule (`.github/workflows/calendar-sync-clock.yml`, every
+  10 min, best effort: GitHub starts new schedules late and drops runs under
+  load) and a free cron-job.org job (every 15 min, GET, 30 s timeout, no
+  stored responses; see "External clocks" below); stay calendar views
   (background, connections older than 5 min); host actions; commitment checks;
   feed requests (background nudge only); `SYNC_INPROCESS_INTERVAL_MS` ticker
   on long-running hosts (never on Vercel).
+* **External clocks (operations).** Any number of clocks may run at once:
+  leases make duplicate sweeps harmless, and a connection is only worked on
+  when it is due (~15 min). The sweep is deadline-aware (50 s budget) and
+  answers 200 even when some calendars fail (`success:true`, counters in the
+  body); it answers 401 for a wrong or missing secret.
+  * The cron-job.org job: title "Majestic SyncGuard clock", every 15 min at
+    :03/:18/:33/:48 UTC, `Authorization: Bearer <secret>` header, "save
+    responses" off (the body carries counters), e-mail alerts on (after 3
+    failures in a row, on recovery, and if the job is disabled). cron-job.org
+    free limits (their FAQ): 30 s request timeout; a job is disabled
+    automatically after more than 25 failures — so the alerts matter: a
+    disabled job must be re-enabled by hand in its dashboard. The sweep takes
+    ~1 s for today's handful of calendars; if one sweep ever approaches 25 s
+    (roughly 60+ connected calendars), lower the sweep budget in
+    `calendarsyncController.cronSweep` below the timeout (leftovers stay due,
+    nothing is lost).
+  * **Rotating the secret** (do all three, then redeploy the backend): the
+    `CALENDAR_SYNC_CRON_SECRET` environment variable of the backend's
+    production project; the `CALENDAR_SYNC_CRON_SECRET` GitHub Actions secret
+    of this repository; the Authorization header of the cron-job.org job.
+    Until all three match, the clock that still has the old value gets 401.
+  * The secret and the cron-job.org API key are credentials: never commit,
+    log or paste them; revoke an API key as soon as the setup is done.
 * Liveness: `CalendarSyncState` heartbeat + derived `schedulerStatus()`
   (HEALTHY / DEGRADED after 2 × interval without a sweep or overdue work /
   STALE after 4 h) in `GET /calendarSync/admin/overview` and on the admin
@@ -681,8 +707,10 @@ no calendar request after leaving the page. Admin page: 6.5 kB route.
 * "Cancel" on an imported stay answers `EXTERNAL_BOOKING` — by design: cancel
   it on the OTA (released automatically) or release the dates in Calendar
   sync (host, or admin acting on the listing's connection).
-* Scheduler STALE — check the GitHub workflow / Vercel cron; bookings stay
-  safe (commitment verification), propagation slows.
+* Scheduler STALE — check the clocks: the GitHub workflow runs, the
+  cron-job.org job (enabled? 25-failure auto-disable? history shows the HTTP
+  status), the Vercel cron, and that the three copies of the secret match
+  (§5); bookings stay safe (commitment verification), propagation slows.
 * Pause everything — `node scripts/syncguard-flags.js --pause`.
 
 ## 19. Metrics (per connection `stats.*`, totals in the admin overview)

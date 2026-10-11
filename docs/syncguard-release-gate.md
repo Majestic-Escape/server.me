@@ -261,9 +261,9 @@ Trigger-agnostic scheduler (`nextSyncAt`, 5-min leases, oldest due first,
 bounded concurrency, deadline-aware): `-scheduler` and `-ops` suites
 (duplicate sweeps, starvation, lease expiry, fencing, STALE derivation).
 Triggers: daily Vercel cron (full pass) — on Hobby the only guaranteed
-clock; optional 10-min GitHub Actions clock (inert until the owner sets the
-secret); calendar views, host actions, commitment checks and feed requests
-nudge. The scheduler state (HEALTHY / DEGRADED / STALE) and the calendars that
+clock; the 10-min GitHub Actions clock (best effort) and a free cron-job.org
+job every 15 min (configured at the production release); calendar views,
+host actions, commitment checks and feed requests nudge. The scheduler state (HEALTHY / DEGRADED / STALE) and the calendars that
 need a look are on the admin **Calendar sync** page; the daily cron e-mails
 ops when the clock is STALE (at most once per 20 h, L12). **Safety does not
 depend on the scheduler**: every booking re-verifies at commitment.
@@ -467,8 +467,14 @@ Released after the owner's approval, in the documented order:
    after confirmation; their hosts received the one-time anomaly notice.
 6. The non-URL connection was disconnected (nothing to keep) and its unused
    Majestic link stopped, so that listing takes direct bookings again.
-7. **10-minute clock** configured: scoped `CALENDAR_SYNC_CRON_SECRET` on the
-   backend and in GitHub, `SYNCGUARD_SWEEP_URL` variable, workflow on the
-   default branch; first run succeeded and the scheduler heartbeat updated.
+7. **External clocks** configured: scoped `CALENDAR_SYNC_CRON_SECRET` on
+   the backend and in GitHub, `SYNCGUARD_SWEEP_URL` variable, workflow on the
+   default branch (manual run succeeded and the scheduler heartbeat updated;
+   GitHub had not started the first automatic run after more than an hour — it
+   starts new schedules late and is best effort), plus a free cron-job.org
+   job every 15 minutes as a reliable second clock (first run: HTTP 200 in
+   about 1 s; e-mail alerts on). The secret was rotated once during setup and
+   is now identical in the backend, GitHub and the timer. See
+   `docs/syncguard.md` §5 "External clocks".
 
 Rollback remains as in §14 (kill switch first).

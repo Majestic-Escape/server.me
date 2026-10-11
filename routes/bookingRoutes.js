@@ -6,6 +6,7 @@ const authMiddleware = require("../middleware/authMiddleware");
 const { requireActor, requireAdmin } = require("../middleware/authz");
 const { validateParam } = require("../middleware/validateObjectId");
 const { rejectWhilePaused } = require("../services/maintenance");
+const cronAuth = require("../middleware/cronAuth");
 
 // Every authenticated route below also resolves the actor (user / admin) so
 // controllers can enforce ownership; object-level checks live in the
@@ -63,6 +64,9 @@ router.patch("/user/terminate", ...auth, lifecycle.terminateUserBooking);
 router.patch("/host/terminate", ...auth, lifecycle.terminateBooking);
 router.patch("/host/confirm", ...auth, lifecycle.confirmBooking);
 router.patch("/instant/confirm", ...auth, lifecycle.confirmInstantBooking);
+
+// Mail recovery sweep (Vercel cron, or an external clock with the scoped secret)
+router.get("/cron/notify-sweep", cronAuth.anyOf("CRON_SECRET", "CALENDAR_SYNC_CRON_SECRET"), lifecycle.notifySweep);
 
 // Single booking: guest, host or admin of that booking
 router.get("/:bookingId", ...auth, validateParam("bookingId"), lifecycle.getBookingById);

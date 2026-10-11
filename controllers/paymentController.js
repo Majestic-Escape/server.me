@@ -496,6 +496,24 @@ exports.update = async (req, res) => {
     }
   }
 };
+// The guest's browser normally reports a payment and triggers the booking
+// e-mails; when it never comes back (tab closed, app killed, UPI app switch)
+// the webhook is the only signal, so it starts them too. Runs after the
+// response (the PDFs take seconds; Razorpay's webhook timeout is short) and
+// is exactly-once with the browser's calls (notifications claims); whatever
+// still fails is retried by GET /booking/cron/notify-sweep.
+function notifyAfterWebhook(result) {
+  if (!result || result.alreadyProcessed || result.needsAttention || !result.booking) return;
+  const p = Promise.resolve(require("../services/bookingNotifications").deliverOutstanding(result.booking._id)).catch((err) =>
+    console.error("[webhook] booking notifications failed", err && err.message),
+  );
+  try {
+    require("@vercel/functions").waitUntil(p);
+  } catch {
+    /* not on Vercel: the promise simply runs on */
+  }
+}
+
 // Process webhook asynchronously
 async function processWebhookEvent(payload) {
   try {
@@ -522,7 +540,7 @@ async function processWebhookEvent(payload) {
       case "payment.authorized": {
         const p = payload?.payload?.payment?.entity;
         if (p && p.order_id) {
-          await applyPaymentSuccess({ orderId: p.order_id, razorpayPayment: p, paymentMethod: p.method, source: payload.event });
+          notifyAfterWebhook(await applyPaymentSuccess({ orderId: p.order_id, razorpayPayment: p, paymentMethod: p.method, source: payload.event }));
         }
         break;
       }
@@ -530,7 +548,7 @@ async function processWebhookEvent(payload) {
         const p = payload?.payload?.payment?.entity;
         const o = payload?.payload?.order?.entity;
         if (p && (p.order_id || o?.id)) {
-          await applyPaymentSuccess({ orderId: p.order_id || o.id, razorpayPayment: p, paymentMethod: p.method, source: payload.event });
+          notifyAfterWebhook(await applyPaymentSuccess({ orderId: p.order_id || o.id, razorpayPayment: p, paymentMethod: p.method, source: payload.event }));
         }
         break;
       }

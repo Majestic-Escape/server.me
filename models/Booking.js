@@ -106,6 +106,9 @@ const bookingSchema = new mongoose.Schema({
     paidAt: { type: Date, default: null },
     confirmedAt: { type: Date, default: null },
     attentionAt: { type: Date, default: null },
+    // "<flow>:<recipient>" of every e-mail already delivered, so a retried
+    // step never mails the same person twice (services/bookingNotifications.js).
+    sent: { type: [String], default: [] },
   },
   // Operational queue (services/attention.js): set when money was taken but
   // the booking cannot be honoured as-is — "inventory_conflict" (the hold was

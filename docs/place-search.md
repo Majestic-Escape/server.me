@@ -41,7 +41,14 @@ in the host wizard and were present on every active listing.
      (≈ 1.5 + 1.2·√(pop/10k) km, +0.35 km privacy tolerance) **in the same
      taluka/district** — Caranzalem is in Panaji, Porvorim across the river
      is not.
-   Classifications are memoised per (id, address) in-process.
+   - a town / village / beach the **title names** ("Luxury 1BHK | 5 mins to
+     Baga & Anjuna", "Near Anjuna Beach") also holds the listing when its
+     public point is within 10 km of it: the host advertises it there, and
+     "Anjuna" used to answer "No stays in Anjuna yet" above exactly those
+     stays. Titles are read masked (contact details hidden); states and
+     districts never come from a title; stay-type and "any stay" words are
+     never read as a place.
+   Classifications are memoised per (id, address, title) in-process.
 3. **Query resolution** (`utils/places.resolveQuery`), precedence
    `placeId` (a chosen suggestion, authoritative) > `lat,lng` (near me) >
    `location` text:
@@ -59,7 +66,9 @@ in the host wizard and were present on every active listing.
    - anything else → the legacy literal substring match (text mode).
 4. **Results** (`services/placeSearch.plan`) — one list, then pages:
    - `place`: exactly the listings in the place that pass every filter,
-     newest first (`createdAt` desc, `_id` desc — the old order);
+     newest first (`createdAt` desc, `_id` desc — the old order); then the
+     ones only their title places there, nearest first, each with
+     `distanceKm` (the card shows "2.6 km away");
    - `nearby`: **only when that whole filtered set is empty** (never because
      a later page is empty), the listings passing every filter — dates,
      guests, price, type, amenities… — nearest first within 250 km, with
@@ -82,9 +91,19 @@ Order in which typed text is read (`services/placeSearch.resolveScope`):
    "devbhoomi", "classic tent", "pool villa goa", "luxury 4bhk"): every
    word must match the listing's title, type, location names or amenities
    (prefix; one typo allowed in title words of 5+ letters); ranked phrase in
-   title > all words in title > mixed, then newest;
+   title > all words in title > mixed, then newest. "1 BHK" / "1-bhk" /
+   "1bhk" / "1 bedroom" are one word, "pvt" is "private". A type no stay is
+   listed as ("cottage", "cottages in goa") is searched as a word instead.
+   Words that only mean "any stay" ("homestay", "stays", "places to stay")
+   are dropped: alone they list every stay, around a place they are the
+   place ("homestay in goa"). A misspelt place that holds every stay the
+   words found is read as the place ("anjna", "assagaon");
 4. a typo in a place ("panjm", "villa in morjm");
-5. the legacy literal match / PIN code, with "did you mean".
+5. a known place among words nothing else matched ("luxury villa anjuna",
+   "rann of kutch") — only one with stays in or within 50 km of it, and
+   never over a legacy text match — returned `corrected` so the page says
+   "Showing results for Anjuna";
+6. the legacy literal match / PIN code, with "did you mean".
 Titles are searched in their public, contact-masked form and tokens with 3+
 digits are never search keys, so a phone number (or part of one) hidden in a
 title cannot be found by searching for it.
@@ -160,6 +179,12 @@ index and prefilter by the place's bounding box (strict) / `$geoNear`
 - GeoNames coordinates for some small villages are approximate; text wins
   whenever the host's text names a place.
 - A settlement neither in GeoNames nor typed as a city by any host (e.g.
-  Ashwem) resolves to text mode; add it to `overrides.json` (`include`,
-  or a curated place) if searched for.
+  Keri, Cabo de Rama, Galgibaga — GeoNames' two "Querim" points are inland
+  villages, not Keri beach) resolves to text mode; add it to
+  `overrides.json` (`include`, an alias, or a curated place) if searched
+  for. Ashwem, Mobor, Ozran / Little Vagator and Coco Beach are aliases
+  since 2026-10.
+- A title is trusted for places within 10 km only; a host can still name a
+  neighbouring village they are not in (that is the point: they are near
+  it), never a far one.
 - Only Latin-script names are matched.

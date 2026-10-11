@@ -468,6 +468,32 @@
       "aliases": [
         "Mamallapuram"
       ]
+    },
+    "gn:7497852": {
+      "name": "Ashwem",
+      "aliases": [
+        "Ashvem",
+        "Ashwem Beach",
+        "Ashvem Beach"
+      ]
+    },
+    "gn:11002855": {
+      "name": "Mobor",
+      "aliases": [
+        "Mobor Beach"
+      ]
+    },
+    "gn:7302453": {
+      "aliases": [
+        "Ozran",
+        "Little Vagator",
+        "Ozran Beach"
+      ]
+    },
+    "gn:1261500": {
+      "aliases": [
+        "Coco Beach"
+      ]
     }
   },
   "include": [

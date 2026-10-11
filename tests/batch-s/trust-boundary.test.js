@@ -515,7 +515,12 @@ test("uploads: authenticated, owner-bound keys, profile picture only on own acco
 
   // own profile picture
   assert.equal((await del(OT, prof.body.url)).status, 403);
+  assert.equal((await User().findById(H._id).lean()).profilePicture, prof.body.url, "a refused delete leaves the profile alone");
+  const otherBefore = (await User().findById(O._id).lean()).profilePicture;
   assert.equal((await del(HT, prof.body.url)).status, 200);
+  // the deleted picture no longer backs the profile (no broken avatar), and nobody else's profile changed
+  assert.equal((await User().findById(H._id).lean()).profilePicture, "");
+  assert.equal((await User().findById(O._id).lean()).profilePicture, otherBefore);
 
   // legacy key referenced by two hosts' listings → 409 for either host, admin may
   const legacy = `${BUCKET()}1769315746961-room.jpg`;

@@ -1609,6 +1609,24 @@ exports.adminUpdateListingProperty = async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 };
+// Photos a host removed from a listing are deleted from storage once the
+// saved listing no longer uses them — and only when no other listing or
+// profile references them (services/listingDeletion.js#cleanupPhotos). The
+// page used to delete a photo the moment it was removed, before the listing
+// was saved: an abandoned edit left a broken photo on the live listing.
+// Best effort: a cleanup failure never fails the host's save.
+async function cleanupRemovedPhotos(beforePhotos, afterPhotos) {
+  try {
+    const storage = require("../services/storage");
+    const keyOf = (url) => storage.masterKeyOf(storage.keyFromUrl(url));
+    const kept = new Set((afterPhotos || []).map(keyOf).filter(Boolean));
+    const removed = [...new Set((beforePhotos || []).map(keyOf))].filter((k) => k && !kept.has(k) && !storage.isProtectedKey(k));
+    if (removed.length) await require("../services/listingDeletion").cleanupPhotos(removed);
+  } catch (err) {
+    console.error("listing photo cleanup failed", err && err.message);
+  }
+}
+
 exports.updateListingProperty = async (req, res) => {
   try {
     const { id } = req.params;
@@ -1657,6 +1675,7 @@ exports.updateListingProperty = async (req, res) => {
     if ((before && before.status === "active") || property.status === "active") {
       await notifyListingChanged([id], "host-update");
     }
+    if (Array.isArray(patch.photos)) await cleanupRemovedPhotos(before.photos, property.photos);
     if (property.host.kyc === true) {
       property.kycStatus = "completed";
       await property.save();

@@ -664,12 +664,14 @@ test("D1: status polls and the admin read never ship the bookkeeping arrays (bou
   }
 });
 
-test('QR: a "code" that decodes to nothing (jsQR on dithered noise) does not refuse a banner; listings keep their rule', async () => {
-  const { detectQr } = require('../../services/imageSanitizer');
+test('QR: a "code" that decodes to nothing (jsQR on dithered noise) refuses no picture — banner, listing or profile', async () => {
+  const { detectQr, sanitizeImage } = require('../../services/imageSanitizer');
   const sharp = require('sharp');
   const buf = require('fs').readFileSync(require('path').join(__dirname, 'fixtures/qr-empty-decode.png'));
-  assert.equal(await detectQr(sharp(buf)), true, 'the listing rule (unchanged) sees an empty version-1 decode');
-  assert.equal(await detectQr(sharp(buf), { requirePayload: true }), false, 'the banner rule needs a payload');
+  assert.equal(await detectQr(sharp(buf), { requirePayload: false }), true, 'jsQR does see an empty version-1 decode');
+  assert.equal(await detectQr(sharp(buf)), false, 'every upload rule needs a payload');
+  const clean = await sanitizeImage(buf, 'image/png');
+  assert.ok(clean.buffer.length > 0, 'the listing/profile sanitiser accepts the picture');
 });
 
 test("sweep CLI: unknown arguments stop it; it prints the environment it runs as; a dry run writes nothing; a non-production run against production's document does nothing", async () => {

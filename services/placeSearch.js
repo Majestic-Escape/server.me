@@ -21,6 +21,7 @@ const { escapeRegex } = require("../utils/listingProjection");
 const { boundedEditDistance } = require("../utils/placeText");
 const { maskContactInfo } = require("../utils/contactModeration");
 const { extractPropertyType, typeWords, CONNECTORS, TYPES } = require("../utils/propertyTypes");
+const { latinizeIndic } = require("../utils/indicText");
 
 // What one active listing contributes to search: location fields, plus the
 // title / type / amenities for keyword search ("Dev Bhoomi Retreat").
@@ -389,6 +390,8 @@ function resolveScope({ placeId, point, location, explicitType = false }, { live
   }
   if (point) return { kind: "near", point };
   if (location) {
+    // Hindi (Devanagari) → the Latin words the gazetteer knows ("गोवा में विला")
+    location = latinizeIndic(location);
     const opts = { extra, stays, nearStock };
     // 1. a place, exactly ("panjim", "North Goa", "Colva, Goa")
     const exact = places.resolveQuery(location, { ...opts, fuzzy: false });
@@ -439,6 +442,10 @@ function resolveScope({ placeId, point, location, explicitType = false }, { live
     if (!inv.some(textMatcher(location))) {
       const inner = placeWithin(typed ? typed.rest : bare, opts);
       if (inner) return { kind: "place", place: inner.place, propertyType: typed ? typed.type : undefined, corrected: true, alternatives: [] };
+      // 6. only everyday words nothing matched ("best villa", "romantic
+      // getaway", "budget"): stays (of the named type) instead of a dead end
+      const rest = (typed ? typed.rest : bare).split(" ").filter(Boolean);
+      if (rest.length && rest.every((w) => places.isEverydayWord(w))) return { kind: "all", propertyType: typed ? typed.type : undefined };
     }
     return {
       kind: "text",

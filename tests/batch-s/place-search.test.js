@@ -682,6 +682,84 @@ test("names travellers use: landmarks (airports, falls, forts) are searched near
 });
 
 // ---------------------------------------------------------------------------
+test("Hindi script, everyday words, short names: Devanagari reads as the places and stay types it names; 'best villa' is never West Delhi", async () => {
+  const { latinizeIndic, hasDevanagari } = require("../../utils/indicText");
+  // the mapping: names, types, connecting words, spelling variants
+  const map = {
+    "गोवा": "goa",
+    "गोवा में विला": "goa in villa",
+    "अंजुना के पास विला": "anjuna near villa",
+    "उत्तर गोवा": "north goa",
+    "उत्तर प्रदेश": "uttar pradesh",
+    "नई दिल्ली": "new delhi",
+    "मुंबई": "mumbai",
+    "मुम्बई": "mumbai", // spelling variant
+    "चंडीगढ़": "chandigarh", // nukta
+    "ऊटी": "ooty", // long / short vowel
+    "goa में villa": "goa in villa", // mixed script
+    "गोवा, बीच!": "goa beach", // punctuation
+    "गोवा कोई अनजान": "goa", // an unknown word is dropped when something maps
+    "कोई अनजान जगह": "कोई अनजान जगह", // nothing maps: untouched
+    "goa villa": "goa villa", // no Devanagari: untouched, same string
+    "": "",
+  };
+  for (const [input, want] of Object.entries(map)) assert.equal(latinizeIndic(input), want, input);
+  assert.equal(hasDevanagari("goa"), false);
+  assert.equal(latinizeIndic(null), null);
+  // bounded work on hostile input
+  const t0 = process.hrtime.bigint();
+  latinizeIndic("गोवा ".repeat(40));
+  latinizeIndic("क".repeat(200));
+  assert.ok(Number(process.hrtime.bigint() - t0) / 1e6 < 50, "bounded");
+
+  // through the API: the same places as the Latin spelling, nothing else changes
+  const villa = await h.makeListing(HOST, { title: "Hindi Search Villa", propertyType: "villa", address: addr("Assagao", "Assagao", 15.594, 73.778), amenities: ["wifi"] });
+  try {
+  const first = async (location) => {
+    const r = await q({ location, limit: "50" });
+    return { mode: r.json.search.mode, place: r.json.search.place && r.json.search.place.name, type: r.json.search.propertyType, query: r.json.search.query, titles: titles(r), total: r.json.pagination.totalCount };
+  };
+  const latin = await first("Panaji");
+  const hindi = await first("पणजी");
+  assert.deepEqual([hindi.mode, hindi.place, sorted(hindi.titles)], ["place", "Panaji", sorted(latin.titles)]);
+  assert.equal(hindi.query, "पणजी", "the page echoes what was typed");
+  assert.deepEqual((await first("पंजिम")).place, "Panaji");
+  assert.deepEqual((await first("गोवा")).place, "Goa");
+  assert.deepEqual((await first("उत्तर गोवा")).place, "North Goa");
+  let r = await first("गोवा में विला");
+  assert.deepEqual([r.mode, r.place, r.type], ["place", "Goa", "villa"]);
+  r = await first("goa में villa");
+  assert.deepEqual([r.mode, r.place, r.type], ["place", "Goa", "villa"]);
+  r = await first("कोई अनजान जगह");
+  assert.deepEqual([r.mode, r.total], ["text", 0], "unknown Hindi: honest empty result");
+
+  // everyday words are never typo-corrected into a place…
+  const P = places();
+  assert.equal(P.resolveQuery("best"), null);
+  assert.equal(P.resolveQuery("budget"), null);
+  assert.deepEqual(P.suggestFor("luxury"), []);
+  assert.equal(P.resolveQuery("west").place.n, "West Delhi", "…but an exact name still resolves");
+  r = await first("best villa");
+  assert.deepEqual([r.mode, r.place, r.type], ["all", null, "villa"], "stays of the named type, not West Delhi");
+  for (const location of ["best", "romantic getaway", "budget", "cheap stay", "top"]) {
+    r = await first(location);
+    assert.deepEqual([r.mode, r.place], ["all", null], location);
+    assert.ok(r.total > 0, location);
+  }
+  // …only when nothing else matched: a place, a name or a keyword still wins
+  assert.equal((await first("best villa in goa")).place, "Goa");
+  assert.equal((await first("Panaji Loft")).mode, "text");
+  for (const location of ["!!!", ".*", "xyzzy", "best xyzzy", "2 guests"]) assert.equal((await first(location)).mode, "text", `${location}: junk is still an honest empty result`);
+
+  // short names people use
+  assert.equal(P.resolveQuery("kodai").place.n, "Kodaikanal");
+  assert.equal(P.resolveQuery("kodai kanal").place.n, "Kodaikanal");
+  } finally {
+    await ListingProperty().deleteMany({ _id: villa._id });
+  }
+});
+
+// ---------------------------------------------------------------------------
 test("cost: ≤ 3 ops in every mode (with dates), ≤ 2 without; the edge caches date-less searches only", async () => {
   const cases = [
     [{ location: "panaji", from: "2027-06-10", to: "2027-06-11" }, 3],

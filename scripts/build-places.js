@@ -60,9 +60,16 @@ function usableAlias(s) {
   return /^[A-Za-z][A-Za-z .'\-()]*$/.test(stripped) && !/\(/.test(stripped);
 }
 
+// Not a settlement and not a beach / island: an airport, fort, cape,
+// waterfall… Searchable by name, but never where a listing is placed.
+function isLandmark(fclass, fcode) {
+  return fclass !== "P" && !(fclass === "T" && (fcode === "BCH" || fcode === "ISL"));
+}
+
 function localityType(fcode, pop, fclass) {
   if (fclass === "T" && fcode === "BCH") return "beach";
-  if (fclass === "T") return "island";
+  if (fclass === "T" && fcode === "ISL") return "island";
+  if (isLandmark(fclass, fcode)) return "area";
   if (fcode === "PPLX") return "area";
   if (fcode === "PPLC" || fcode === "PPLA" || pop >= 100000) return "city";
   if (pop >= 5000) return "town";
@@ -138,6 +145,10 @@ async function main() {
       const big = pop >= minPop || fcode === "PPLC" || fcode === "PPLA" || fcode === "PPLA2";
       if (goa || big || include.has(id)) localities.push(base);
     } else if (fclass === "T" && (fcode === "BCH" || fcode === "ISL") && a1 === GOA_A1) {
+      localities.push(base);
+    } else if (include.has(id) && fclass !== "A") {
+      // a curated landmark people search by name (an airport, a fort, a
+      // waterfall, an island elsewhere): a place to search near, see isLandmark
       localities.push(base);
     }
   }
@@ -244,7 +255,7 @@ async function main() {
     const t = localityType(p.fcode, p.pop, p.fclass);
     const k = p.a1 === GOA_A1 && talukas.get(p.a3) ? talukas.get(p.a3).id : undefined;
     const v = p.a1 === GOA_A1 || p.pop >= CLIENT_MIN_POP || popularIds.has(p.id) || include.has(p.id) || !!(ov.names || {})[p.id] ? 1 : undefined;
-    out.push({ id: p.id, n, a: aliasesFor(p, n, o.aliases || []), t, s: stateIdOf(p.a1), d: dg ? `gn:${dg}` : undefined, k, lat: round(p.lat, 4), lng: round(p.lng, 4), p: p.pop || undefined, r: radiusKm(p.pop), v, fav: popularIds.has(p.id) ? 1 : undefined });
+    out.push({ id: p.id, n, a: aliasesFor(p, n, o.aliases || []), t, s: stateIdOf(p.a1), d: dg ? `gn:${dg}` : undefined, k, lat: round(p.lat, 4), lng: round(p.lng, 4), p: p.pop || undefined, r: radiusKm(p.pop), v, fav: popularIds.has(p.id) ? 1 : undefined, lm: isLandmark(p.fclass, p.fcode) ? 1 : undefined });
   }
 
   for (const id of Object.keys(ov.names || {})) {

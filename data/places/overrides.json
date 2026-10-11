@@ -224,7 +224,9 @@
       "a1": "07",
       "aliases": [
         "NCT of Delhi",
-        "National Capital Territory of Delhi"
+        "National Capital Territory of Delhi",
+        "Delhi NCR",
+        "NCR"
       ]
     },
     {
@@ -264,7 +266,8 @@
       "aliases": [
         "Panjim",
         "Pangim",
-        "Ponnje"
+        "Ponnje",
+        "Fontainhas"
       ]
     },
     "gn:1253367": {
@@ -341,7 +344,8 @@
     "gn:1264627": {
       "name": "McLeod Ganj",
       "aliases": [
-        "Mcleodganj"
+        "Mcleodganj",
+        "Dharamkot"
       ]
     },
     "gn:1279027": {
@@ -358,7 +362,10 @@
     "gn:1268731": {
       "aliases": [
         "Kachchh",
-        "Kachh"
+        "Kachh",
+        "Rann of Kutch",
+        "Great Rann of Kutch",
+        "White Rann"
       ]
     },
     "gn:1275339": {
@@ -378,7 +385,8 @@
     },
     "gn:1277333": {
       "aliases": [
-        "Bangalore"
+        "Bangalore",
+        "Blr"
       ]
     },
     "gn:1270642": {
@@ -494,6 +502,98 @@
       "aliases": [
         "Coco Beach"
       ]
+    },
+    "gn:12420963": {
+      "name": "Mopa Airport",
+      "aliases": [
+        "Mopa International Airport",
+        "Manohar International Airport",
+        "Goa Mopa Airport"
+      ]
+    },
+    "gn:6301037": {
+      "name": "Dabolim Airport",
+      "aliases": [
+        "Goa International Airport",
+        "Dabolim International Airport",
+        "Goa Dabolim Airport"
+      ]
+    },
+    "gn:1272294": {
+      "name": "Dudhsagar Falls",
+      "aliases": [
+        "Dudhsagar",
+        "Dudhsagar Waterfalls",
+        "Dudh Sagar"
+      ]
+    },
+    "gn:1258722": {
+      "name": "Cabo de Rama",
+      "aliases": [
+        "Cabo de Rama Fort",
+        "Cape Rama",
+        "Cape Ramas"
+      ]
+    },
+    "gn:1270172": {
+      "name": "Havelock Island",
+      "aliases": [
+        "Havelock",
+        "Swaraj Dweep"
+      ]
+    },
+    "gn:1278464": {
+      "aliases": [
+        "Harmal"
+      ]
+    },
+    "gn:7284334": {
+      "aliases": [
+        "Titos Lane",
+        "Tito Lane",
+        "Baga Beach"
+      ]
+    },
+    "gn:1279248": {
+      "aliases": [
+        "Fort Aguada"
+      ]
+    },
+    "gn:1262837": {
+      "aliases": [
+        "Mollem"
+      ]
+    },
+    "gn:13157068": {
+      "aliases": [
+        "Kevadia",
+        "Ekta Nagar",
+        "Statue of Unity"
+      ]
+    },
+    "gn:1253914": {
+      "aliases": [
+        "Mahakal",
+        "Mahakaleshwar"
+      ]
+    },
+    "gn:1264733": {
+      "aliases": [
+        "Lko"
+      ]
+    },
+    "gn:1269843": {
+      "aliases": [
+        "Hyd"
+      ]
+    },
+    "gn:1265292": {
+      "aliases": [
+        "Spiti",
+        "Spiti Valley",
+        "Lahaul and Spiti",
+        "Lahaul"
+      ]
     }
   },
   "include": [
@@ -502,7 +602,12 @@
     "gn:1271064",
     "gn:1259437",
     "gn:11903108",
-    "gn:11071418"
+    "gn:11071418",
+    "gn:12420963",
+    "gn:6301037",
+    "gn:1272294",
+    "gn:1258722",
+    "gn:1270172"
   ],
   "exclude": [],
   "redirects": {},

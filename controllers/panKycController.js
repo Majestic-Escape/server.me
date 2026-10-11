@@ -28,15 +28,22 @@ function makeClientRefId(prefix) {
 function fail(res, status, code, message, extra = {}) {
   return res.status(status).json({ success: false, code, message, statusCode: status, ...extra });
 }
-function providerFailure(res, err, fallback) {
-  const status = err && err.response && err.response.status;
-  console.error("verifyKYC provider error", err && (err.code || status || err.message));
-  if (status === 413 || (err && err.status === 413)) return fail(res, 413, "DOCUMENT_TOO_LARGE", "Upload file size is more than 4MB");
-  if (status >= 400 && status < 500) {
-    const data = err.response.data || {};
-    return fail(res, status, "PROVIDER_REJECTED", data.error || data.message || fallback);
-  }
-  return fail(res, 502, "PROVIDER_UNAVAILABLE", fallback);
+// What the host is told when the provider call fails. Our account/plan
+// problems and outages: try later. A 4xx about the document: the provider's
+// own short reason (e.g. a blurred image) or the fallback. `next` is the
+// attemptInfo the client counts down from.
+function providerFailure(res, err, fallback, next = {}) {
+  const info = provider.describeError(err);
+  console.error("verifyKYC provider error", JSON.stringify(info));
+  const status = info.status;
+  if (status === 413 || (err && err.status === 413)) return fail(res, 413, "DOCUMENT_TOO_LARGE", "Upload file size is more than 4MB", next);
+  if (provider.isAccountError(err)) return fail(res, 502, "PROVIDER_UNAVAILABLE", "Document verification is temporarily unavailable. Please try again in a few minutes.", next);
+  if (status >= 400 && status < 500) return fail(res, status, "PROVIDER_REJECTED", info.said || fallback, next);
+  return fail(res, 502, "PROVIDER_UNAVAILABLE", fallback, next);
+}
+function logError(err) {
+  const info = provider.describeError(err);
+  return (info.status ? `HTTP ${info.status}${info.said ? `: ${info.said}` : ""}` : String((err && err.message) || err)).slice(0, 500);
 }
 
 // Status-check request per document type, from the OCR extraction.
@@ -83,6 +90,9 @@ exports.verifyKYC = async (req, res) => {
   // 2. One attempt at a time, cooldown, daily ceiling.
   const slot = await guard.claim(user._id, "ocr");
   if (!slot.ok) return guard.rateLimited(res, slot);
+  // Every failure from here on tells the client when it may try again.
+  const next = () => guard.attemptInfo(slot.form, "ocr");
+  const afterProviderError = async (err) => guard.attemptInfo((provider.isAccountError(err) && (await guard.refund(user._id, "ocr"))) || slot.form, "ocr");
 
   const now = new Date();
   try {
@@ -109,8 +119,8 @@ exports.verifyKYC = async (req, res) => {
     try {
       ocrResult = await provider.ocr(b64, clientRefId, doc);
     } catch (err) {
-      await KycLogs.updateOne({ _id: ocrLog._id }, { $set: { status: "failed", error: String((err && err.message) || err).slice(0, 500) } });
-      return providerFailure(res, err, "The document could not be read right now. Please try again.");
+      await KycLogs.updateOne({ _id: ocrLog._id }, { $set: { status: "failed", error: logError(err) } });
+      return providerFailure(res, err, "The document could not be read right now. Please try again.", await afterProviderError(err));
     }
     await KycLogs.updateOne({ _id: ocrLog._id }, { $set: { status: "success", responseData: ocrResult } });
 
@@ -136,7 +146,7 @@ exports.verifyKYC = async (req, res) => {
 
     if (!statusRequest) {
       await setOutcome({ verdict: "failed", reason: "DOCUMENT_UNREADABLE" });
-      return fail(res, 422, "DOCUMENT_NOT_VERIFIED", "The document number could not be read from the image. Please upload a clearer copy.");
+      return fail(res, 422, "DOCUMENT_NOT_VERIFIED", "The document number could not be read from the image. Please upload a clearer copy.", { reason: "DOCUMENT_UNREADABLE", ...next() });
     }
 
     const statusLog = await KycLogs.create({ userId: user._id, email: user.email, type: "Status", requestData: statusRequest });
@@ -144,8 +154,8 @@ exports.verifyKYC = async (req, res) => {
     try {
       statusResult = await provider.statusCheck(statusRequest, doc);
     } catch (err) {
-      await KycLogs.updateOne({ _id: statusLog._id }, { $set: { status: "failed", error: String((err && err.message) || err).slice(0, 500) } });
-      return providerFailure(res, err, "The document could not be verified right now. Please try again.");
+      await KycLogs.updateOne({ _id: statusLog._id }, { $set: { status: "failed", error: logError(err) } });
+      return providerFailure(res, err, "The document could not be verified right now. Please try again.", await afterProviderError(err));
     }
     await KycLogs.updateOne({ _id: statusLog._id }, { $set: { status: statusResult ? "success" : "failed", responseData: statusResult } });
 
@@ -154,7 +164,7 @@ exports.verifyKYC = async (req, res) => {
     const verdict = documentVerdict(statusResult, { doc, accountName, ocrName });
     await setOutcome(verdict);
 
-    if (verdict.verdict === "failed") return fail(res, 422, "DOCUMENT_NOT_VERIFIED", verdict.message || "The document could not be verified", { reason: verdict.reason });
+    if (verdict.verdict === "failed") return fail(res, 422, "DOCUMENT_NOT_VERIFIED", verdict.message || "The document could not be verified", { reason: verdict.reason, ...next() });
     return res.json({
       success: true,
       verdict: verdict.verdict,
@@ -167,7 +177,7 @@ exports.verifyKYC = async (req, res) => {
     });
   } catch (err) {
     console.error("verifyKYC error", err && err.message);
-    return fail(res, 500, "SERVER_ERROR", "Upload Correct Image and check your network");
+    return fail(res, 500, "SERVER_ERROR", "Upload Correct Image and check your network", next());
   } finally {
     await guard.release(user._id, "ocr");
   }

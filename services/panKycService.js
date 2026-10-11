@@ -62,172 +62,61 @@ const {
   isValidBase64,
   detectMimeFromBuffer,
 } = require("../utils/ocrHelpers");
-const fs = require("fs");
+
+// Every Digitap call has a deadline (shorter than the KYC in-flight lease in
+// services/kycGuard.js) and every failure propagates with its axios
+// `response` intact, so panKycController can tell the host what actually
+// happened. These used to swallow errors: any provider rejection (unreadable
+// image, auth, credits, outage) reached the host as "the document number
+// could not be read" and KycLogs recorded it as a success.
+const { providerTimeoutMs } = require("./kycProvider");
+const OCR_PATHS = { pan: "pan", voterId: "voter", passport: "passport" };
+const STATUS_PATHS = { pan: "pan_basic", voterId: "voter", passport: "passport" };
+
 exports.performOCR = async (imageInput, clientRefId, doc) => {
-  try {
-    let buffer;
-    if (typeof imageInput === "string" && fs.existsSync(imageInput)) {
-      buffer = fs.readFileSync(imageInput);
-    } else {
-      // assume base64 / dataURI
-      const rawBase64 = rawBase64FromPossibleDataUri(imageInput);
-      if (!rawBase64 || !isValidBase64(rawBase64)) {
-        throw new Error("Invalid base64 or unsupported input");
-      }
-      buffer = Buffer.from(rawBase64.replace(/\s+/g, ""), "base64");
-    }
-
-    if (!buffer || buffer.length === 0) {
-      throw new Error("Decoded buffer empty");
-    }
-
-    // detect mime to give filename & contentType
-    const mime = detectMimeFromBuffer(buffer);
-    const ext =
-      mime === "image/png"
-        ? "png"
-        : mime === "image/jpeg"
-        ? "jpg"
-        : mime === "application/pdf"
-        ? "pdf"
-        : "bin";
-
-    const form = new FormData();
-    // The doc says the key for image content is "imageUrl" OR "pdf" for pdfs.
-    // For images, append under "imageUrl"
-    if (mime === "application/pdf") {
-      form.append("pdf", buffer, { filename: `doc.${ext}`, contentType: mime });
-    } else {
-      form.append("imageUrl", buffer, {
-        filename: `image.${ext}`,
-        contentType: mime,
-      });
-    }
-    form.append("clientRefId", clientRefId);
-
-    const headers = { ...form.getHeaders(), Authorization: getAuthHeader() };
-    if (doc == "pan") {
-      const response = await axios.post(`${process.env.OCR_API}/pan`, form, {
-        headers,
-        maxBodyLength: Infinity,
-        maxContentLength: Infinity,
-        // timeout: 30000 // optional
-      });
-
-      if (process.env.NEXT_PUBLIC_ENV === "dev") {
-        console.log("passport ocr", response?.data?.result[0]?.details);
-      }
-
-      return response.data;
-    } else if (doc == "voterId") {
-      const response = await axios.post(`${process.env.OCR_API}/voter`, form, {
-        headers,
-        maxBodyLength: Infinity,
-        maxContentLength: Infinity,
-        // timeout: 30000 // optional
-      });
-
-      if (process.env.NEXT_PUBLIC_ENV === "dev") {
-        console.log("voter ocr", response?.data?.result[0]?.details);
-      }
-
-      return response.data;
-    } else {
-      const response = await axios.post(
-        `${process.env.OCR_API}/passport`,
-        form,
-        {
-          headers,
-          maxBodyLength: Infinity,
-          maxContentLength: Infinity,
-          // timeout: 30000 // optional
-        }
-      );
-
-      if (process.env.NEXT_PUBLIC_ENV === "dev") {
-        console.log("pans ocr", response?.data?.result[0]?.details);
-      }
-
-      return response.data;
-    }
-  } catch (error) {
-    const errorMessage = error.response?.data
-      ? JSON.stringify(error.response.data.error, null, 2)
-      : error.message;
-
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log(errorMessage);
-    }
+  const rawBase64 = rawBase64FromPossibleDataUri(imageInput);
+  if (!rawBase64 || !isValidBase64(rawBase64)) {
+    throw new Error("Invalid base64 or unsupported input");
   }
+  const buffer = Buffer.from(rawBase64.replace(/\s+/g, ""), "base64");
+  if (!buffer.length) throw new Error("Decoded buffer empty");
+
+  // Digitap takes an image under "imageUrl" and a PDF under "pdf".
+  const mime = detectMimeFromBuffer(buffer);
+  const form = new FormData();
+  if (mime === "application/pdf") {
+    form.append("pdf", buffer, { filename: "doc.pdf", contentType: mime });
+  } else {
+    const ext = mime === "image/png" ? "png" : mime === "image/jpeg" ? "jpg" : "bin";
+    form.append("imageUrl", buffer, { filename: `image.${ext}`, contentType: mime });
+  }
+  form.append("clientRefId", clientRefId);
+
+  const response = await axios.post(
+    `${process.env.OCR_API}/${OCR_PATHS[doc] || OCR_PATHS.passport}`,
+    form,
+    {
+      headers: { ...form.getHeaders(), Authorization: getAuthHeader() },
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      timeout: providerTimeoutMs(),
+    }
+  );
+  return response.data;
 };
 exports.performStatusCheck = async (requestData, doc) => {
-  if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    console.log("entered the status check", doc);
-  }
-  try {
-    if (doc == "pan") {
-      if (process.env.NEXT_PUBLIC_ENV === "dev") {
-        console.log("entered the status check2");
-      }
-      try {
-        const response = await axios.post(
-          `${STATUS_API}/pan_basic`,
-          requestData,
-          {
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: getAuthHeader(),
-            },
-          }
-        );
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log("Pan response", response);
-        }
-
-        return response.data;
-      } catch (error) {
-        if (process.env.NEXT_PUBLIC_ENV === "dev") {
-          console.log("Pan error check", error);
-        }
-      }
-    } else if (doc == "voterId") {
-      if (process.env.NEXT_PUBLIC_ENV === "dev") {
-        console.log("entered the status check voter", requestData);
-      }
-      const response = await axios.post(`${STATUS_API}/voter`, requestData, {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: getAuthHeader(),
-        },
-      });
-      return response.data;
-    } else {
-      const response = await axios.post(`${STATUS_API}/passport`, requestData, {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: getAuthHeader(),
-        },
-      });
-      return response.data;
+  const response = await axios.post(
+    `${STATUS_API}/${STATUS_PATHS[doc] || STATUS_PATHS.passport}`,
+    requestData,
+    {
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: getAuthHeader(),
+      },
+      timeout: providerTimeoutMs(),
     }
-  } catch (error) {
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("status check valida", error);
-    }
-    // const errorMessage = error.response?.data
-    //   ? JSON.stringify(error.response.data.error, null, 2)
-    //   : error.message;
-    const message =
-      error.response?.data?.error ||
-      error.response?.data?.message ||
-      error.message ||
-      "Status check failed";
-
-    throw new Error(message);
-    // process.env.ENV === 'dev' && if (process.env.NEXT_PUBLIC_ENV === "dev") {
-    //   console.log(errorMessage);
-    // }
-  }
+  );
+  return response.data;
 };
 
 // exports.performVoterOCR = async (imageBase64, clientRefId) => {

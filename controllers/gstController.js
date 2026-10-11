@@ -44,6 +44,13 @@ exports.verifyGst = async (req, res) => {
 
   const slot = await guard.claim(user._id, "gst");
   if (!slot.ok) return guard.rateLimited(res, slot);
+  // Every failure from here on tells the client when it may try again.
+  const next = () => guard.attemptInfo(slot.form, "gst");
+  const afterProviderError = async (err) => {
+    console.error("verifyGST provider error", JSON.stringify(provider.describeError(err)));
+    return guard.attemptInfo((provider.isAccountError(err) && (await guard.refund(user._id, "gst"))) || slot.form, "gst");
+  };
+  const unavailable = (err, message) => (provider.isAccountError(err) ? "GST verification is temporarily unavailable. Please try again in a few minutes." : message);
 
   try {
     const panRef = makeClientRefId("PAN");
@@ -53,19 +60,19 @@ exports.verifyGst = async (req, res) => {
       panResult = await provider.gstPanSearch({ pan: panNumber, client_ref_num: panRef });
     } catch (err) {
       await KycLogs.updateOne({ _id: panLog._id }, { $set: { status: "failed", error: String((err && err.message) || err).slice(0, 500) } });
-      return fail(res, 502, "PROVIDER_UNAVAILABLE", "Invalid PAN Number or Network Issue");
+      return fail(res, 502, "PROVIDER_UNAVAILABLE", unavailable(err, "Invalid PAN Number or Network Issue"), await afterProviderError(err));
     }
     if (!panResult || Number(panResult.http_response_code) !== 200) {
       await KycLogs.updateOne({ _id: panLog._id }, { $set: { status: "failed", responseData: panResult } });
-      return fail(res, 404, "PAN_NOT_FOUND", "Business PAN not found");
+      return fail(res, 404, "PAN_NOT_FOUND", "Business PAN not found", next());
     }
     await KycLogs.updateOne({ _id: panLog._id }, { $set: { status: "success", responseData: panResult } });
 
     const list = panResult.result && panResult.result.gstinResList;
-    if (!Array.isArray(list)) return fail(res, 404, "GST_NOT_FOUND", "No GST data found for this PAN");
+    if (!Array.isArray(list)) return fail(res, 404, "GST_NOT_FOUND", "No GST data found for this PAN", next());
     const matched = list.find((item) => item && item.gstin === gstNumber);
-    if (!matched) return fail(res, 404, "GST_NOT_FOUND", "GST associated with Business PAN not found");
-    if (matched.authStatus !== "Active") return fail(res, 409, "GST_INACTIVE", "GST associated with Business PAN inactive");
+    if (!matched) return fail(res, 404, "GST_NOT_FOUND", "GST associated with Business PAN not found", next());
+    if (matched.authStatus !== "Active") return fail(res, 409, "GST_INACTIVE", "GST associated with Business PAN inactive", next());
 
     const gstRef = makeClientRefId("GST");
     const gstLog = await KycLogs.create({ userId: user._id, email: user.email, type: "Gst", requestData: { gstin: gstNumber.slice(-4), client_ref_num: gstRef } });
@@ -74,11 +81,11 @@ exports.verifyGst = async (req, res) => {
       gstResult = await provider.gstCheck({ gstin: gstNumber, client_ref_num: gstRef });
     } catch (err) {
       await KycLogs.updateOne({ _id: gstLog._id }, { $set: { status: "failed", error: String((err && err.message) || err).slice(0, 500) } });
-      return fail(res, 502, "PROVIDER_UNAVAILABLE", "Failed to verify GST");
+      return fail(res, 502, "PROVIDER_UNAVAILABLE", unavailable(err, "Failed to verify GST"), await afterProviderError(err));
     }
     if (!gstResult || Number(gstResult.http_response_code) !== 200 || !gstResult.result || !gstResult.result.taxpayerDetails) {
       await KycLogs.updateOne({ _id: gstLog._id }, { $set: { status: "failed", responseData: gstResult } });
-      return fail(res, 404, "GST_NOT_FOUND", "Gst data not found");
+      return fail(res, 404, "GST_NOT_FOUND", "Gst data not found", next());
     }
     await KycLogs.updateOne({ _id: gstLog._id }, { $set: { status: "success", responseData: gstResult } });
 
@@ -90,7 +97,7 @@ exports.verifyGst = async (req, res) => {
     return res.json({ success: true, verdict: "verified", data: gstResult });
   } catch (error) {
     console.error("verifyGST error", error && error.message);
-    return fail(res, 500, "SERVER_ERROR", "Incorrect PAN or GST Number");
+    return fail(res, 500, "SERVER_ERROR", "Incorrect PAN or GST Number", next());
   } finally {
     await guard.release(user._id, "gst");
   }

@@ -9,6 +9,8 @@
 //   ambiguous 200 without any validity field
 //   failure   provider error (throws)
 //   timeout   provider timeout (throws after a short delay)
+//   rejected  provider refuses the document (throws a 400 with a message)
+//   account   provider refuses OUR credentials/plan (throws a 401)
 // The mock also counts calls so tests can prove the abuse guard lets exactly
 // one request through.
 const axios = require("axios");
@@ -42,6 +44,37 @@ async function mockGate() {
     err.response = { status: 502, data: { error: "provider unavailable" } };
     throw err;
   }
+  if (m === "rejected") {
+    const err = new Error("Request failed with status code 400");
+    err.response = { status: 400, data: { error: "Image is blurred" } };
+    throw err;
+  }
+  if (m === "account") {
+    const err = new Error("Request failed with status code 401");
+    err.response = { status: 401, data: { error: "Invalid client credentials" } };
+    throw err;
+  }
+}
+// Deadline for every real Digitap call (default 45 s, below the 120 s KYC
+// in-flight lease so a stuck call never overlaps the next attempt).
+function providerTimeoutMs() {
+  const n = Number(process.env.KYC_PROVIDER_TIMEOUT_MS);
+  return Number.isFinite(n) && n > 0 ? n : 45000;
+}
+
+// Digitap refusing OUR credentials / plan / rate (not the host's document):
+// nothing was verified, and the host can do nothing about it.
+const ACCOUNT_STATUSES = new Set([401, 402, 403, 407, 429]);
+function isAccountError(err) {
+  return !!(err && err.response && ACCOUNT_STATUSES.has(err.response.status));
+}
+// One log line per provider failure: HTTP status, transport code and the
+// provider's own short message — never the request (it carries PII).
+function describeError(err) {
+  const status = (err && err.response && err.response.status) || null;
+  const data = (err && err.response && err.response.data) || {};
+  const said = [data.error, data.message].find((v) => typeof v === "string" && v.trim()) || "";
+  return { status, code: (err && err.code) || null, said: said.trim().slice(0, 200) };
 }
 
 function getAuthHeader() {
@@ -102,6 +135,7 @@ async function gstPanSearch(requestData) {
   }
   const response = await axios.post(`${process.env.STATUS_GST}/gstpansearch`, requestData, {
     headers: { "Content-Type": "application/json", Authorization: getAuthHeader() },
+    timeout: providerTimeoutMs(),
   });
   return response.data;
 }
@@ -115,8 +149,9 @@ async function gstCheck(requestData) {
   }
   const response = await axios.post(`${process.env.STATUS_GST}/gst`, requestData, {
     headers: { "Content-Type": "application/json", Authorization: getAuthHeader() },
+    timeout: providerTimeoutMs(),
   });
   return response.data;
 }
 
-module.exports = { ocr, statusCheck, gstPanSearch, gstCheck, calls, resetCalls, MOCK_GSTIN, MOCK_PAN };
+module.exports = { ocr, statusCheck, gstPanSearch, gstCheck, calls, resetCalls, providerTimeoutMs, isAccountError, describeError, MOCK_GSTIN, MOCK_PAN };

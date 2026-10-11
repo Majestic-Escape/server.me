@@ -97,6 +97,9 @@ async function start() {
     require("../../models/KycLogs").createIndexes(),
     require("../../models/AdminAuditLog").createIndexes(),
     require("../../models/ListingProperty").createIndexes(), // Batch P
+    // SyncGuard: production gets these from scripts/syncguard-migrate.js --create-indexes
+    require("../../models/ExternalCalendar").syncIndexes(),
+    require("../../models/CalendarSyncLog").syncIndexes(),
   ]);
   const port = server.address().port;
   started = { app, server, baseUrl: `http://127.0.0.1:${port}/api/v1`, uri };

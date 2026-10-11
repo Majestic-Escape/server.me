@@ -606,6 +606,82 @@ test("a place a title names: 'Anjuna' finds the stays that say '5 mins to Anjuna
 });
 
 // ---------------------------------------------------------------------------
+test("names travellers use: landmarks (airports, falls, forts) are searched near, never where a stay is placed; local names and abbreviations", async () => {
+  const P = places();
+  const name = (s) => {
+    const x = P.resolveQuery(s);
+    return x && x.place ? `${x.place.n}|${x.place.s}${x.corrected ? "*" : ""}` : null;
+  };
+  const cases = {
+    dudhsagar: "Dudhsagar Falls|st:goa",
+    "dudhsagar falls": "Dudhsagar Falls|st:goa",
+    "mopa airport": "Mopa Airport|st:goa",
+    "goa international airport": "Dabolim Airport|st:goa",
+    "dabolim airport": "Dabolim Airport|st:goa",
+    mopa: "Mopa|st:goa", // the village keeps its own name
+    dabolim: "Dabolim|st:goa",
+    "cabo de rama": "Cabo de Rama|st:goa",
+    "fort aguada": "Aguada|st:goa",
+    harmal: "Arambol|st:goa",
+    "titos lane": "Baga|st:goa",
+    fontainhas: "Panaji|st:goa",
+    mollem: "Molem|st:goa",
+    "statue of unity": "Kevadiya|st:gujarat",
+    kevadia: "Kevadiya|st:gujarat",
+    mahakal: "Ujjain|st:madhya-pradesh",
+    lko: "Lucknow|st:uttar-pradesh",
+    blr: "Bengaluru|st:karnataka",
+    hyd: "Hyderabad|st:telangana",
+    "delhi ncr": "Delhi|undefined",
+    "rann of kutch": "Kutch|st:gujarat",
+    spiti: "Lahul and Spiti|st:himachal-pradesh",
+    dharamkot: "McLeod Ganj|st:himachal-pradesh",
+    havelock: "Havelock Island|st:andaman-and-nicobar-islands",
+  };
+  for (const [q, want] of Object.entries(cases)) assert.equal(name(q), want, q);
+  // "Looking for another …?" offers namesakes elsewhere, never the district
+  // the city itself is (Mumbai, Lucknow), still the real ones (Manali, Betul)
+  const alts = (s) => P.resolveQuery(s).alternatives.map((p) => `${p.n}|${p.s}`);
+  assert.deepEqual(alts("Mumbai"), []);
+  assert.deepEqual(alts("Lucknow"), []);
+  assert.deepEqual(alts("Manali"), ["Manali|st:tamil-nadu"]);
+  assert.deepEqual(alts("Betul"), ["Betul|st:goa"]);
+  // a landmark is a place to search near, never a stay's address: a stay at
+  // the airport's gate with no useful address text is placed in a village
+  const mopa = P.placeById("gn:12420963");
+  assert.equal(mopa.lm, 1);
+  assert.ok(!P.localitiesNear({ lat: mopa.lat, lng: mopa.lng }, 3).some((p) => p.lm), "no landmark in the placing grid");
+  const near = P.nearestSettlement({ lat: mopa.lat, lng: mopa.lng }, { stateId: "st:goa", maxKm: 5 });
+  assert.ok(near && !near.place.lm && near.place.t !== "area", JSON.stringify(near && near.place.n));
+  const gate = await h.makeListing(HOST, { title: "Airport Gate Rooms", address: addr("Goa", "", mopa.lat + 0.001, mopa.lng + 0.001) });
+  try {
+    const r = await q({ location: "Mopa Airport", limit: "50" });
+    // nothing is IN the airport, so the nearest stays, by distance, labelled so
+    assert.deepEqual([r.json.search.mode, r.json.search.place.name, r.json.search.reason], ["nearby", "Mopa Airport", "no_inventory"]);
+    assert.equal(titles(r)[0], "Airport Gate Rooms");
+    assert.ok(typeof r.json.data[0].distanceKm === "number" && r.json.data[0].distanceKm < 1);
+    const idx = await raw("/places/index");
+    const row = idx.json.rows.find((x) => x[0] === "gn:12420963");
+    assert.deepEqual([row[1], row[2], row[5]], ["Mopa Airport", "a", 0], "suggested by name, holds no stays");
+    // an empty result says what blocked it: nothing in the place, but stays
+    // nearby that a filter hides is "filters", not "no stays yet"
+    const reason = async (params) => {
+      const x = await q({ limit: "50", ...params });
+      return [x.json.search.mode, x.json.search.reason, x.json.pagination.totalCount];
+    };
+    assert.deepEqual(await reason({ location: "Vasco" }), ["nearby", "no_inventory", (await q({ location: "Vasco", limit: "50" })).json.pagination.totalCount], "stays nearby: unchanged");
+    assert.deepEqual(await reason({ location: "Vasco", minPrice: "99999999" }), ["nearby", "filters", 0]);
+    assert.deepEqual(await reason({ lat: "15.50", lng: "73.83", minPrice: "99999999" }), ["near", "filters", 0]);
+    assert.deepEqual(await reason({ lat: "15.50", lng: "73.83" }).then((r) => [r[0], r[1]]), ["near", null]);
+    assert.deepEqual(await reason({ location: "Kerala", minPrice: "99999999" }), ["nearby", "no_inventory", 0], "nothing anywhere near: stays honest");
+    assert.deepEqual(await reason({ location: "treehouse in Vasco" }), ["nearby", "no_inventory", 0], "a type nobody lists, named in the text: no stays of it yet");
+    assert.deepEqual(await reason({ location: "Vasco", propertyType: "treehouse" }), ["nearby", "filters", 0], "the type chip is a filter");
+  } finally {
+    await ListingProperty().deleteMany({ _id: gate._id });
+  }
+});
+
+// ---------------------------------------------------------------------------
 test("cost: ≤ 3 ops in every mode (with dates), ≤ 2 without; the edge caches date-less searches only", async () => {
   const cases = [
     [{ location: "panaji", from: "2027-06-10", to: "2027-06-11" }, 3],

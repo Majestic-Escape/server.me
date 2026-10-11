@@ -51,7 +51,9 @@ function build() {
         keysByLen.get(c.length).push([c, p]);
       }
     }
-    if (LOCALITY_TYPES.has(p.t) && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
+    // landmarks (lm: an airport, a fort, a waterfall) are searched by name
+    // but never where a listing is placed, so they stay out of the grid
+    if (LOCALITY_TYPES.has(p.t) && !p.lm && Number.isFinite(p.lat) && Number.isFinite(p.lng)) {
       const cell = `${Math.floor(p.lat / GRID)},${Math.floor(p.lng / GRID)}`;
       if (!grid.has(cell)) grid.set(cell, []);
       grid.get(cell).push(p);
@@ -265,7 +267,11 @@ function resolveQuery(text, { extra = [], stays = null, nearStock = null, fuzzy 
   const pick = (cands, query, corrected) => {
     const order = ranked(cands, query, ctx);
     const place = order[0];
-    const alternatives = order.slice(1).filter((p) => p._nk === place._nk).slice(0, 3);
+    // namesakes elsewhere — not the district / state the place itself is in
+    // ("Lucknow" the city is not offered "another Lucknow: Lucknow district",
+    // nor Mumbai its same-named district, which GeoNames does not link)
+    const sameArea = (p) => isAncestor(p, place) || (isLocality(place) && (p.t === "district" || p.t === "taluka") && p.s === place.s);
+    const alternatives = order.slice(1).filter((p) => p._nk === place._nk && !sameArea(p)).slice(0, 3);
     return { place, alternatives, corrected };
   };
 

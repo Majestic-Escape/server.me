@@ -707,6 +707,11 @@ exports.modifyBooking = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Booking not found" });
     }
+    // SyncGuard: an imported OTA stay is the OTA's to change — moving it here
+    // would block the wrong nights until the feed itself changes.
+    if (["ical", "ical_parked"].includes(current.source)) {
+      return res.status(409).json({ success: false, code: "EXTERNAL_BOOKING", message: "This stay comes from a connected booking site. Change it on that site — Majestic follows automatically." });
+    }
     // Batch S: a date/property change moves inventory. Reserve the new nights
     // first (409 if any is taken), then release the old ones — never leave a
     // window where the booking blocks nothing or two ranges at once.
@@ -714,9 +719,19 @@ exports.modifyBooking = async (req, res) => {
     const newNights = inventory.nightsBetween(filter.checkIn, filter.checkOut);
     const blocksInventory = current.paymentStatus === "paid" && !["rejected", "cancelled"].includes(current.status);
     const moved = String(targetProperty) !== String(current.propertyId) || +new Date(current.checkIn) !== +filter.checkIn || +new Date(current.checkOut) !== +filter.checkOut;
+    if (blocksInventory && moved && current.action !== "host") {
+      // SyncGuard (docs/syncguard.md §7): moving a guest onto new nights is a
+      // commitment like any booking — the target listing's OTA calendars
+      // must be re-verified first.
+      const verified = await require("../services/calendarSync").ensureVerified(targetProperty, { context: "admin_modify", checkOut: filter.checkOut });
+      if (!verified.ok) {
+        const message = verified.code === "BEYOND_SYNC_HORIZON" ? "These dates are beyond the two years the listing's booking sites are checked for." : "The listing's connected booking sites could not be re-checked just now. Try again in a few minutes.";
+        return res.status(409).json({ success: false, code: verified.code, message, channels: verified.channels });
+      }
+    }
     if (blocksInventory && moved) {
       await inventory.releaseNights(current._id);
-      const reserved = await inventory.reserveNights({ propertyId: targetProperty, nights: newNights, bookingId: current._id, kind: current.action === "host" ? "block" : "booking" });
+      const reserved = await inventory.reserveNights({ propertyId: targetProperty, nights: newNights, bookingId: current._id, kind: current.action === "host" ? "block" : "booking", permanent: true });
       if (!reserved.ok) {
         // Put the original nights back (still ours unless another booking took them meanwhile).
         await inventory.ensureNightsBestEffort({ propertyId: current.propertyId, nights: inventory.nightsBetween(current.checkIn, current.checkOut), bookingId: current._id, kind: current.action === "host" ? "block" : "booking" });
@@ -726,6 +741,7 @@ exports.modifyBooking = async (req, res) => {
     }
     filter.nights = newNights.length;
     filter.updatedAt = new Date();
+    if (moved) filter.datesChangedAt = filter.updatedAt;
     const data = await Booking.findByIdAndUpdate(bookingId, filter, { new: true }).populate("userId hostId");
     if (!data) {
       return res
@@ -1371,6 +1387,10 @@ exports.checkDates = async (req, res) => {
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("final output", datesArray);
     }
+    // SyncGuard: a guest is looking at this stay's dates — refresh its OTA
+    // calendars older than 5 min in the background (never blocks; bounded
+    // per connection). The booking itself re-verifies at commitment.
+    require("../services/calendarSync").nudgeProperty(propertyId, "calendar_view");
     res.json({ success: true, data: datesArray, today: todayBooking });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });

@@ -6,7 +6,11 @@
 //                        completed and the nights are now someone else's;
 //   amount_mismatch    — the gateway captured an amount that is not the
 //                        server quote for the stay (only possible for
-//                        orders opened by the pre-S backend).
+//                        orders opened by the pre-S backend);
+//   ota_conflict       — SyncGuard imported an OTA booking for nights this
+//                        paid Majestic booking already holds (the OTA sold
+//                        them before it had our feed): a real double booking
+//                        that only a human can resolve (docs/syncguard.md §3).
 // Flagging is exactly-once (conditional claim on notifications.attentionAt),
 // so callback + webhook + retries produce one alert. The alert reuses the
 // existing Brevo notification template and goes to OPS_ALERT_EMAIL (falls
@@ -16,7 +20,7 @@ const Booking = require("../models/Booking");
 const emailer = require("../utils/sendEmail");
 const inventory = require("./inventory");
 
-const REASONS = new Set(["inventory_conflict", "amount_mismatch"]);
+const REASONS = new Set(["inventory_conflict", "amount_mismatch", "ota_conflict"]);
 
 const alertEmails = () =>
   String(process.env.OPS_ALERT_EMAIL || process.env.ADMIN_EMAIL || "")
@@ -31,6 +35,9 @@ function describe(bookingId, reason, details) {
   }
   if (reason === "amount_mismatch") {
     return `${base} The gateway captured ${details.capturedPaise} paise but the server quote is ${details.expectedPaise} paise (order ${details.orderId || "-"}, payment ${details.paymentId || "-"}). The booking is NOT confirmed. Decide: refund via admin cancel, or resolve with "keep" to accept the captured amount.`;
+  }
+  if (reason === "ota_conflict") {
+    return `${base} An external calendar (${details.channel || "OTA"}) now reports a booking on nights this paid Majestic booking already holds (${(details.nights || []).join(", ") || "-"}). The guest of one platform has to be moved: contact the host. Resolve with "keep" once the Majestic booking stands, or cancel it from its row to refund.`;
   }
   return base;
 }
@@ -93,8 +100,26 @@ function list() {
 // way (e.g. refunded through admin cancel) and only the flag is cleared.
 async function resolve({ booking, resolution, manualListing, actorId }) {
   if (!booking.needsAttention) return { ok: true, alreadyClear: true };
+  // Resolving re-arms the queue (notifications.attentionAt back to null):
+  // a NEW problem with this booking later — another OTA selling its nights,
+  // say — must reach the admin again. The exactly-once claim still holds per
+  // problem (callback + webhook + retries of one payment, one conflict).
+  if (resolution === "keep" && booking.needsAttention === "ota_conflict") {
+    // The Majestic booking already holds its nights and its status is
+    // whatever the normal flow made it — keeping it only clears the flag.
+    await Booking.updateOne(
+      { _id: booking._id },
+      { $set: { needsAttention: null, attentionResolvedAt: new Date(), attentionResolution: `keep by ${actorId}`, "notifications.attentionAt": null, updatedAt: new Date() } },
+    );
+    return { ok: true, resolution: "keep", flagOnly: true };
+  }
   if (resolution === "keep") {
     const nights = inventory.nightsBetween(booking.checkIn, booking.checkOut);
+    // SyncGuard: an OTA booking now covering any of these nights means "keep"
+    // would confirm a double booking — refuse; cancel (refund) instead.
+    const listingId = booking.propertyId && booking.propertyId._id ? booking.propertyId._id : booking.propertyId; // may be populated
+    const imported = await inventory.importedOverlap(listingId, nights, booking._id);
+    if (imported) return { ok: false, code: "DATES_UNAVAILABLE", conflicts: [{ bookingId: imported._id, kind: "ical" }] };
     const owned = await inventory.finalizeNights({ bookingId: booking._id, nights });
     if (owned < nights.length) {
       const reserved = await inventory.reserveNights({ propertyId: booking.propertyId, nights, bookingId: booking._id });
@@ -111,6 +136,7 @@ async function resolve({ booking, resolution, manualListing, actorId }) {
           needsAttention: null,
           attentionResolvedAt: new Date(),
           attentionResolution: `keep by ${actorId}`,
+          "notifications.attentionAt": null,
           updatedAt: new Date(),
         },
       },
@@ -120,7 +146,7 @@ async function resolve({ booking, resolution, manualListing, actorId }) {
   if (resolution === "dismiss") {
     await Booking.updateOne(
       { _id: booking._id },
-      { $set: { needsAttention: null, attentionResolvedAt: new Date(), attentionResolution: `dismiss by ${actorId}`, updatedAt: new Date() } },
+      { $set: { needsAttention: null, attentionResolvedAt: new Date(), attentionResolution: `dismiss by ${actorId}`, "notifications.attentionAt": null, updatedAt: new Date() } },
     );
     return { ok: true, resolution: "dismiss" };
   }

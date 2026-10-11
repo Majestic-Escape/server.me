@@ -12,6 +12,8 @@ const generateInvoiceHTML = require("../utils/generateInvoiceHTML");
 const generateInvoicePDF = (html) => require("../utils/generateInvoicePDF")(html); // Batch P: lazy (puppeteer + chromium)
 const { generateBookingGuestListHTML } = require("../utils/generateBookingGuestList");
 const { calTax } = require("../utils/tax");
+const Booking = require("../models/Booking");
+const Payment = require("../models/Payment");
 
 const adminEmails = () =>
   String(process.env.ADMIN_EMAIL || "")
@@ -61,9 +63,39 @@ function names(booking, reveal = REVEAL_NONE) {
   };
 }
 
-async function sendToAdmins(templateId, params) {
-  await Promise.all(adminEmails().map((email) => sendEmail(email, templateId, params)));
+// One notification step = several independent mails (guest, host, each
+// admin). Every mail is attempted whatever happens to the others, and each
+// delivered mail is recorded on the booking (notifications.sent), so a failed
+// step can be retried without mailing anyone twice. Throws, after trying all
+// of them, if any mail is still undelivered.
+const adminItems = (templateId, params) => adminEmails().map((email) => ({ key: `admin:${email}`, to: email, templateId, params }));
+async function deliver(booking, flow, items) {
+  const sent = new Set((booking.notifications && booking.notifications.sent) || []);
+  const failed = [];
+  await Promise.all(
+    items.map(async (it) => {
+      const key = `${flow}:${it.key}`;
+      if (sent.has(key)) return;
+      try {
+        await sendEmail(it.to, it.templateId, it.params, it.attachments || []);
+      } catch (err) {
+        failed.push(`${it.templateId}->${it.key}: ${err.message}`);
+        return;
+      }
+      try {
+        await Booking.updateOne({ _id: booking._id }, { $addToSet: { "notifications.sent": key } });
+      } catch (err) {
+        console.error("[notify] sent but not recorded", key, err.message); // worst case: one duplicate on a retry
+      }
+    }),
+  );
+  if (failed.length) throw new Error(`${flow}: mail not delivered (${failed.join("; ")})`);
 }
+const anyPending = (booking, flow, keys) => {
+  const sent = (booking.notifications && booking.notifications.sent) || [];
+  return keys.some((k) => !sent.includes(`${flow}:${k}`));
+};
+const adminKeys = () => adminEmails().map((e) => `admin:${e}`);
 
 // Builds the invoice + guest-list PDFs (unchanged pipeline) and returns the
 // attachment arrays plus a cleanup function.
@@ -104,18 +136,23 @@ async function notifyPaid(booking, payment, { manual }) {
   if (manual) {
     // pending host approval: no contact details, no street
     const p = names(booking);
-    await sendEmail(booking.hostId.email, 8, p.host);
-    await sendToAdmins(9, p.admin);
-    await sendEmail(booking.userId.email, 42, p.guest);
+    await deliver(booking, "paid", [
+      { key: "host", to: booking.hostId.email, templateId: 8, params: p.host },
+      ...adminItems(9, p.admin),
+      { key: "guest", to: booking.userId.email, templateId: 42, params: p.guest },
+    ]);
     return;
   }
   // instant booking confirmed by the payment: the voucher emails
   const p = names(booking, REVEAL_VOUCHER);
+  if (!anyPending(booking, "paid", ["host", "guest", ...adminKeys()])) return; // nothing left to send: no PDFs either
   const { invoiceAttachment, guestListOnlyAttachment, cleanup } = await buildAttachments(booking, payment);
   try {
-    await sendEmail(booking.hostId.email, 34, p.host, guestListOnlyAttachment);
-    await sendEmail(booking.userId.email, 35, p.guest, invoiceAttachment);
-    await sendToAdmins(36, p.admin);
+    await deliver(booking, "paid", [
+      { key: "host", to: booking.hostId.email, templateId: 34, params: p.host, attachments: guestListOnlyAttachment },
+      { key: "guest", to: booking.userId.email, templateId: 35, params: p.guest, attachments: invoiceAttachment },
+      ...adminItems(36, p.admin),
+    ]);
   } finally {
     await cleanup();
   }
@@ -143,6 +180,7 @@ async function scheduleReviewEmails(booking) {
     hostEmail: booking.hostId.email,
     params,
     bookingStatus: booking.status,
+    bookingId: String(booking._id), // the job re-checks the live status (utils/agenda.js)
   });
 }
 
@@ -151,13 +189,17 @@ async function scheduleReviewEmails(booking) {
 async function notifyHostConfirmed(booking, payment) {
   // host approved a paid booking: the voucher emails
   const p = names(booking, REVEAL_VOUCHER);
-  const { invoiceAttachment, guestListOnlyAttachment, cleanup } = await buildAttachments(booking, payment);
-  try {
-    await sendEmail(booking.userId.email, 10, p.guest, invoiceAttachment);
-    await sendEmail(booking.hostId.email, 19, p.host, guestListOnlyAttachment);
-    await sendToAdmins(18, p.admin);
-  } finally {
-    await cleanup();
+  if (anyPending(booking, "confirmed", ["guest", "host", ...adminKeys()])) {
+    const { invoiceAttachment, guestListOnlyAttachment, cleanup } = await buildAttachments(booking, payment);
+    try {
+      await deliver(booking, "confirmed", [
+        { key: "guest", to: booking.userId.email, templateId: 10, params: p.guest, attachments: invoiceAttachment },
+        { key: "host", to: booking.hostId.email, templateId: 19, params: p.host, attachments: guestListOnlyAttachment },
+        ...adminItems(18, p.admin),
+      ]);
+    } finally {
+      await cleanup();
+    }
   }
   await scheduleReviewEmails(booking);
 }
@@ -170,30 +212,151 @@ async function notifyInstantConfirmed(booking) {
 // Cancellation flows (template ids unchanged).
 async function notifyHostRejected(booking) {
   const p = names(booking);
-  await sendEmail(booking.userId.email, 11, p.guest);
-  await sendToAdmins(16, p.admin);
-  await sendEmail(booking.hostId.email, 17, p.host);
+  await deliver(booking, "rejected", [
+    { key: "guest", to: booking.userId.email, templateId: 11, params: p.guest },
+    ...adminItems(16, p.admin),
+    { key: "host", to: booking.hostId.email, templateId: 17, params: p.host },
+  ]);
 }
 async function notifyAdminCancelled(booking) {
   const p = names(booking);
-  await sendEmail(booking.userId.email, 32, p.guest);
-  await sendToAdmins(31, p.admin);
-  await sendEmail(booking.hostId.email, 33, p.host);
+  await deliver(booking, "admin-cancelled", [
+    { key: "guest", to: booking.userId.email, templateId: 32, params: p.guest },
+    ...adminItems(31, p.admin),
+    { key: "host", to: booking.hostId.email, templateId: 33, params: p.host },
+  ]);
 }
 async function notifyHostTerminated(booking) {
   const p = names(booking);
-  await sendEmail(booking.userId.email, 13, p.guest);
-  await sendEmail(booking.hostId.email, 14, p.host);
-  await sendToAdmins(15, p.admin);
+  await deliver(booking, "host-terminated", [
+    { key: "guest", to: booking.userId.email, templateId: 13, params: p.guest },
+    { key: "host", to: booking.hostId.email, templateId: 14, params: p.host },
+    ...adminItems(15, p.admin),
+  ]);
 }
 async function notifyUserTerminated(booking) {
   const p = names(booking);
-  await sendEmail(booking.userId.email, 22, p.guest);
-  await sendEmail(booking.hostId.email, 20, p.host);
-  await sendToAdmins(21, p.admin);
+  await deliver(booking, "user-terminated", [
+    { key: "guest", to: booking.userId.email, templateId: 22, params: p.guest },
+    { key: "host", to: booking.hostId.email, templateId: 20, params: p.host },
+    ...adminItems(21, p.admin),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Exactly-once delivery used by every trigger: the browser's follow-up calls,
+// the Razorpay webhook (the guest may have closed the tab) and the recovery
+// sweep. The claim (notifications.paidAt / confirmedAt) is taken first and
+// given back if a mail could not be delivered, so the next trigger resumes —
+// notifications.sent keeps it from repeating the mails that did go out.
+// ---------------------------------------------------------------------------
+const POPULATE = "userId hostId propertyId payment";
+const isManual = (booking) => !!(booking.propertyId && booking.propertyId.bookingType && booking.propertyId.bookingType.manual);
+
+async function deliverPaid(booking) {
+  const payment = booking.payment || (await Payment.findOne({ bookingId: booking._id, status: { $in: ["paid", "refund initiated", "refunded"] } }));
+  if (!payment) return { error: "PAYMENT_NOT_FOUND" };
+  const claimed = await Booking.findOneAndUpdate({ _id: booking._id, "notifications.paidAt": null }, { $set: { "notifications.paidAt": new Date() } });
+  if (!claimed) return { alreadyNotified: true };
+  try {
+    await notifyPaid(booking, payment, { manual: isManual(booking) });
+  } catch (err) {
+    console.error("notifyPaid failed", err.message);
+    await Booking.updateOne({ _id: booking._id }, { $set: { "notifications.paidAt": null } });
+    return { error: "NOTIFY_FAILED" };
+  }
+  return { sent: true };
+}
+
+async function deliverInstantConfirmed(booking) {
+  const claimed = await Booking.findOneAndUpdate({ _id: booking._id, "notifications.confirmedAt": null }, { $set: { "notifications.confirmedAt": new Date() } });
+  if (!claimed) return { alreadyNotified: true };
+  try {
+    await notifyInstantConfirmed(booking);
+  } catch (err) {
+    console.error("notifyInstantConfirmed failed", err.message);
+    await Booking.updateOne({ _id: booking._id }, { $set: { "notifications.confirmedAt": null } });
+    return { error: "NOTIFY_FAILED" };
+  }
+  return { sent: true };
+}
+
+async function deliverHostConfirmed(booking, payment) {
+  const claimed = await Booking.findOneAndUpdate({ _id: booking._id, "notifications.confirmedAt": null }, { $set: { "notifications.confirmedAt": new Date() } });
+  if (!claimed) return { alreadyNotified: true };
+  try {
+    await notifyHostConfirmed(booking, payment);
+  } catch (err) {
+    console.error("notifyHostConfirmed failed", err.message);
+    await Booking.updateOne({ _id: booking._id }, { $set: { "notifications.confirmedAt": null } });
+    return { error: "NOTIFY_FAILED" };
+  }
+  return { sent: true };
+}
+
+// A payment landed without the guest's browser reporting back (webhook) or
+// a mail step failed: run every outstanding step of the booking.
+async function deliverOutstanding(bookingId) {
+  const booking = await Booking.findById(bookingId).populate(POPULATE);
+  if (!booking || booking.action !== "user" || booking.paymentStatus !== "paid" || booking.needsAttention) return { skipped: true };
+  const out = {};
+  if (!(booking.notifications && booking.notifications.paidAt)) out.paid = await deliverPaid(booking);
+  if (booking.status === "confirmed" && !(booking.notifications && booking.notifications.confirmedAt)) {
+    if (isManual(booking)) {
+      const payment = booking.payment || (await Payment.findOne({ bookingId: booking._id, status: { $in: ["paid", "refund initiated", "refunded"] } }));
+      if (payment) out.confirmed = await deliverHostConfirmed(booking, payment);
+    } else {
+      out.confirmed = await deliverInstantConfirmed(booking);
+    }
+  }
+  return out;
+}
+
+// Recovery sweep (GET /booking/cron/notify-sweep): paid, still-live bookings
+// of the last few days whose mails never (fully) went out — the guest closed
+// the page after paying, or the mail provider was down. Bounded on purpose:
+// never older bookings (they predate the claim flags), never past stays.
+const SWEEP_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+async function sweepUnsent({ limit = 25, budgetMs = 45_000, graceMs = Number(process.env.NOTIFY_SWEEP_GRACE_MS ?? 10 * 60 * 1000), now = new Date() } = {}) {
+  const rows = await Booking.find({
+    action: "user",
+    source: "local",
+    paymentStatus: "paid",
+    needsAttention: null,
+    status: { $in: ["pending", "confirmed"] },
+    checkOut: { $gt: now },
+    updatedAt: { $gte: new Date(now.getTime() - SWEEP_WINDOW_MS), $lte: new Date(now.getTime() - graceMs) },
+    $or: [{ "notifications.paidAt": null }, { status: "confirmed", "notifications.confirmedAt": null }],
+  })
+    .sort({ updatedAt: 1 })
+    .limit(limit)
+    .select("_id")
+    .lean();
+  const summary = { found: rows.length, completed: 0, failed: 0, deferred: 0 };
+  const stopAt = Date.now() + budgetMs; // PDFs take seconds each; the rest waits for the next run
+  for (const row of rows) {
+    if (Date.now() > stopAt) {
+      summary.deferred += 1;
+      continue;
+    }
+    try {
+      const r = await deliverOutstanding(row._id);
+      const bad = Object.values(r).some((x) => x && x.error);
+      summary[bad ? "failed" : "completed"] += 1;
+    } catch (err) {
+      summary.failed += 1;
+      console.error("[notify-sweep] booking failed", String(row._id), err.message);
+    }
+  }
+  return summary;
 }
 
 module.exports = {
+  deliverPaid,
+  deliverInstantConfirmed,
+  deliverHostConfirmed,
+  deliverOutstanding,
+  sweepUnsent,
   notifyPaid,
   notifyHostConfirmed,
   notifyInstantConfirmed,

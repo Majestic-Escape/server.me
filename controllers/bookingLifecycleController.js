@@ -372,24 +372,7 @@ exports.markBookingAsPaid = async (req, res) => {
 };
 
 // The post-payment e-mails (host/admins/guest, invoice) exactly once.
-async function sendPaidNotifications(booking) {
-  const payment = booking.payment || (await Payment.findOne({ bookingId: booking._id, status: { $in: ["paid", "refund initiated", "refunded"] } }));
-  if (!payment) return { error: "PAYMENT_NOT_FOUND" };
-  const claimed = await Booking.findOneAndUpdate(
-    { _id: booking._id, "notifications.paidAt": null },
-    { $set: { "notifications.paidAt": new Date() } },
-  );
-  if (!claimed) return { alreadyNotified: true };
-  const manual = !!(booking.propertyId && booking.propertyId.bookingType && booking.propertyId.bookingType.manual);
-  try {
-    await notify.notifyPaid(booking, payment, { manual });
-  } catch (err) {
-    console.error("notifyPaid failed", err.message);
-    await Booking.updateOne({ _id: booking._id }, { $set: { "notifications.paidAt": null } });
-    return { error: "NOTIFY_FAILED" };
-  }
-  return { sent: true };
-}
+const sendPaidNotifications = (booking) => notify.deliverPaid(booking);
 
 // PATCH /booking/instant/confirm — legacy client call; confirmation itself
 // happened at payment for instant-book listings. Only schedules reminders once.
@@ -402,17 +385,7 @@ exports.confirmInstantBooking = async (req, res) => {
     if (booking.needsAttention) return fail(res, 409, "UNDER_REVIEW", "Payment received; the booking is being reviewed by our team", { needsAttention: booking.needsAttention });
     if (booking.paymentStatus !== "paid") return fail(res, 409, "PAYMENT_NOT_RECORDED", "Payment has not been verified for this booking");
     if (booking.status !== "confirmed") return fail(res, 409, "NOT_CONFIRMED", "This booking requires host approval");
-    const claimed = await Booking.findOneAndUpdate(
-      { _id: booking._id, "notifications.confirmedAt": null },
-      { $set: { "notifications.confirmedAt": new Date() } },
-    );
-    if (claimed) {
-      try {
-        await notify.notifyInstantConfirmed(booking);
-      } catch (err) {
-        console.error("notifyInstantConfirmed failed", err.message);
-      }
-    }
+    await notify.deliverInstantConfirmed(booking); // once; a failure is logged and retried by the sweep
     return res.status(200).json({ success: true });
   } catch (err) {
     return handleError(res, err, "confirmInstantBooking error");
@@ -437,17 +410,7 @@ exports.confirmBooking = async (req, res) => {
     if (!updated) return fail(res, 409, "INVALID_TRANSITION", `Cannot confirm a ${booking.status} booking`);
     const payment = updated.payment || (await Payment.findOne({ bookingId: updated._id, status: { $in: ["paid", "refund initiated", "refunded"] } }));
     if (!payment) return fail(res, 404, "PAYMENT_NOT_FOUND", "Payment not found");
-    const claimed = await Booking.findOneAndUpdate(
-      { _id: updated._id, "notifications.confirmedAt": null },
-      { $set: { "notifications.confirmedAt": new Date() } },
-    );
-    if (claimed) {
-      try {
-        await notify.notifyHostConfirmed(updated, payment);
-      } catch (err) {
-        console.error("notifyHostConfirmed failed", err.message);
-      }
-    }
+    await notify.deliverHostConfirmed(updated, payment); // once; a failure is logged and retried by the sweep
     return res.status(200).json({ success: true });
   } catch (err) {
     return handleError(res, err, "confirmBooking error");
@@ -456,7 +419,7 @@ exports.confirmBooking = async (req, res) => {
 
 // Shared cancellation core: authorise → (refund) → conditional status change
 // → release nights → notify. A refund failure leaves the booking untouched.
-async function cancelCore({ req, res, bookingId, allowed, nextStatus, refund, notifyFn, label }) {
+async function cancelCore({ req, res, bookingId, allowed, nextStatus, refund, notifyFn, label, skipNotify }) {
   const actor = await authz.resolveActor(req);
   const booking = await loadBooking(res, bookingId);
   if (!booking) return;
@@ -486,10 +449,12 @@ async function cancelCore({ req, res, bookingId, allowed, nextStatus, refund, no
   ).populate(POPULATE);
   if (!updated) return fail(res, 409, "ALREADY_CLOSED", "Booking was closed by another request");
   await inventory.releaseNights(updated._id);
-  try {
-    await notifyFn(updated);
-  } catch (err) {
-    console.error(`${label}: notifications failed`, err.message);
+  if (!(skipNotify && skipNotify(booking))) {
+    try {
+      await notifyFn(updated);
+    } catch (err) {
+      console.error(`${label}: notifications failed`, err.message);
+    }
   }
   return res.status(200).json({
     success: true,
@@ -537,6 +502,8 @@ exports.terminateUserBooking = (req, res) =>
       );
     },
     notifyFn: notify.notifyUserTerminated,
+    // A guest walking away from an unpaid hold: the host and ops never heard of this booking.
+    skipNotify: (booking) => booking.paymentStatus === "unpaid" && !booking.needsAttention,
   }).catch((err) => handleError(res, err, "terminateUserBooking error"));
 
 // POST /booking/unblock-dates/:propertyId — host removes a calendar block.
@@ -652,6 +619,16 @@ exports.getBookingById = async (req, res) => {
     return res.status(200).json({ success: true, data: bookingForActor(booking, actor) });
   } catch (err) {
     return handleError(res, err, "getBookingById error");
+  }
+};
+
+// GET /booking/cron/notify-sweep — Vercel cron (daily) and any external
+// clock: sends the booking e-mails that never (fully) went out. Idempotent.
+exports.notifySweep = async (req, res) => {
+  try {
+    return res.status(200).json({ success: true, summary: await notify.sweepUnsent() });
+  } catch (err) {
+    return handleError(res, err, "notifySweep error");
   }
 };
 

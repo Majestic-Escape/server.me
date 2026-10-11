@@ -57,6 +57,19 @@ async function claim(hostId, kind, now = new Date()) {
   return { ok: false, reason: "cooldown", retryAfterSeconds: cooldownSeconds || 1 };
 }
 
+// Gives back the attempt a failure on OUR side consumed (the provider refused
+// our credentials/plan — the request was never processed), so a
+// misconfiguration never locks hosts out for the day. The cooldown stays.
+async function refund(hostId, kind) {
+  const p = `verification.${kind}.count`;
+  try {
+    return await KycHostData.findOneAndUpdate({ hostId, [p]: { $gt: 0 } }, { $inc: { [p]: -1 } }, { new: true }).select("verification").lean();
+  } catch (err) {
+    console.error("kycGuard refund failed", err && err.message);
+    return null;
+  }
+}
+
 async function release(hostId, kind) {
   try {
     await KycHostData.updateOne({ hostId }, { $set: { [`verification.${kind}.inFlightUntil`]: null } });
@@ -65,10 +78,23 @@ async function release(hostId, kind) {
   }
 }
 
+// What a host may do next after a claimed attempt failed: seconds until the
+// cooldown admits another attempt and attempts left in the current window.
+// Sent with every post-claim failure so the client can count down instead of
+// letting the host tap straight into a 429.
+function attemptInfo(form, kind, now = new Date()) {
+  const { maxPerDay, cooldownSeconds } = config();
+  const g = (form && form.verification && form.verification[kind]) || {};
+  const lastAt = g.lastAt ? new Date(g.lastAt).getTime() : 0;
+  const retryAfterSeconds = lastAt ? Math.max(0, Math.ceil((lastAt + cooldownSeconds * 1000 - now.getTime()) / 1000)) : 0;
+  return { retryAfterSeconds, attemptsLeft: Math.max(0, maxPerDay - (Number(g.count) || 0)) };
+}
+
 function rateLimited(res, result) {
   const messages = {
     in_flight: "A verification is already in progress. Please wait a moment and try again.",
-    cooldown: `Too many verification attempts. Please try again in ${result.retryAfterSeconds} seconds.`,
+    // one attempt is enough to start the cooldown: never call it "too many"
+    cooldown: `Please wait ${result.retryAfterSeconds} seconds before trying again.`,
     daily_limit: "You have reached today's verification limit. Please try again tomorrow or contact support.",
   };
   res.set("Retry-After", String(result.retryAfterSeconds || 1));
@@ -82,4 +108,20 @@ function rateLimited(res, result) {
   });
 }
 
-module.exports = { claim, release, rateLimited, config };
+// The controllers write their post-claim answer here and send it only after
+// the in-flight lease is released (in their `finally`): a host who retries the
+// moment an answer arrives is never told an attempt is still in progress.
+function heldResponse() {
+  // like Express: json() without status() is a 200; nothing written is a 500
+  const held = { code: undefined, body: undefined };
+  return {
+    status(code) { held.code = code; return this; },
+    json(body) { held.body = body; return this; },
+    sendTo(res) {
+      if (held.body === undefined) return res.status(500).json({ success: false, code: "SERVER_ERROR", message: "Something went wrong. Please try again.", statusCode: 500 });
+      return res.status(held.code || 200).json(held.body);
+    },
+  };
+}
+
+module.exports = { claim, release, refund, rateLimited, attemptInfo, heldResponse, config };

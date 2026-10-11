@@ -20,7 +20,7 @@ const { approximateLocation } = require("../utils/sanitizeResponse");
 const { escapeRegex } = require("../utils/listingProjection");
 const { boundedEditDistance } = require("../utils/placeText");
 const { maskContactInfo } = require("../utils/contactModeration");
-const { extractPropertyType, typeWords, CONNECTORS } = require("../utils/propertyTypes");
+const { extractPropertyType, typeWords, CONNECTORS, TYPES } = require("../utils/propertyTypes");
 
 // What one active listing contributes to search: location fields, plus the
 // title / type / amenities for keyword search ("Dev Bhoomi Retreat").
@@ -44,10 +44,27 @@ const OFFSET_TOLERANCE_KM = 0.35; // max privacy offset: a stay never drops out 
 const LOCALITY_INFER_KM = 5; // uninformative text → nearest settlement within this
 const LOCALITY_SHARED_KM = 1.5; // …and every other settlement this close (a ward between two villages)
 const ADMIN_INFER_KM = 60; // district / state from the nearest settlement within this
+const TITLE_PLACE_KM = 10; // a place the title names ("5 mins to Baga") counts within this
+const TITLE_PLACE_WORDS = 3; // longest place name looked for in a title ("vasco da gama")
 const MEMO_MAX = 5000;
 
 // Words a host types into "city" that are not a place of their own.
 const NOT_A_PLACE = new Set(["north", "south", "east", "west", "central", "centre", "center", "beach", "hill", "hills", "market", "road", "sector", "phase", "near", "test", "na", "none", "city", "town", "village", "india"]);
+// Title words that are never read as a place name, even where a village
+// happens to be called that: stay types and "any stay" words.
+const NOT_A_TITLE_PLACE = new Set([...NOT_A_PLACE, ...CONNECTORS, ...Object.values(TYPES).flat().map(normalizePlaceText)]);
+
+// Keyword spellings that mean the same thing, applied to titles and to what
+// is typed alike: "1 BHK" / "1-bhk" / "1bhk" / "1 bedroom" are one word,
+// "pvt" is "private".
+const KEYWORD_SYNONYMS = new Map([["pvt", "private"]]);
+function keywordText(norm) {
+  return String(norm || "")
+    .replace(/\b(\d{1,2}) ?(?:bhk|bed ?rooms?|br)\b/g, "$1bhk")
+    .split(" ")
+    .map((t) => KEYWORD_SYNONYMS.get(t) || t)
+    .join(" ");
+}
 
 const memo = new Map();
 
@@ -173,7 +190,9 @@ function classify(doc) {
 function keywordFields(doc, cls) {
   const title = maskContactInfo(String(doc.title || "").slice(0, 200));
   const titleNorm = normalizePlaceText(title);
-  const titleTokens = titleNorm.split(" ").filter((t) => t && !/\d{3,}/.test(t));
+  const keep = (t) => t && !/\d{3,}/.test(t);
+  const titlePlaces = titlePlaceIds(titleNorm.split(" ").filter(keep), cls);
+  const titleTokens = keywordText(titleNorm).split(" ").filter(keep);
   const words = new Set(titleTokens);
   const add = (text) => {
     for (const t of normalizePlaceText(text).split(" ")) if (t && !/\d{3,}/.test(t)) words.add(t);
@@ -186,7 +205,28 @@ function keywordFields(doc, cls) {
   if (cls.liveName) add(cls.liveName);
   if (Array.isArray(doc.amenities)) for (const x of doc.amenities.slice(0, 60)) add(String(x).replace(/_/g, " "));
   const titleNormKept = titleTokens.join(" ");
-  return { titleNorm: titleNormKept, titleCompact: titleNormKept.replace(/ /g, ""), titleTokens, words, propertyType: String(doc.propertyType || "").toLowerCase() };
+  return { titleNorm: titleNormKept, titleCompact: titleNormKept.replace(/ /g, ""), titleTokens, titlePlaces, words, propertyType: String(doc.propertyType || "").toLowerCase() };
+}
+
+// Places the title names that the stay is close to ("5 mins to Baga &
+// Anjuna", "Near Anjuna Beach"): the host advertises the stay there, so a
+// search for the place must find it (with its distance), not say "no stays
+// in Anjuna" above it. Towns, villages, beaches only — a state or district
+// boundary is real — and only within TITLE_PLACE_KM of the public point, so
+// a namesake far away or a "Goa vibes" flat in Mumbai never counts.
+function titlePlaceIds(tokens, cls) {
+  const ids = new Set();
+  if (!cls.point) return ids;
+  for (let n = Math.min(TITLE_PLACE_WORDS, tokens.length); n >= 1; n--) {
+    for (let i = 0; i + n <= tokens.length; i++) {
+      const phrase = tokens.slice(i, i + n).join(" ");
+      if (phrase.replace(/ /g, "").length < 4 || NOT_A_TITLE_PLACE.has(phrase)) continue;
+      for (const p of places.lookupExact(phrase)) {
+        if (places.isLocality(p) && !cls.localities.has(p.id) && places.distanceKm(cls.point, p) <= TITLE_PLACE_KM) ids.add(p.id);
+      }
+    }
+  }
+  return ids;
 }
 
 function placeWords(id, add) {
@@ -199,7 +239,7 @@ function placeWords(id, add) {
 // What was typed, as keyword tokens: connectors ("in", "stay") and single
 // characters dropped, at most 8.
 function keywordTokens(norm) {
-  return String(norm || "").split(" ").filter((t) => t.length >= 2 && !CONNECTORS.has(t)).slice(0, 8);
+  return keywordText(norm).split(" ").filter((t) => t.length >= 2 && !CONNECTORS.has(t)).slice(0, 8);
 }
 
 // Every token must match a word of the listing (as a prefix, so partial
@@ -307,8 +347,13 @@ function inPlace(cls, place) {
     case "taluka":
       return cls.talukaId === place.id;
     default:
-      return cls.localities.has(place.id) || bigTownClaims(place, cls);
+      return cls.localities.has(place.id) || bigTownClaims(place, cls) || cls.titlePlaces.has(place.id);
   }
+}
+
+// In a town / village only because its title names it (it is nearby, not in it).
+function onlyNamedIn(cls, place) {
+  return places.isLocality(place) && !cls.localities.has(place.id) && !bigTownClaims(place, cls);
 }
 
 /** Active-listing count per place id (static + live), same rules as inPlace. */
@@ -316,7 +361,7 @@ function countPlaces(classes, live) {
   const counts = new Map();
   const inc = (id) => id && counts.set(id, (counts.get(id) || 0) + 1);
   for (const c of classes) {
-    const ids = new Set([c.stateId, c.districtId, c.talukaId, ...c.localities]);
+    const ids = new Set([c.stateId, c.districtId, c.talukaId, ...c.localities, ...c.titlePlaces]);
     for (const p of places.localitiesNear(c.point, 25 + OFFSET_TOLERANCE_KM, (x) => (x.p || 0) >= BIG_TOWN_POP)) {
       if (bigTownClaims(p, c)) ids.add(p.id);
     }
@@ -351,15 +396,37 @@ function resolveScope({ placeId, point, location, explicitType = false }, { live
     // 2. a property type and a place ("tent in dharamshala", "north goa villas", "villas")
     const norm = normalizePlaceText(location);
     const typed = explicitType ? null : extractPropertyType(norm);
+    const tokens = keywordTokens(norm);
+    const phrase = tokens.join(" ");
+    let keywordMemo = null;
+    const keywordHits = () => keywordMemo || (keywordMemo = tokens.length ? inv.filter((c) => keywordScore(c, tokens, phrase) >= 0) : []);
+    // a type no stay is listed as, but titles say ("cottage", "cottages in
+    // goa"): the words find those stays
+    if (typed && !inv.some((c) => c.propertyType === typed.type) && keywordHits().length) return { kind: "keyword", query: location, tokens, phrase };
     if (typed && !typed.rest) return { kind: "all", propertyType: typed.type };
     if (typed) {
       const r = places.resolveQuery(typed.rest, { ...opts, fuzzy: false });
       if (r && r.place) return { kind: "place", place: r.place, propertyType: typed.type, corrected: false, alternatives: r.alternatives || [] };
     }
+    // 2b. words that mean "any stay" around a place, or alone ("homestay in goa",
+    // "places to stay near anjuna", "homestays")
+    const bare = norm.split(" ").filter((t) => t && !CONNECTORS.has(t)).join(" ");
+    if (norm && !bare) return { kind: "all" };
+    if (!typed && bare !== norm) {
+      const r = places.resolveQuery(bare, { ...opts, fuzzy: false });
+      if (r && r.place) return { kind: "place", place: r.place, corrected: false, alternatives: r.alternatives || [] };
+    }
     // 3. a stay by its name or words ("Dev Bhoomi Retreat", "classic tent", "pool villa goa")
-    const tokens = keywordTokens(norm);
-    const phrase = tokens.join(" ");
-    if (tokens.length && inv.some((c) => keywordScore(c, tokens, phrase) >= 0)) return { kind: "keyword", query: location, tokens, phrase };
+    const hits = keywordHits();
+    if (hits.length) {
+      // …unless it is a misspelt place holding every stay the words found
+      // ("anjna", "assagaon"): the place then finds those and the rest of it
+      const r = places.resolveQuery(typed ? typed.rest : location, opts);
+      if (r && r.place && r.corrected && hits.every((c) => inPlace(c, r.place) && (!typed || c.propertyType === typed.type))) {
+        return { kind: "place", place: r.place, propertyType: typed ? typed.type : undefined, corrected: true, alternatives: r.alternatives || [] };
+      }
+      return { kind: "keyword", query: location, tokens, phrase };
+    }
     // 4. a typo in a place, with or without a type ("villa in morjm", "panjm")
     if (typed) {
       const r = places.resolveQuery(typed.rest, opts);
@@ -367,6 +434,12 @@ function resolveScope({ placeId, point, location, explicitType = false }, { live
     }
     const r = places.resolveQuery(location, opts);
     if (r && r.place) return { kind: "place", place: r.place, corrected: r.corrected, alternatives: r.alternatives || [] };
+    // 5. a place among words nothing else matched ("luxury villa anjuna"),
+    // unless the legacy text / PIN match finds stays; shown as "results for"
+    if (!inv.some(textMatcher(location))) {
+      const inner = placeWithin(typed ? typed.rest : bare, opts);
+      if (inner) return { kind: "place", place: inner.place, propertyType: typed ? typed.type : undefined, corrected: true, alternatives: [] };
+    }
     return {
       kind: "text",
       query: location,
@@ -375,6 +448,38 @@ function resolveScope({ placeId, point, location, explicitType = false }, { live
     };
   }
   return { kind: "all" };
+}
+
+// Text mode: a 6-digit PIN code matches the listing PIN; anything else is
+// the legacy literal substring match on city / district / state.
+function textMatcher(query) {
+  const compactQuery = query.replace(/\s+/g, "");
+  const pin = /^\d{6}$/.test(compactQuery) ? compactQuery : null; // "403001" or "403 001"
+  if (pin) return (c) => String(c.raw.pincode || "").trim() === pin;
+  const rx = new RegExp(escapeRegex(query), "i");
+  const test = (v) => typeof v === "string" && rx.test(v);
+  return (c) => test(c.raw.city) || test(c.raw.district) || test(c.raw.state);
+}
+
+// The best known place named inside other words ("luxury villa anjuna",
+// "rann of kutch"): longest name first, then one with stays in or near it.
+// Only places with stays in or near them — a guess that leads nowhere
+// ("mango tree villa" → a village called Mango) is no help.
+function placeWithin(text, opts) {
+  const tokens = text.split(" ").filter((t) => t && !/\d/.test(t) && !CONNECTORS.has(t));
+  for (let n = Math.min(TITLE_PLACE_WORDS, tokens.length); n >= 1; n--) {
+    let best = null;
+    for (let i = 0; i + n <= tokens.length; i++) {
+      const phrase = tokens.slice(i, i + n).join(" ");
+      if (phrase.replace(/ /g, "").length < 3 || NOT_A_TITLE_PLACE.has(phrase)) continue;
+      const r = places.resolveQuery(phrase, { ...opts, fuzzy: false });
+      if (!r || !r.place) continue;
+      const rank = opts.stays && opts.stays(r.place.id) > 0 ? 0 : opts.nearStock(r.place) ? 1 : 2;
+      if (rank < 2 && (!best || rank < best.rank)) best = { rank, r };
+    }
+    if (best) return best.r;
+  }
+  return null;
 }
 
 function newestFirst(a, b) {
@@ -439,13 +544,7 @@ function plan(scope, { inv, openIds, booked }) {
   }
   if (scope.kind === "text") {
     meta.query = scope.query;
-    // a 6-digit PIN code matches the listing PIN; anything else is the
-    // legacy literal substring match on city / district / state
-    const compactQuery = scope.query.replace(/\s+/g, "");
-    const pin = /^\d{6}$/.test(compactQuery) ? compactQuery : null; // "403001" or "403 001"
-    const rx = new RegExp(escapeRegex(scope.query), "i");
-    const test = (v) => typeof v === "string" && rx.test(v);
-    const match = pin ? (c) => String(c.raw.pincode || "").trim() === pin : (c) => test(c.raw.city) || test(c.raw.district) || test(c.raw.state);
+    const match = textMatcher(scope.query);
     const rows = inv.filter((c) => available(c) && match(c)).sort(newestFirst);
     if (!rows.length) meta.suggestions = (scope.suggestions || (scope.suggest ? scope.suggest() : [])).map(publicLive);
     return { rows, search: meta };
@@ -461,12 +560,18 @@ function plan(scope, { inv, openIds, booked }) {
   meta.place = publicLive(place);
   meta.corrected = !!scope.corrected;
   meta.alternatives = (scope.alternatives || []).map(publicLive);
+  const origin = Number.isFinite(place.lat) && Number.isFinite(place.lng) ? { lat: place.lat, lng: place.lng } : null;
   const inside = inv.filter((c) => inPlace(c, place));
-  const rows = inside.filter(available).sort(newestFirst);
-  if (rows.length) return { rows, search: { ...meta, mode: "place" } };
+  const hits = inside.filter(available);
+  if (hits.length) {
+    // the stays in the place, newest first; then the ones only their title
+    // places there ("5 mins to Baga"), nearest first, showing how far
+    const named = hits.filter((c) => onlyNamedIn(c, place));
+    const rows = named.length ? [...hits.filter((c) => !onlyNamedIn(c, place)).sort(newestFirst), ...(origin ? byDistance(origin, named) : named.sort(newestFirst))] : hits.sort(newestFirst);
+    return { rows, search: { ...meta, mode: "place" } };
+  }
   meta.mode = "nearby";
   meta.reason = !inside.length ? "no_inventory" : !inside.some((c) => open(c)) ? "filters" : "dates";
-  const origin = Number.isFinite(place.lat) && Number.isFinite(place.lng) ? { lat: place.lat, lng: place.lng } : null;
   const near = origin ? byDistance(origin, inv.filter((c) => available(c) && !inPlace(c, place))) : [];
   meta.nearestKm = near.length ? near[0].distanceKm : null;
   return { rows: near, search: meta };

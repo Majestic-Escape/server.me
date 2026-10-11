@@ -487,6 +487,125 @@ test("names and keywords: a guest who remembers the stay but not the place; type
 });
 
 // ---------------------------------------------------------------------------
+test("a place a title names: 'Anjuna' finds the stays that say '5 mins to Anjuna' — nearby only, with their distance; BHK / pvt spellings; 'any stay' words; a place inside other words", async () => {
+  const ANJUNA = "gn:1278566";
+  const mk = (title, propertyType, a) => h.makeListing(HOST, { title, propertyType, address: a, amenities: ["wifi"] });
+  const shack = await mk("Anjuna Shack", "house", addr("Anjuna", "Anjuna", 15.5805, 73.7445));
+  const apt1 = await mk("Luxury 1BHK| 5 mins to Baga & Anjuna |Pool & Balcony", "apartment", addr("Arpora", "Arpora", 15.5711, 73.7674));
+  const apt2 = await mk("Luxury 1 BHK |5mins to Baga & Anjuna | Pool View", "apartment", addr("Arpora", "Arpora", 15.5686, 73.7665));
+  const feliz = await mk("Casa Feliz — 4BHK Villa, Rooftop Pool, Near Anjuna Beach", "villa", addr("Goa", "Bouta Waddo", 15.5895, 73.7667));
+  const jubi = await mk("JuBi Villa - Pvt Pool & Pet - Friendly - Assagao", "villa", addr("Assagao", "Bouta Waddo", 15.5938, 73.7783));
+  const far = await mk("Anjuna Vibes Flat", "apartment", addr("Lucknow", "Jankipuram", 26.912, 80.981, "Uttar Pradesh"));
+  const cabo = await mk("Cabo Sarai : Sea view Luxury cottage, 2 hrs to North Goa and Anjuna", "hotel", addr("Canaguinim", "Canaguinim", 15.1065, 73.926));
+  const plush = await mk("A Plush 2 Bedroom Apartment With Wifi Facility", "apartment", addr("Seraulim", "Colva ", 15.2817, 73.9434));
+  const ids = [shack, apt1, apt2, feliz, jubi, far, cabo, plush].map((x) => x._id);
+  const title = (x) => x.title;
+  try {
+    const first = async (location) => {
+      const r = await q({ location, limit: "50" });
+      const s = r.json.search;
+      return { mode: s.mode, place: s.place && s.place.name, type: s.propertyType, reason: s.reason, corrected: s.corrected, titles: titles(r), data: r.json.data, total: r.json.pagination.totalCount };
+    };
+    // the bug: "Anjuna" said "no stays in Anjuna yet" above stays titled "… Anjuna"
+    const P = places();
+    const anjuna = P.placeById(ANJUNA);
+    for (const location of ["Anjuna", "anjuna beach", "near anjuna", "Anjuna, Goa", "places to stay near anjuna"]) {
+      const r = await first(location);
+      assert.deepEqual([r.mode, r.place, r.reason], ["place", "Anjuna", null], location);
+      // in the place first (newest first, no distance), then the ones only their
+      // title places there, nearest first, with the distance from the public point
+      assert.equal(r.titles[0], "Anjuna Shack", location);
+      assert.equal(r.data[0].distanceKm, undefined);
+      assert.deepEqual(sorted(r.titles.slice(1)), sorted([apt1, apt2, feliz].map(title)), location);
+      const kms = r.data.slice(1).map((c) => c.distanceKm);
+      assert.deepEqual(kms, [...kms].sort((a, b) => a - b), "nearest first");
+      for (const c of r.data.slice(1)) {
+        const id = String(c._id);
+        const doc = [apt1, apt2, feliz].find((x) => String(x._id) === id);
+        const pub = approximateLocation(id, doc.address.latitude, doc.address.longitude);
+        assert.equal(c.distanceKm, Math.round(P.distanceKm({ lat: pub.latitude, lng: pub.longitude }, anjuna) * 10) / 10, "public point only");
+      }
+      assert.ok(!r.titles.includes(far.title) && !r.titles.some((t) => t.startsWith("Cabo Sarai")), "a title names a FAR place: not in it");
+    }
+    let r = await first("Baga");
+    assert.deepEqual([r.mode, r.place, sorted(r.titles)], ["place", "Baga", sorted([apt1.title, apt2.title])]);
+    r = await first("villa in anjuna");
+    assert.deepEqual([r.mode, r.place, r.type, r.titles], ["place", "Anjuna", "villa", [feliz.title]]);
+    r = await first("apartment near anjuna");
+    assert.deepEqual([r.place, r.type, sorted(r.titles)], ["Anjuna", "apartment", sorted([apt1.title, apt2.title])]);
+    // an area named in a title never moves a stay across a district boundary
+    assert.ok(!(await first("north goa")).titles.some((t) => t.startsWith("Cabo Sarai")));
+    // the strict place is unchanged: the 1BHKs are IN Arpora, no distance shown
+    r = await first("Arpora");
+    assert.ok(r.titles.includes(apt1.title) && r.data.every((c) => c.distanceKm === undefined));
+    // home cards and the suggestion index count what the page lists
+    const c = await raw("/properties/countstays?city=Anjuna,Baga");
+    assert.deepEqual(c.json.data, [{ city: "anjuna", count: 4 }, { city: "baga", count: 2 }]);
+    const idx = await raw("/places/index");
+    assert.equal(idx.json.rows.find((row) => row[0] === ANJUNA)[5], 4);
+    // a misspelt place holding every stay the words found is the place…
+    r = await first("assagaon");
+    assert.deepEqual([r.mode, r.place, r.corrected], ["place", "Assagao", true]);
+    assert.ok(r.titles.includes(jubi.title));
+    // …but not while the words also find stays elsewhere (Lucknow's "Anjuna
+    // Vibes", the cottage "2 hrs to … Anjuna")
+    r = await first("anjna");
+    assert.equal(r.mode, "text");
+    assert.ok(r.titles.includes(far.title) && r.titles.includes(apt1.title) && r.titles.includes(cabo.title));
+    await ListingProperty().updateMany({ _id: { $in: [far._id, cabo._id] } }, { $set: { status: "inactive" } });
+    r = await first("anjna");
+    assert.deepEqual([r.mode, r.place, r.corrected, r.total], ["place", "Anjuna", true, 4]);
+    await ListingProperty().updateOne({ _id: cabo._id }, { $set: { status: "active" } });
+    // BHK / bedroom spellings are one word; pvt is private
+    for (const location of ["1bhk", "1 bhk", "1-BHK", "1 bedroom", "luxury 1bhk", "Luxury 1 BHK"]) {
+      assert.deepEqual(sorted((await first(location)).titles), sorted([apt1.title, apt2.title]), location);
+    }
+    assert.ok((await first("4 bhk villa")).titles.includes(feliz.title));
+    assert.ok((await first("2bhk")).titles.includes(plush.title));
+    assert.ok((await first("private pool")).titles.includes(jubi.title));
+    assert.ok((await first("pvt pool")).titles.includes(jubi.title));
+    const sres = await raw(`/places/stays?q=${encodeURIComponent("1 bhk")}`);
+    assert.deepEqual(sorted(sres.json.stays.map((s) => s.title)), sorted([apt1.title, apt2.title]), "name suggestions too");
+    // words that mean "any stay": everything, or the place they surround
+    for (const location of ["homestay", "stays", "home"]) {
+      r = await first(location);
+      assert.deepEqual([r.mode, r.type], ["all", null], location);
+      assert.ok(r.total > 5, location);
+    }
+    r = await first("homestay in goa");
+    assert.deepEqual([r.mode, r.place], ["place", "Goa"]);
+    // a type no stay is listed as, but a title says: the words find it
+    r = await first("cottage");
+    assert.equal(r.mode, "text");
+    assert.ok(r.titles.some((t) => t.startsWith("Cabo Sarai")));
+    // a place among words nothing matched: the place (and type), as "results for"
+    r = await first("luxury villa anjuna");
+    assert.deepEqual([r.mode, r.place, r.type, r.corrected, r.titles], ["place", "Anjuna", "villa", true, [feliz.title]]);
+    r = await first("cheap stay in anjuna");
+    assert.deepEqual([r.mode, r.place, r.corrected, r.total], ["place", "Anjuna", true, 4]);
+    // …never a guess with no stays near it, never over the legacy text match
+    r = await first("mango tree villa");
+    assert.deepEqual([r.mode, r.place], ["text", null]);
+    r = await first("Bouta");
+    assert.deepEqual([r.mode, r.place], ["text", null]);
+    assert.ok(r.titles.includes(feliz.title));
+    // gazetteer: beaches people search by their usual names
+    const name = (s) => {
+      const x = P.resolveQuery(s);
+      return x && x.place ? `${x.place.n}|${x.place.s}${x.corrected ? "*" : ""}` : null;
+    };
+    assert.deepEqual(["Ashwem", "ashvem", "ashwem beach", "ozran", "little vagator", "mobor", "coco beach"].map(name), ["Ashwem|st:goa", "Ashwem|st:goa", "Ashwem|st:goa", "Vagator|st:goa", "Vagator|st:goa", "Mobor|st:goa", "Nerul|st:goa"]);
+    // cost unchanged: still ≤ 2 operations
+    startCounting();
+    await q({ location: "luxury villa anjuna" });
+    const ops = stopCounting();
+    assert.ok(ops.length <= 2, ops.join(", "));
+  } finally {
+    await ListingProperty().deleteMany({ _id: { $in: ids } });
+  }
+});
+
+// ---------------------------------------------------------------------------
 test("cost: ≤ 3 ops in every mode (with dates), ≤ 2 without; the edge caches date-less searches only", async () => {
   const cases = [
     [{ location: "panaji", from: "2027-06-10", to: "2027-06-11" }, 3],

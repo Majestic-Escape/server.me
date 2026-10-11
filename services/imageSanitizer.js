@@ -70,11 +70,13 @@ function rejectFor(err) {
 // downscaled to at most QR_SCAN_MAX px and handed to jsQR as RGBA. Shared by
 // the listing/profile sanitiser (on the upload) and the homepage hero (on
 // its prepared raster), so both refuse exactly the same pictures.
-// requirePayload (the homepage banner): a "code" that decodes to nothing is
-// not a QR code — jsQR occasionally reads one out of dithered noise (an empty
-// version-1 symbol at a degenerate location), and an empty code can carry no
-// contact details. Listings keep the original rule (default).
-async function detectQr(pipeline, { requirePayload = false } = {}) {
+// A "code" that decodes to nothing is not a QR code — jsQR occasionally
+// reads one out of dithered noise or fine texture (an empty version-1 symbol
+// at a degenerate location; ~1 in 40 noisy test photos), and an empty code can
+// carry no contact details. One rule for every picture (listing, profile,
+// homepage banner): a QR code is refused when it carries a payload.
+// requirePayload: false is kept only for tests that inspect the raw decode.
+async function detectQr(pipeline, { requirePayload = true } = {}) {
   const { data, info } = await pipeline.resize({ width: QR_SCAN_MAX, height: QR_SCAN_MAX, fit: "inside", withoutEnlargement: true }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const found = jsQR(new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength), info.width, info.height, { inversionAttempts: "attemptBoth" });
   if (!found) return false;

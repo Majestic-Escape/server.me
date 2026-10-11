@@ -46,9 +46,10 @@ exports.verifyGst = async (req, res) => {
   if (!slot.ok) return guard.rateLimited(res, slot);
   // Every failure from here on tells the client when it may try again.
   const next = () => guard.attemptInfo(slot.form, "gst");
-  const afterProviderError = async (err) => {
+  // Refund only when our account was refused on the FIRST call (nothing billed).
+  const afterProviderError = async (err, { firstCall }) => {
     console.error("verifyGST provider error", JSON.stringify(provider.describeError(err)));
-    return guard.attemptInfo((provider.isAccountError(err) && (await guard.refund(user._id, "gst"))) || slot.form, "gst");
+    return guard.attemptInfo((firstCall && provider.isAccountError(err) && (await guard.refund(user._id, "gst"))) || slot.form, "gst");
   };
   const unavailable = (err, message) => (provider.isAccountError(err) ? "GST verification is temporarily unavailable. Please try again in a few minutes." : message);
 
@@ -60,7 +61,7 @@ exports.verifyGst = async (req, res) => {
       panResult = await provider.gstPanSearch({ pan: panNumber, client_ref_num: panRef });
     } catch (err) {
       await KycLogs.updateOne({ _id: panLog._id }, { $set: { status: "failed", error: String((err && err.message) || err).slice(0, 500) } });
-      return fail(res, 502, "PROVIDER_UNAVAILABLE", unavailable(err, "Invalid PAN Number or Network Issue"), await afterProviderError(err));
+      return fail(res, 502, "PROVIDER_UNAVAILABLE", unavailable(err, "Invalid PAN Number or Network Issue"), await afterProviderError(err, { firstCall: true }));
     }
     if (!panResult || Number(panResult.http_response_code) !== 200) {
       await KycLogs.updateOne({ _id: panLog._id }, { $set: { status: "failed", responseData: panResult } });
@@ -81,7 +82,7 @@ exports.verifyGst = async (req, res) => {
       gstResult = await provider.gstCheck({ gstin: gstNumber, client_ref_num: gstRef });
     } catch (err) {
       await KycLogs.updateOne({ _id: gstLog._id }, { $set: { status: "failed", error: String((err && err.message) || err).slice(0, 500) } });
-      return fail(res, 502, "PROVIDER_UNAVAILABLE", unavailable(err, "Failed to verify GST"), await afterProviderError(err));
+      return fail(res, 502, "PROVIDER_UNAVAILABLE", unavailable(err, "Failed to verify GST"), await afterProviderError(err, { firstCall: false }));
     }
     if (!gstResult || Number(gstResult.http_response_code) !== 200 || !gstResult.result || !gstResult.result.taxpayerDetails) {
       await KycLogs.updateOne({ _id: gstLog._id }, { $set: { status: "failed", responseData: gstResult } });

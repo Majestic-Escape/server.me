@@ -92,7 +92,10 @@ exports.verifyKYC = async (req, res) => {
   if (!slot.ok) return guard.rateLimited(res, slot);
   // Every failure from here on tells the client when it may try again.
   const next = () => guard.attemptInfo(slot.form, "ocr");
-  const afterProviderError = async (err) => guard.attemptInfo((provider.isAccountError(err) && (await guard.refund(user._id, "ocr"))) || slot.form, "ocr");
+  // Our account refused on the FIRST provider call (nothing billed): the
+  // attempt is given back. Never after a call that succeeded (it may have been
+  // billed): a refund there would let retries bill OCR without limit.
+  const afterProviderError = async (err, { firstCall }) => guard.attemptInfo((firstCall && provider.isAccountError(err) && (await guard.refund(user._id, "ocr"))) || slot.form, "ocr");
 
   const now = new Date();
   try {
@@ -120,7 +123,7 @@ exports.verifyKYC = async (req, res) => {
       ocrResult = await provider.ocr(b64, clientRefId, doc);
     } catch (err) {
       await KycLogs.updateOne({ _id: ocrLog._id }, { $set: { status: "failed", error: logError(err) } });
-      return providerFailure(res, err, "The document could not be read right now. Please try again.", await afterProviderError(err));
+      return providerFailure(res, err, "The document could not be read right now. Please try again.", await afterProviderError(err, { firstCall: true }));
     }
     await KycLogs.updateOne({ _id: ocrLog._id }, { $set: { status: "success", responseData: ocrResult } });
 
@@ -155,7 +158,7 @@ exports.verifyKYC = async (req, res) => {
       statusResult = await provider.statusCheck(statusRequest, doc);
     } catch (err) {
       await KycLogs.updateOne({ _id: statusLog._id }, { $set: { status: "failed", error: logError(err) } });
-      return providerFailure(res, err, "The document could not be verified right now. Please try again.", await afterProviderError(err));
+      return providerFailure(res, err, "The document could not be verified right now. Please try again.", await afterProviderError(err, { firstCall: false }));
     }
     await KycLogs.updateOne({ _id: statusLog._id }, { $set: { status: statusResult ? "success" : "failed", responseData: statusResult } });
 

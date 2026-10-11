@@ -151,6 +151,28 @@ test("our provider account/plan refused (401): generic 'temporarily unavailable'
   assert.equal(log.error, "HTTP 401: Invalid client credentials", "ops can see what the provider said");
   assert.equal((await verify("pan")).status, 429);
 
+  // OCR succeeded (billable) and only then our account was refused on the
+  // status check → NO refund: otherwise every retry would bill OCR again
+  process.env.KYC_ATTEMPT_COOLDOWN_SECONDS = "0";
+  process.env.KYC_PROVIDER_MOCK_MODE = "success";
+  const statusCheck = provider().statusCheck;
+  provider().statusCheck = async () => {
+    const err = new Error("Request failed with status code 402");
+    err.response = { status: 402, data: { error: "Insufficient credits" } };
+    throw err;
+  };
+  try {
+    const afterOcr = await verify("pan");
+    assert.equal(afterOcr.status, 502, JSON.stringify(afterOcr.body));
+    assert.match(afterOcr.body.message, /temporarily unavailable/);
+    assert.equal(afterOcr.body.attemptsLeft, 4, "the billed OCR attempt is not refunded");
+    await leaseReleased(u);
+    assert.equal((await guardState(u)).count, 1);
+  } finally {
+    provider().statusCheck = statusCheck;
+    process.env.KYC_ATTEMPT_COOLDOWN_SECONDS = "30";
+  }
+
   // the refund never goes below zero
   await KycHostData().updateOne({ hostId: u._id }, { $set: { "verification.ocr.count": 0 } });
   await guard().refund(u._id, "ocr");

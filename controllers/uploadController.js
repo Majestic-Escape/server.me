@@ -187,8 +187,10 @@ exports.deleteImages = async (req, res) => {
     // admins too): deleting one here would blank the live hero.
     if (storage.isProtectedKey(key)) return fail(res, 409, "OBJECT_IN_USE", "This image is managed in Settings → Homepage banner");
 
+    let refs = null;
     if (!authz.isAdmin(actor)) {
-      const { listingRefs, profileRefs } = await referencesOf(key);
+      refs = await referencesOf(key);
+      const { listingRefs, profileRefs } = refs;
       const ownsUpload = storage.ownerFromKey(key) === String(actor.id).toLowerCase();
       const ownsListingRef = listingRefs.some((l) => authz.sameId(l.host, actor.id));
       const ownsProfileRef = profileRefs.some((u) => authz.sameId(u._id, actor.id));
@@ -201,6 +203,11 @@ exports.deleteImages = async (req, res) => {
 
     const result = await storage.deleteImages([key]);
     if (result.failed.length) return fail(res, 502, "STORAGE_ERROR", "Delete failed");
+    // A deleted profile picture leaves no profile pointing at it (a broken
+    // avatar). A non-admin can only reach their own profile here: an object
+    // another profile or listing uses was refused above.
+    const { profileRefs } = refs || (await referencesOf(key));
+    if (profileRefs.length) await User.updateMany({ _id: { $in: profileRefs.map((u) => u._id) } }, { $set: { profilePicture: "" } });
     res.json({ success: true });
   } catch (err) {
     console.error("deleteImages error", err && err.message);

@@ -108,4 +108,20 @@ function rateLimited(res, result) {
   });
 }
 
-module.exports = { claim, release, refund, rateLimited, attemptInfo, config };
+// The controllers write their post-claim answer here and send it only after
+// the in-flight lease is released (in their `finally`): a host who retries the
+// moment an answer arrives is never told an attempt is still in progress.
+function heldResponse() {
+  // like Express: json() without status() is a 200; nothing written is a 500
+  const held = { code: undefined, body: undefined };
+  return {
+    status(code) { held.code = code; return this; },
+    json(body) { held.body = body; return this; },
+    sendTo(res) {
+      if (held.body === undefined) return res.status(500).json({ success: false, code: "SERVER_ERROR", message: "Something went wrong. Please try again.", statusCode: 500 });
+      return res.status(held.code || 200).json(held.body);
+    },
+  };
+}
+
+module.exports = { claim, release, refund, rateLimited, attemptInfo, heldResponse, config };

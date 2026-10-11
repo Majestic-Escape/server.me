@@ -120,7 +120,8 @@ test("document rejected by the provider: its reason reaches the host and the log
   const log = await KycLogs().findOne({ userId: u._id, type: "OCR" }).sort({ createdAt: -1 }).lean();
   assert.equal(log.status, "failed", "no longer recorded as a success");
   assert.equal(log.error, "HTTP 400: Image is blurred");
-  await leaseReleased(u);
+  // the answer is sent only after the lease is released: no waiting needed
+  assert.equal((await guardState(u)).inFlightUntil, null, "lease already released when the answer arrives");
 
   process.env.KYC_PROVIDER_MOCK_MODE = "success";
   const again = await verify();

@@ -1,6 +1,14 @@
 import { changeTime } from "./changeTime.js";
 import { changeToUpperCase } from "./convertToUpperCase.js";
 
+// Stay dates in e-mails: "12 Oct 2026". The old toLocaleDateString() used the
+// server's locale (en-US on the hosting platform: "10/12/2026"), which an
+// Indian reader takes for 10 December, and its timezone; the stay's nights are
+// UTC days, so the date is written in UTC.
+export function stayDate(value) {
+  return new Date(value).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
 // Template parameters for the booking emails.
 //
 // Contact lock-down: the counterpart's email / phone and the property's street
@@ -16,8 +24,8 @@ export function paramsToObject(userName, hostName, booking, reveal = { contact: 
     userName: changeToUpperCase(userName),
     hostName: changeToUpperCase(hostName),
     bookingId: booking._id,
-    from: new Date(booking.checkIn).toLocaleDateString(),
-    to: new Date(booking.checkOut).toLocaleDateString(),
+    from: stayDate(booking.checkIn),
+    to: stayDate(booking.checkOut),
     checkInTime: changeTime(booking.propertyId?.checkinTime),
     checkOutTime: changeTime(booking.propertyId?.checkoutTime),
     propertyTitle: booking.propertyId?.title,

@@ -7,15 +7,30 @@ const agenda = new Agenda({
   db: { address: process.env.DB_URI, collection: "agendaJobs" },
 });
 
+// The reminder is scheduled when a stay is confirmed, hours or days before it
+// is due; the stay may have been cancelled since. Judge the booking as it is
+// now (jobs scheduled before bookingId was stored carry it in the rating link).
+async function stillConfirmed({ bookingId, params, bookingStatus }) {
+  const id = bookingId || ((String((params && params.userUrl) || "").match(/[?&]booking=([a-f0-9]{24})/i) || [])[1]);
+  if (!id) return bookingStatus === "confirmed";
+  try {
+    const b = await require("../models/Booking").findById(id).select("status").lean();
+    return !!b && b.status === "confirmed";
+  } catch (err) {
+    console.error("review reminder: status lookup failed", err.message);
+    return bookingStatus === "confirmed";
+  }
+}
+
 // Define the job once globally
 agenda.define("sendReviewEmail", async (job, done) => {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
     console.log("Agenda Function");
   }
-  const { userEmail, hostEmail, params, bookingStatus } = job.attrs.data;
+  const { userEmail, hostEmail, params } = job.attrs.data;
 
   try {
-    if (bookingStatus === "confirmed") {
+    if (await stillConfirmed(job.attrs.data)) {
       if (process.env.NEXT_PUBLIC_ENV === "dev") {
         console.log("Agenda Function Inside");
       }

@@ -28,6 +28,17 @@ class PaymentError extends Error {
 }
 
 const ACCEPTED_RAZORPAY_STATUSES = new Set(["captured", "authorized"]);
+// SyncGuard: shown when a connected OTA calendar could not be re-verified at
+// the moment of booking/payment (services/calendarSync/prebook.js).
+const UNVERIFIED_MESSAGE =
+  "We couldn't confirm these dates with this stay's other booking sites just now. To protect you from a double booking, please try again in a few minutes.";
+const BEYOND_HORIZON_MESSAGE =
+  "These dates are too far ahead to be checked against this stay's other booking sites. Please choose dates within the next two years.";
+// The guest-facing answer for a failed commitment check (calendarSync.ensureVerified).
+function commitmentRefusal(verified) {
+  if (verified.code === "BEYOND_SYNC_HORIZON") return { code: "BEYOND_SYNC_HORIZON", message: BEYOND_HORIZON_MESSAGE };
+  return { code: "AVAILABILITY_UNVERIFIED", message: UNVERIFIED_MESSAGE };
+}
 const PLACEHOLDER_PREFIX = "pending_";
 const PLACEHOLDER_STALE_MS = 2 * 60_000;
 
@@ -103,6 +114,15 @@ async function createOrderForBooking({ booking, user, clientAmount, clientCurren
     throw new PaymentError(400, "UNSUPPORTED_CURRENCY", "Only INR is supported");
   }
   const { nights, quote } = await freshQuoteForBooking(booking);
+  // SyncGuard (docs/syncguard.md §7): before money moves, re-verify the
+  // listing's connected OTA calendars. An OTA booking found now claims its
+  // nights first, so secureHold below refuses; a calendar that cannot be
+  // verified refuses the payment outright.
+  const verified = await require("./calendarSync/prebook").ensureVerified(booking.propertyId, { context: "create_order", checkOut: booking.checkOut });
+  if (!verified.ok) {
+    const r = commitmentRefusal(verified);
+    throw new PaymentError(409, r.code, r.message, { channels: verified.channels });
+  }
   // The nights must be ours before money changes hands: extend the hold, or
   // take the nights again if the hold expired (or predates the index) and
   // they are still free.
@@ -405,4 +425,6 @@ module.exports = {
   refundBookingPayment,
   freshQuoteForBooking,
   quoteShape,
+  UNVERIFIED_MESSAGE,
+  commitmentRefusal,
 };

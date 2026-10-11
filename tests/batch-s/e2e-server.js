@@ -251,6 +251,20 @@ async function main() {
         const l = await h.makeListing(owner, { title: json.title ?? "", status: json.status || "incomplete", photos: json.photos || [PHOTO], address: json.address || { city: "Panaji", state: "Goa", country: "India", district: "North Goa" }, ...(json.fields || {}) });
         return res.end(JSON.stringify({ id: String(l._id), status: l.status, title: l.title }));
       }
+      // SyncGuard UI suites (test-only):
+      // POST /syncguard/age { connectionId, minutes? } → age the last success, clear the Sync-now limit
+      if (req.url === "/syncguard/age") {
+        const ExternalCalendar = require("../../models/ExternalCalendar");
+        const set = { "sync.manualAt": null };
+        if (json.minutes !== undefined) set["sync.lastSuccessAt"] = new Date(Date.now() - json.minutes * 60000);
+        await ExternalCalendar.updateOne({ _id: json.connectionId }, { $set: set });
+        return res.end(JSON.stringify({ ok: true }));
+      }
+      // POST /syncguard/sync { connectionId } → one sync now (no host rate limit)
+      if (req.url === "/syncguard/sync") {
+        const r = await require("../../services/calendarSync/engine").syncConnection(json.connectionId, { force: true, reason: "e2e" });
+        return res.end(JSON.stringify(r));
+      }
       // POST /set-profile-picture { url } → the seeded host's profile picture ("" clears it)
       if (req.url === "/set-profile-picture") {
         const User = require("../../models/User");

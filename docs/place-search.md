@@ -103,7 +103,23 @@ Order in which typed text is read (`services/placeSearch.resolveScope`):
    "rann of kutch") — only one with stays in or within 50 km of it, and
    never over a legacy text match — returned `corrected` so the page says
    "Showing results for Anjuna";
-6. the legacy literal match / PIN code, with "did you mean".
+6. only everyday words nothing matched ("best villa", "romantic getaway",
+   "budget") — stays of the named type instead of an empty page;
+7. the legacy literal match / PIN code, with "did you mean".
+
+**Hindi (Devanagari)** — `utils/indicText.js` maps the destinations, stay
+types and connecting words people actually type ("गोवा में विला" → "goa in
+villa", "अंजुना के पास", "उत्तर गोवा", "नई दिल्ली", "मनाली") to Latin before
+the text is read, so places, types, keywords and typo tolerance work
+unchanged. Spelling variants are folded (ी/ि, ू/ु, chandrabindu/anusvara,
+nukta). Mixed text ("goa में villa") works; an unknown Devanagari word is
+dropped when something else maps; text with no match is left as typed (an
+honest empty result). No external service; text without Devanagari is
+untouched. The page still echoes what was typed. Other scripts are not read.
+
+**Everyday words** ("best", "cheap", "family", "pool", "view"…, the set
+`NOT_FUZZY` in `utils/places.js`) are never typo-corrected into a place —
+"best" is one letter from "West" — though an exact place name still wins.
 Titles are searched in their public, contact-masked form and tokens with 3+
 digits are never search keys, so a phone number (or part of one) hidden in a
 title cannot be found by searching for it.
@@ -187,4 +203,6 @@ index and prefilter by the place's bounding box (strict) / `$geoNear`
 - A title is trusted for places within 10 km only; a host can still name a
   neighbouring village they are not in (that is the point: they are near
   it), never a far one.
-- Only Latin-script names are matched.
+- Only Latin-script names are matched, plus the Hindi dictionary above
+  (Devanagari names outside it return nothing; other Indian scripts are not
+  read). Extend `ENTRIES` in `utils/indicText.js` for new names.

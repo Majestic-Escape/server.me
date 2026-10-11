@@ -544,7 +544,7 @@ Order: **preflight (read-only) → deploy → `--apply` → `--create-indexes`**
 * The new backend works before the migration (lazy adoption on first sync);
   the migration makes it complete and creates the invariants.
 
-## 13. Rollout (proposed — owner decides)
+## 13. Rollout (done 2026-10-11 — see `docs/syncguard-release-gate.md`, "Production release")
 
 1. Read-only preflight on production (`--confirm-db=master-db`, and verify the
    connection string points at the production Atlas cluster); review the report.

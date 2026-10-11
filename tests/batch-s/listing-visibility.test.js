@@ -193,9 +193,9 @@ test("booked guest: confirmed + paid only, any time; operational view, never the
   const d = r.body.data;
   assert.equal(d.description, undefined, "no current listing text");
   assert.equal(d.amenities, undefined);
-  assert.deepEqual(d.customRules, snapshot.customRules, "the rules they booked under");
-  assert.deepEqual(d.selectedRules, snapshot.selectedRules);
-  assert.equal(d.checkinTime, "14");
+  // the listing-level view carries no trip facts (a guest may hold several
+  // bookings); those come with each booking (below)
+  for (const k of ["customRules", "selectedRules", "checkinTime", "checkoutTime", "cancellationType"]) assert.equal(d[k], undefined, `detail route: no ${k}`);
   assert.ok(!JSON.stringify(d).includes("Copper Lantern"), "detail route: approximate location only");
   assert.ok(!JSON.stringify(d).includes(SECRET_TEXT));
   // the host edits the listing text + rules and resubmits it for review
@@ -208,12 +208,13 @@ test("booked guest: confirmed + paid only, any time; operational view, never the
   assert.ok(!bl.includes("NEW"), "booking route never shows the new draft");
   assert.ok(bl.includes("Quiet after 9 (as booked)"), "booking route keeps the booked rules");
   assert.ok(bl.includes("Copper Lantern"), "booking route keeps the exact address of a confirmed, paid stay");
+  assert.equal(viaBooking.body.data.propertyId.checkinTime, "14", "booking route: the hours of THIS booking");
   // a legacy booking without a snapshot: no rules at all (never rebuilt from the draft)
   await Booking().updateOne({ _id: past._id }, { $unset: { listingSnapshot: 1 } });
-  const legacy = await h.api("GET", `/properties/${listing._id}`, { token: GT });
-  assert.equal(legacy.body.access, "bookedGuest");
-  assert.equal(legacy.body.data.customRules, undefined, "sparse fallback");
-  assert.equal(legacy.body.data.checkinTime, listing.checkinTime, "operational hours from the listing");
+  const legacy = await h.api("GET", `/booking/${past._id}`, { token: GT });
+  assert.equal(legacy.body.data.propertyId.customRules, undefined, "sparse fallback");
+  assert.equal(legacy.body.data.propertyId.checkinTime, listing.checkinTime, "operational hours from the listing");
+  assert.equal((await h.api("GET", `/properties/${listing._id}`, { token: GT })).body.access, "bookedGuest");
   // a public listing reads normally through the booking route
   await ListingProperty().updateOne({ _id: listing._id }, { $set: { status: "inactive", description: SECRET_TEXT, customRules: ["No loud music after 10"] } });
 });
@@ -403,4 +404,31 @@ test("soft auth is lazy: a public listing read with a session does no user looku
   } finally {
     mongoose.set("debug", false);
   }
+});
+
+test("hostEmail follows the host account: never edited from a body, synced on reassignment", async () => {
+  const A = await h.makeUser({ role: "host", firstName: "Hea", email: "hea@visibility.test" });
+  const B = await h.makeUser({ role: "host", firstName: "Heb", email: "heb@visibility.test" });
+  const l = await h.makeListing(A, { status: "processing" });
+  // an admin edit echoing / forging hostEmail changes nothing
+  await h.api("PUT", `/prop-listing/${l._id}`, { token: AT, body: { hostEmail: "someone@else.test", title: "Echo" } });
+  assert.equal((await ListingProperty().findById(l._id).lean()).hostEmail, A.email);
+  // reassignment with the host only: hostEmail follows
+  assert.equal((await h.api("PUT", `/prop-listing/${l._id}`, { token: AT, body: { host: String(B._id) } })).status, 200);
+  assert.equal((await ListingProperty().findById(l._id).lean()).hostEmail, B.email);
+  // ...and a stale echo of the OLD e-mail after it does not undo that
+  await h.api("PUT", `/properties/admin-update-property/${l._id}`, { token: AT, body: { hostEmail: A.email, host: String(B._id) } });
+  assert.equal((await ListingProperty().findById(l._id).lean()).hostEmail, B.email);
+  // admin create derives it from the host account
+  const c = await h.api("POST", "/prop-listing", { token: AT, body: { title: "Derived", host: String(B._id), hostEmail: "forged@x.test", status: "processing" } });
+  assert.equal(c.status, 201);
+  assert.equal((await ListingProperty().findById(c.body._id).lean()).hostEmail, B.email);
+  // a legacy row with no host id still belongs to its e-mail owner (and nobody else)
+  const legacy = await ListingProperty().create({ title: "Hostless legacy", hostEmail: A.email, status: "processing" });
+  const own = await h.api("GET", `/properties/user-properties/${encodeURIComponent(A.email)}`, { token: h.userToken(A) });
+  assert.ok(own.body.listings.some((x) => String(x._id) === String(legacy._id)), "legacy host-less row by e-mail");
+  assert.ok(!own.body.listings.some((x) => String(x._id) === String(l._id)), "reassigned row left A's list");
+  const stat = await h.api("GET", `/prop-listing/status?email=${encodeURIComponent(B.email)}`, { token: h.userToken(B) });
+  assert.equal(stat.status, 200);
+  assert.notEqual(stat.body.status, "noListings", "B's stage card sees the reassigned listing");
 });

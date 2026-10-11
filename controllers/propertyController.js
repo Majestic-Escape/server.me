@@ -20,7 +20,7 @@ const {
   sanitizeProperties,
   SAFE_HOST_SELECT,
 } = require("../utils/sanitizeResponse");
-const { resolveListingAccess, nonPublicView } = require("../services/listingAccess");
+const { resolveListingAccess, nonPublicView, ownedListingsFilter, hostIdForEmail } = require("../services/listingAccess");
 const authMiddleware = require("../middleware/authMiddleware");
 const listingPublish = require("../services/listingPublish");
 // Batch P — public catalogue: card projection, edge-cache policy, change
@@ -1820,7 +1820,14 @@ exports.getUserPropertyListings = async (req, res) => {
   try {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const query = { hostEmail: userEmail };
+    // The host's own portfolio (route: the caller's own e-mail, or an admin):
+    // by account id — a listing reassigned away must leave it, one reassigned
+    // here must appear — e-mail only for legacy rows without a host id.
+    const actor = req.actor || null;
+    let email = userEmail;
+    try { email = decodeURIComponent(userEmail); } catch { /* as sent */ }
+    const hostId = actor && actor.kind === "user" && !authz.isAdmin(actor) ? actor.id : await hostIdForEmail(email);
+    const query = ownedListingsFilter({ hostId, email });
     const [listings, totalListings] = await Promise.all([
       ListingProperty.find(query)
         .sort({ createdAt: -1 })

@@ -132,7 +132,8 @@ async function createPublishedListing(doc) {
     if (!(await fenceHost(doc.host, session, { eligible: true }))) {
       throw new PublishError(409, "HOST_NOT_ELIGIBLE", "The host's account is banned, deactivated or missing");
     }
-    const [created] = await ListingProperty.create([{ ...doc, status: "active", ban: false }], { session });
+    const hostEmail = await hostEmailOf(doc.host, session);
+    const [created] = await ListingProperty.create([{ ...doc, hostEmail, status: "active", ban: false }], { session });
     return created;
   });
 }
@@ -161,12 +162,15 @@ async function reassignListing({ listingId, toHostId, set = {} }) {
       }
     }
     await hook("afterFence", { op: "reassign", listingId: String(l._id), hostId: to });
+    // hostEmail follows the host: e-mail based owner reads and host e-mails
+    // must never keep pointing at the previous owner.
+    const hostEmail = await hostEmailOf(to, session);
     // Moving a listing away from a banned host is the admin's moderation
     // decision: the ban marker goes with the old owner (the listing itself
     // stays as it is — an inactive one needs an admin approval to go live).
     const upd = await ListingProperty.updateOne(
       { _id: l._id, host: l.host, status: l.status },
-      { $set: { ...set, host: to, ban: false } },
+      { $set: { ...set, host: to, hostEmail, ban: false } },
       { session, runValidators: true },
     );
     if (upd.matchedCount !== 1) throw new PublishError(409, "LISTING_CHANGED", "The listing changed meanwhile. Reload and try again.");
@@ -228,9 +232,20 @@ async function unbanHost(userId) {
 }
 
 // Fields no generic edit may write: identity, the moderation ban (only the
-// ban flow sets / clears it) and the delist provenance (only the delist /
-// publish routes set / clear it).
-const NOT_EDITABLE = ["_id", "id", "__v", "ban", "delist"];
+// ban flow sets / clears it), the delist provenance (only the delist /
+// publish routes set / clear it) and hostEmail — always the CURRENT host's
+// account e-mail, derived on create / reassignment (an edit page echoing the
+// e-mail it loaded must not undo a reassignment).
+const NOT_EDITABLE = ["_id", "id", "__v", "ban", "delist", "hostEmail"];
+
+/** The host account's e-mail (the listing's hostEmail is derived from it). */
+async function hostEmailOf(hostId, session = null) {
+  if (!hostId || !mongoose.isValidObjectId(String(hostId))) return null;
+  const q = User.findById(hostId).select("email").lean();
+  if (session) q.session(session);
+  const u = await q;
+  return u ? u.email : null;
+}
 
 /**
  * An admin's generic listing edit (admin edit page, PUT /prop-listing/:id,
@@ -272,6 +287,7 @@ module.exports = {
   sendPublishError,
   applyAdminListingPatch,
   NOT_EDITABLE,
+  hostEmailOf,
   publishListing,
   createPublishedListing,
   reassignListing,

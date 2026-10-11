@@ -14,6 +14,9 @@
 //                         delisted before delist:"host" was recorded, or set
 //                         inactive by an admin edit; the host cannot relist it
 //                         without an admin approval
+//   hostEmailMismatch     hostEmail differs from the host account's e-mail
+//                         (a reassignment before hostEmail was derived) —
+//                         host e-mails would go to the previous owner
 //   liveWithProvenance    live with a leftover delist value (re-approved before
 //                         approval cleared it) — harmless, cleared on the next
 //                         delist / approve
@@ -43,7 +46,7 @@ async function audit(conn) {
     .find({ _id: { $in: hostIds } }, { projection: { _id: 1, "status.active": 1, "status.banned": 1 } })
     .toArray();
   const byId = new Map(hosts.map((u) => [String(u._id), u]));
-  const out = { bannedHostLive: [], deactivatedHostLive: [], orphanHostLive: [], liveWithBanFlag: [], inactiveNoProvenance: [], liveWithProvenance: [] };
+  const out = { bannedHostLive: [], deactivatedHostLive: [], orphanHostLive: [], liveWithBanFlag: [], inactiveNoProvenance: [], liveWithProvenance: [], hostEmailMismatch: [] };
   for (const l of live) {
     const id = String(l._id);
     if (l.ban === true) out.liveWithBanFlag.push(id);
@@ -57,6 +60,13 @@ async function audit(conn) {
     .find({ status: "inactive", delist: null, ban: { $ne: true } }, { projection: { _id: 1 } })
     .toArray();
   out.inactiveNoProvenance = ambiguous.map((l) => String(l._id));
+  const all = await listings.find({ host: { $ne: null } }, { projection: { _id: 1, host: 1, hostEmail: 1 } }).toArray();
+  const allHostIds = [...new Set(all.map((l) => String(l.host)))].map((id) => new mongoose.Types.ObjectId(id));
+  const emails = new Map((await users.find({ _id: { $in: allHostIds } }, { projection: { _id: 1, email: 1 } }).toArray()).map((u) => [String(u._id), String(u.email || "").toLowerCase()]));
+  for (const l of all) {
+    const e = emails.get(String(l.host));
+    if (e && String(l.hostEmail || "").toLowerCase() !== e) out.hostEmailMismatch.push(String(l._id));
+  }
   const hard = out.bannedHostLive.length + out.deactivatedHostLive.length + out.orphanHostLive.length + out.liveWithBanFlag.length;
   return { counts: Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.length])), ids: out, hardViolations: hard, liveListings: live.length };
 }

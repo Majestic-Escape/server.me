@@ -23,19 +23,22 @@ stays nearby" work; the related-stays rows build on these rules.
 | anyone | today's public view | **stub** (`access: "public"`) |
 | the listing's host | today's response | today's response (`access: "owner"`) |
 | an **active** admin | today's response | today's response (`access: "admin"`) |
-| guest with a confirmed + paid booking (any time; not iCal rows, not host blocks) | today's public view | **operational view** (`access: "bookedGuest"`) |
+| guest with a confirmed + paid booking (any time; not iCal rows, not host blocks — `utils/bookingEntitlement.js`, the one rule for the detail AND booking routes) | today's public view | **narrow view** (`access: "bookedGuest"`); trip facts only per booking |
 
 - **Stub**: `_id`, masked `title`, first photo, `propertyType`, `placeType`,
   `basePrice`, `address.{city,district,state,country}` (no point at all),
   `host.{_id,firstName,profilePicture}`, `averageRating`, `reviewCount`,
   `status`. It covers exactly the fields the chat pages, contact-host, checkout's
   "no longer available" check and the chat server's host check read.
-- **Operational view**: `_id`, title, first photo, type, the address as
-  precise as the route allows (approximate on the detail route; exact for a
-  confirmed + paid guest on the booking routes), check-in / check-out hours,
-  cancellation terms, the house rules **recorded on the booking**
-  (`Booking.listingSnapshot`, captured when the booking is made), the public
-  host fields. Never the current `description`, rules or amenities — a past
+- **Booked-guest view**: `_id`, title, first photo, type, price, the address
+  as precise as the route allows (approximate on the detail route; exact for a
+  confirmed + paid guest on the booking routes), the public host fields.
+  **Trip facts come only with ONE booking** (booking routes): that booking's
+  check-in / check-out hours and house rules (`Booking.listingSnapshot`,
+  captured when the booking is made) and the cancellation terms it is bound by
+  (`Booking.cancellationPolicy` — what refunds are computed from, never the
+  listing's current policy). The detail route carries none: a guest may hold
+  several bookings with different facts. Never the current `description`, rules or amenities — a past
   guest must not read the host's unpublished draft. Bookings made before the
   snapshot existed show no rules (intentional sparse fallback).
 - Both views are **built from the sanitized full document** (masking needs the
@@ -58,6 +61,19 @@ Routes:
 Card reads select `CARD_MASK_CONTEXT` (`address.street`, `line1`, `line2`) next
 to `CARD_PROJECTION` so `sanitizeProperty` can mask a title quoting the
 listing's own address; the sanitizer strips those fields again.
+
+**Current owner, not historical parties.** Full listing rights follow the
+listing's current `host` id: a booking's `hostId` covers the booking record,
+not the (possibly reassigned) listing; owner-scoped lists (`/properties/user-properties/:email`,
+`/prop-listing/?hostEmail=`, `/prop-listing/status`) select by host id — the e-mail
+matches only legacy rows without a host id. `hostEmail` is derived from the host
+account on create and reassignment and is never editable from a request body.
+
+**Contract note (soft auth).** `GET /properties/:id` and the two calendar reads treat a
+missing, invalid, expired or revoked token as anonymous (they were public before;
+a stale browser session must not turn a public page into a 401). This
+replaces the originally proposed optional-auth 401/403 behaviour for these
+routes; `/prop-listing/:id` keeps `authMiddleware.optional` and its codes.
 
 `authz.isAdmin` is false for a deactivated (or banned) admin record — in
 `requireAdmin`, every "host or admin" check, the read policy, booking views and
@@ -109,4 +125,5 @@ explicit authorisation.
 ## Tests
 
 `tests/batch-s/listing-visibility.test.js`, `tests/batch-s/listing-publish.test.js`
-(deterministic interleavings via `listingPublish.__setTestHooks`).
+(deterministic interleavings via `listingPublish.__setTestHooks`),
+`tests/batch-s/listing-review-probes.test.js` (independent review probes, kept).

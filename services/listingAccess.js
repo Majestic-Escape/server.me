@@ -6,26 +6,24 @@
 //   owner        the listing's host
 //   admin        an ACTIVE admin (authz.isAdmin refuses a deactivated one)
 //   bookedGuest  a user with a confirmed, paid guest booking of it (any time;
-//                imported calendar rows and host blocks do not count) — who
-//                still gets only the operational view, never draft text
+//                utils/bookingEntitlement.js) — who gets a narrow view
+//                without draft text or trip facts (those come per booking)
 // and everyone else gets the narrow stub (utils/sanitizeResponse.js).
 //
 // The resolver does the I/O (one indexed Booking read, only on the rare
 // non-public + signed-in + not owner/admin path); the views are pure.
 const Booking = require("../models/Booking");
+const User = require("../models/User");
 const authz = require("../middleware/authz");
 const { isPublicListing } = require("../utils/listingProjection");
+const { paidGuestBookingFilter } = require("../utils/bookingEntitlement");
 const { sanitizeProperty, listingStubView, bookedGuestListingView } = require("../utils/sanitizeResponse");
 
-const PAID_GUEST_BOOKING = { status: "confirmed", paymentStatus: "paid", source: { $ne: "ical" }, action: { $ne: "host" } };
 
-/** The caller's latest confirmed, paid guest booking of the listing (or null). */
+/** Whether the caller holds a confirmed, paid guest booking of the listing. */
 async function paidGuestBooking(actor, listingId) {
   if (!actor || actor.kind !== "user" || !actor.id) return null;
-  return Booking.findOne({ userId: actor.id, propertyId: listingId, ...PAID_GUEST_BOOKING })
-    .sort({ checkIn: -1, _id: -1 })
-    .select("listingSnapshot")
-    .lean();
+  return Booking.exists(paidGuestBookingFilter({ userId: actor.id, propertyId: listingId }));
 }
 
 /**
@@ -48,9 +46,38 @@ async function resolveListingAccess(listing, actor) {
  * @param {Object} listing full document (masking needs it)
  * @param {{ access: string, booking?: Object }} resolved resolveListingAccess result
  */
-function nonPublicView(listing, { access, booking } = {}) {
+function nonPublicView(listing, { access } = {}) {
   const view = sanitizeProperty(listing);
-  return access === "bookedGuest" ? bookedGuestListingView(view, booking && booking.listingSnapshot) : listingStubView(view);
+  // The listing-level view carries no trip facts (hours, rules, terms): a
+  // guest may have several bookings with different ones — those come with
+  // each booking (utils/bookingView.js), never from "the latest" here.
+  return access === "bookedGuest" ? bookedGuestListingView(view, null, { tripFacts: false }) : listingStubView(view);
 }
 
-module.exports = { resolveListingAccess, nonPublicView, paidGuestBooking, PAID_GUEST_BOOKING };
+/**
+ * "The listings of host X" for an owner-scoped read (a host's own portfolio,
+ * an admin looking at one host). Ownership is the listing's `host` id — the
+ * account — never an e-mail: hostEmail is a copy that can go stale (a
+ * listing reassigned to another host must leave the old owner's lists). The
+ * only e-mail match left is for legacy rows that have no host id at all
+ * (they cannot belong to anyone else).
+ * @param {{ hostId?: string|null, email?: string|null }} who
+ * @returns {Object} a Mongo filter (matches nothing when neither is given)
+ */
+function ownedListingsFilter({ hostId, email }) {
+  const or = [];
+  if (hostId) or.push({ host: hostId });
+  const e = typeof email === "string" ? email.trim() : "";
+  if (e) or.push({ host: null, hostEmail: { $in: [...new Set([e, e.toLowerCase()])] } });
+  return or.length ? { $or: or } : { _id: null };
+}
+
+/** The host account behind an e-mail (admin reads by e-mail), or null. */
+async function hostIdForEmail(email) {
+  const e = typeof email === "string" ? email.trim().toLowerCase() : "";
+  if (!e) return null;
+  const u = await User.findOne({ email: e }).select("_id").lean();
+  return u ? String(u._id) : null;
+}
+
+module.exports = { resolveListingAccess, nonPublicView, ownedListingsFilter, hostIdForEmail, paidGuestBooking };

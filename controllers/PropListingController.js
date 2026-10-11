@@ -5,7 +5,7 @@ const {
   sanitizePropertyForOwner,
   SAFE_HOST_SELECT,
 } = require("../utils/sanitizeResponse");
-const { resolveListingAccess, nonPublicView } = require("../services/listingAccess");
+const { resolveListingAccess, nonPublicView, ownedListingsFilter, hostIdForEmail } = require("../services/listingAccess");
 const listingPublish = require("../services/listingPublish");
 const { isPublicListing } = require("../utils/listingProjection");
 const authz = require("../middleware/authz");
@@ -24,11 +24,11 @@ exports.getListingStatus = async (req, res) => {
   try {
     const email = String(req.query.email || "").trim().toLowerCase();
     const actor = req.actor; // resolved by requireSelfEmailQueryOrAdmin
-    const or = [];
-    if (email) or.push({ hostEmail: email });
-    if (actor && actor.kind === "user") or.push({ host: actor.id });
-    const listings = or.length
-      ? await ListingProperty.find({ $or: or }).select("status").lean()
+    // the caller's own listings by account id; an admin asking by e-mail gets
+    // that account's (e-mail matches only legacy rows without a host id)
+    const hostId = actor && actor.kind === "user" ? actor.id : await hostIdForEmail(email);
+    const listings = hostId || email
+      ? await ListingProperty.find(ownedListingsFilter({ hostId, email })).select("status").lean()
       : [];
 
     if (!listings.length) {
@@ -100,7 +100,10 @@ exports.getAllPListings = async (req, res) => {
           statusCode: actor ? 403 : 401,
         });
       }
-      query.hostEmail = hostEmail;
+      // The listings OF that host: by account id (a reassigned listing leaves
+      // the old owner's list), e-mail only for legacy rows without a host id.
+      const hostId = own ? actor.id : await hostIdForEmail(hostEmail);
+      query.$and = [...(query.$and || []), ownedListingsFilter({ hostId, email: hostEmail })];
     }
     // Drafts, listings in review and delisted ones are not public: anyone
     // but an admin or the host listing their own sees active listings only
@@ -215,6 +218,8 @@ exports.createPListing = async (req, res) => {
         throw err;
       }
     } else {
+      // hostEmail is the host account's, never the body's
+      if (doc.host) doc.hostEmail = (await listingPublish.hostEmailOf(doc.host)) || undefined;
       savedListing = await new ListingProperty(doc).save();
     }
     if (savedListing.status === "active") {

@@ -15,6 +15,7 @@
  */
 const crypto = require("crypto");
 const { maskContactInfo, maskContactInfoParts, buildAddressTokens, isAcceptableName } = require("./contactModeration");
+const { cancellationTypeOf } = require("./bookingEntitlement");
 
 // What the counterpart / the public may see of a user (allow-list).
 const PUBLIC_USER_FIELDS = [
@@ -472,18 +473,24 @@ function listingStubView(view) {
 
 /**
  * What the guest of a confirmed, paid booking reads about a listing that is
- * no longer public: the operational facts of the stay (when to arrive and
- * leave, the cancellation terms, where it is — as precise as the caller's
- * sanitizer allowed) and the house rules recorded WHEN THEY BOOKED. Never the
- * listing's current marketing text or a draft the host is editing: a past
- * guest is not a reviewer of the next version. Bookings made before the
- * snapshot existed carry no rules here (an intentional sparse fallback).
+ * no longer public: where it is (as precise as the caller's sanitizer
+ * allowed), what it is, and — only in the context of ONE booking — that
+ * booking's operational facts: check-in / check-out hours and house rules
+ * recorded when it was made (Booking.listingSnapshot) and the cancellation
+ * terms the booking is actually bound by (Booking.cancellationPolicy, what
+ * refunds are computed from — never the listing's current policy). Never the
+ * listing's current marketing text or a draft the host is editing.
+ *   tripFacts: false — the listing-level view (GET /properties/:id): a guest
+ *   may hold several bookings with different facts, so none are shown there.
+ * Bookings made before the snapshot existed show no rules (intentional sparse
+ * fallback) and the listing's current hours.
  * @param {Object} view sanitizeProperty / sanitizePropertyForBookedGuest output
- * @param {Object} [snapshot] Booking.listingSnapshot
+ * @param {{ listingSnapshot?: Object, cancellationPolicy?: string }|null} booking
+ * @param {{ tripFacts?: boolean }} [opts]
  */
-function bookedGuestListingView(view, snapshot) {
+function bookedGuestListingView(view, booking, { tripFacts = true } = {}) {
   if (!view) return view;
-  const snap = snapshot && typeof snapshot === "object" ? snapshot : null;
+  const snap = booking && booking.listingSnapshot && typeof booking.listingSnapshot === "object" ? booking.listingSnapshot : null;
   const out = {
     _id: view._id,
     title: view.title,
@@ -495,16 +502,18 @@ function bookedGuestListingView(view, snapshot) {
     address: view.address && typeof view.address === "object" ? { ...view.address } : view.address,
     line1: view.line1,
     line2: view.line2,
-    checkinTime: snap && snap.checkinTime !== undefined ? snap.checkinTime : view.checkinTime,
-    checkoutTime: snap && snap.checkoutTime !== undefined ? snap.checkoutTime : view.checkoutTime,
-    cancellationType: snap && snap.cancellationType !== undefined ? snap.cancellationType : view.cancellationType,
-    selectedRules: snap ? snap.selectedRules : undefined,
-    customRules: snap ? snap.customRules : undefined,
     host: stubHost(view.host),
     averageRating: view.averageRating,
     reviewCount: view.reviewCount,
     status: view.status,
   };
+  if (tripFacts) {
+    out.checkinTime = snap && snap.checkinTime !== undefined ? snap.checkinTime : view.checkinTime;
+    out.checkoutTime = snap && snap.checkoutTime !== undefined ? snap.checkoutTime : view.checkoutTime;
+    out.cancellationType = cancellationTypeOf(booking && booking.cancellationPolicy) || (snap ? snap.cancellationType : undefined);
+    out.selectedRules = snap ? snap.selectedRules : undefined;
+    out.customRules = snap ? snap.customRules : undefined;
+  }
   for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
   return out;
 }

@@ -126,6 +126,7 @@ test("verify: signature, order/payment relationship, amount, currency and status
 
 test("verification is idempotent: replay, concurrent replay, and callback+webhook race apply once", async () => {
   const { booking } = await freshBooking();
+  h.resetEmails();
   const order = (await createOrder(booking)).body.data;
   const payment = fakePayment(order);
   const webhookBody = JSON.stringify({ event: "payment.captured", payload: { payment: { entity: payment } } });
@@ -146,13 +147,15 @@ test("verification is idempotent: replay, concurrent replay, and callback+webhoo
   const r = await verify(order, p2);
   assert.equal(r.status, 409);
   assert.equal(r.body.code, "PAYMENT_STATE");
-  // the legacy post-payment notification call sends emails exactly once
-  h.resetEmails();
+  // The booking e-mails go out exactly once overall: the webhook starts them
+  // (in the background) and the guest's legacy post-payment call finds them sent.
+  for (let i = 0; i < 30 && h.sentEmails().length < 4; i++) await h.sleep(100);
   const n1 = await h.api("POST", "/booking/updateStatus", { token: T, body: { bookingId: booking._id, userId: String(U._id), manual: false, payment: pay._id } });
   const n2 = await h.api("POST", "/booking/updateStatus", { token: T, body: { bookingId: booking._id, userId: String(U._id), manual: false, payment: pay._id } });
   assert.equal(n1.status, 200, JSON.stringify(n1.body));
   assert.equal(n2.status, 200);
   assert.equal(n2.body.alreadyNotified, true);
+  await h.sleep(300);
   const sent = h.sentEmails();
   assert.equal(sent.length, 4, JSON.stringify(sent)); // host 34, user 35, 2 admins 36
   assert.deepEqual(sent.map((e) => e.templateId).sort(), [34, 35, 36, 36]);

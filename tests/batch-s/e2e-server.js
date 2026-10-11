@@ -286,6 +286,24 @@ async function main() {
         ).lean();
         return res.end(JSON.stringify({ id: String(form._id), status: form.status }));
       }
+      // POST /kyc { mode?, cooldownSeconds?, maxPerDay?, reset? } → the KYC provider
+      // mock's answer (services/kycProvider.js modes) and the attempt guard's limits,
+      // read per request; reset puts the seeded host's document step back to
+      // "nothing uploaded yet" with no attempts used.
+      if (req.url === "/kyc") {
+        if (json.mode) process.env.KYC_PROVIDER_MOCK_MODE = json.mode;
+        if (json.cooldownSeconds !== undefined) process.env.KYC_ATTEMPT_COOLDOWN_SECONDS = String(json.cooldownSeconds);
+        if (json.maxPerDay !== undefined) process.env.KYC_MAX_ATTEMPTS_PER_DAY = String(json.maxPerDay);
+        const KycHostData = require("../../models/KycHostForm");
+        if (json.reset) {
+          await KycHostData.updateOne(
+            { hostId: HOST._id },
+            { $set: { status: "processing", documentInfo: { documentType: "pan", isVerified: false } }, $unset: { verification: 1 } },
+          );
+        }
+        const form = await KycHostData.findOne({ hostId: HOST._id }).select("status documentInfo verification").lean();
+        return res.end(JSON.stringify({ mode: process.env.KYC_PROVIDER_MOCK_MODE, form }));
+      }
       if (req.url === "/set-price") {
         await ListingProperty.updateOne({ _id: json.listingId }, { $set: { basePrice: json.basePrice } });
         return res.end(JSON.stringify({ ok: true }));

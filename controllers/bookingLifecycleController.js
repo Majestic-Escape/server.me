@@ -12,7 +12,8 @@ const Payment = require("../models/Payment");
 const ListingProperty = require("../models/ListingProperty");
 const inventory = require("../services/inventory");
 const { quoteStay, zeroQuote } = require("../services/pricing");
-const { refundBookingPayment, PaymentError } = require("../services/payments");
+const { refundBookingPayment, PaymentError, commitmentRefusal } = require("../services/payments");
+const calendarSync = require("../services/calendarSync");
 const notify = require("../services/bookingNotifications");
 const attention = require("../services/attention");
 const authz = require("../middleware/authz");
@@ -39,6 +40,19 @@ const flexibleSeconds = Number(process.env.FLEXIBLE_POLICY_DAYS) * 60 * 60; // (
 
 function fail(res, status, code, message, extra = {}) {
   return res.status(status).json({ success: false, code, message, statusCode: status, ...extra });
+}
+
+// SyncGuard (docs/syncguard.md §6): a row imported from an OTA calendar
+// mirrors a booking Majestic does not own. Cancelling or deleting it here
+// would reopen nights the OTA still sells as booked — and nothing would put
+// them back, because the OTA's feed has not changed. It ends when the OTA
+// cancels it, or by the host's explicit release under Calendar sync.
+const IMPORTED_SOURCES = ["ical", "ical_parked"];
+const IMPORTED_MESSAGE = "This stay comes from a connected booking site. Cancel it on that site — Majestic then frees the dates automatically — or release the dates under Calendar → Calendar sync.";
+function refuseImported(res, booking) {
+  if (!booking || !IMPORTED_SOURCES.includes(booking.source)) return false;
+  fail(res, 409, "EXTERNAL_BOOKING", IMPORTED_MESSAGE);
+  return true;
 }
 function handleError(res, err, fallback = "Request failed") {
   if (err instanceof PaymentError) return fail(res, err.status, err.code, err.message, err.extra);
@@ -185,6 +199,19 @@ exports.createBooking = async (req, res) => {
       if (replay) return res.status(200).json({ success: true, data: replay, replayed: true });
     }
 
+    // SyncGuard (docs/syncguard.md §7): re-verify the listing's connected OTA
+    // calendars before taking inventory. An OTA booking found now claims its
+    // nights first (the reservation below then answers 409); a calendar that
+    // cannot be verified refuses the booking — Majestic does not sell a
+    // single-unit night it cannot check. Host blocks need no check.
+    if (!isHostBlock) {
+      const verified = await calendarSync.ensureVerified(listing._id, { context: "create_booking", checkOut });
+      if (!verified.ok) {
+        const r = commitmentRefusal(verified);
+        return fail(res, 409, r.code, r.message, { channels: verified.channels });
+      }
+    }
+
     const bookingId = new mongoose.Types.ObjectId();
     const reserved = await inventory.reserveNights({
       propertyId: listing._id,
@@ -238,6 +265,8 @@ exports.createBooking = async (req, res) => {
           return res.status(200).json({ success: true, data: own, replayed: true });
         }
       }
+      // SyncGuard metric: a direct booking stopped by an imported OTA booking.
+      if (reserved.conflicts.some((c) => c.kind === "ical")) calendarSync.recordPrevented(listing._id);
       return fail(res, 409, "DATES_UNAVAILABLE", "Selected dates overlap with an existing booking");
     }
 
@@ -432,6 +461,7 @@ async function cancelCore({ req, res, bookingId, allowed, nextStatus, refund, no
   const booking = await loadBooking(res, bookingId);
   if (!booking) return;
   if (!allowed(actor, booking)) return authz.forbid(res);
+  if (refuseImported(res, booking)) return;
   if (TERMINAL.includes(booking.status)) {
     return fail(res, 409, "ALREADY_CLOSED", `Booking is already ${booking.status}`);
   }
@@ -584,6 +614,7 @@ exports.deleteBooking = async (req, res) => {
     if (rejectInvalidId(res, req.params.bookingId, "bookingId")) return;
     const booking = await Booking.findById(req.params.bookingId);
     if (!booking) return fail(res, 404, "BOOKING_NOT_FOUND", "Booking not found");
+    if (refuseImported(res, booking)) return;
     if (booking.paymentStatus === "paid" && booking.action === "user") {
       return fail(res, 409, "PAID_BOOKING", "Refund/cancel the booking before deleting it");
     }
@@ -649,6 +680,15 @@ exports.resolveAttention = async (req, res) => {
       return fail(res, 400, "VALIDATION", 'resolution must be "keep" or "dismiss"');
     }
     const manualListing = !!(booking.propertyId && booking.propertyId.bookingType && booking.propertyId.bookingType.manual);
+    // SyncGuard: "keep" that (re-)secures nights commits a guest like a
+    // payment does — the listing's OTA calendars are re-read first (money-
+    // moment window), so a night an OTA sold since the last read is caught.
+    // ("keep" of an ota_conflict changes no night: the booking already holds them.)
+    if (req.body.resolution === "keep" && booking.needsAttention && booking.needsAttention !== "ota_conflict") {
+      const listingId = booking.propertyId && booking.propertyId._id ? booking.propertyId._id : booking.propertyId;
+      const verified = await calendarSync.ensureVerified(listingId, { context: "admin_modify", checkOut: booking.checkOut });
+      if (!verified.ok) return fail(res, 409, verified.code, verified.code === "BEYOND_SYNC_HORIZON" ? "These dates are beyond the two years the listing's booking sites are checked for." : "The listing's connected booking sites could not be re-checked just now. Try again in a few minutes.", { channels: verified.channels });
+    }
     const result = await attention.resolve({ booking, resolution: req.body.resolution, manualListing, actorId: actor.id });
     if (!result.ok) return fail(res, result.code === "DATES_UNAVAILABLE" ? 409 : 400, result.code, result.code === "DATES_UNAVAILABLE" ? "The nights are still taken by another booking" : "Invalid resolution");
     const fresh = await Booking.findById(booking._id).populate(POPULATE);

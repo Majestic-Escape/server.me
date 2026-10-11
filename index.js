@@ -178,9 +178,13 @@ const connectDB = async () => {
         require("./models/Booking").init(),
       ]).catch((err) => console.error("[startup] index build error:", err.message));
       await verifyRequiredIndexes();
+      await require("./services/startupChecks").verifySyncGuardIndexes();
     } catch (err) {
       console.error("[startup] index verification failed:", err.message);
     }
+    // SyncGuard: an in-process clock only on long-running hosts that opt in
+    // (SYNC_INPROCESS_INTERVAL_MS); never on Vercel (docs/syncguard.md §5).
+    require("./services/calendarSync").startTicker();
   } catch (err) {
     console.error(`Error connecting to MongoDB: ${err.message}`);
     process.exit(1); // Exit process with failure

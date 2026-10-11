@@ -99,6 +99,8 @@ const bookingSchema = new mongoose.Schema({
   holdExpiresAt: { type: Date, default: null },
   // Optional client-supplied Idempotency-Key (unique when present).
   idempotencyKey: { type: String, default: undefined },
+  // SyncGuard: when an admin last moved the stay's dates (echo evidence)
+  datesChangedAt: { type: Date, default: undefined },
   // Side effects that must happen exactly once.
   notifications: {
     paidAt: { type: Date, default: null },
@@ -114,6 +116,60 @@ const bookingSchema = new mongoose.Schema({
   attentionDetails: { type: mongoose.Schema.Types.Mixed, default: null },
   attentionResolvedAt: { type: Date, default: null },
   attentionResolution: { type: String, default: null },
+  // --- SyncGuard (docs/syncguard.md §2.2): provenance of an imported
+  // (source: "ical") row. One row per (connection, external key); the
+  // availability readers keep using status/paymentStatus exactly as before.
+  external: {
+    type: new mongoose.Schema(
+      {
+        connectionId: { type: mongoose.Schema.Types.ObjectId, ref: "ExternalCalendar" },
+        channel: String,
+        key: String, // UID, or UID#date for recurrences / split duplicates
+        uid: String,
+        // blocking: active | missing (absent, awaiting confirmation) |
+        //           orphaned (its connection was disconnected; kept until the host releases it)
+        // released: cancelled | removed | released
+        state: String,
+        kind: String, // reserved | blocked | unknown (provider hint)
+        fingerprint: String,
+        firstSeenAt: Date,
+        lastChangedAt: Date,
+        missingSince: Date,
+        missingSyncs: Number,
+        missingMass: Boolean,
+        // kept blocking while absent until the host confirms (the link was
+        // replaced without the host saying so — legacy endpoint)
+        hostHold: Boolean,
+        releasedAt: Date,
+        releaseReason: String,
+        // Possible echo (services/calendarSync/echo.js): still blocks and
+        // still conflicts; only withheld from propagation.
+        echo: {
+          suspect: Boolean,
+          since: Date,
+          uncoveredSince: Date,
+          promotedAt: Date,
+        },
+        conflict: {
+          at: Date,
+          kind: String, // paid_booking | external_overlap
+          withBookingIds: [mongoose.Schema.Types.ObjectId],
+          nights: [String],
+          // a possible echo carrying a verified provider block marker
+          // (Airbnb "Not available"): shown to the host, no alert e-mail
+          likelyMirror: Boolean,
+          notifiedAt: Date,
+          // every paid booking it collides with is in the admin queue
+          adminFlaggedAt: Date,
+          // the paid bookings already in the admin queue for this conflict
+          adminFlaggedFor: { type: [mongoose.Schema.Types.ObjectId], default: undefined },
+        },
+        rev: { type: Number, default: 0 },
+      },
+      { _id: false },
+    ),
+    default: undefined,
+  },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
@@ -121,6 +177,12 @@ const bookingSchema = new mongoose.Schema({
 bookingSchema.index({ idempotencyKey: 1 }, { unique: true, sparse: true });
 bookingSchema.index({ propertyId: 1, checkIn: 1, checkOut: 1 });
 bookingSchema.index({ needsAttention: 1 }, { partialFilterExpression: { needsAttention: { $type: "string" } } });
+// SyncGuard: one row per external event per connection (database invariant).
+// Created by scripts/syncguard-migrate.js --create-indexes.
+bookingSchema.index(
+  { "external.connectionId": 1, "external.key": 1 },
+  { unique: true, name: "external_connection_key", partialFilterExpression: { "external.connectionId": { $exists: true } } },
+);
 
 const Booking = mongoose.model("Booking", bookingSchema);
 

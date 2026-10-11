@@ -1,0 +1,49 @@
+# SyncGuard external clock (docs/syncguard.md §5).
+#
+# The backend runs on Vercel Hobby, whose cron fires at most once a day, so
+# this free GitHub schedule (public repo) pokes the calendar sweep every
+# 10 minutes. It is ONE of several triggers — none is authoritative:
+# GitHub may delay or drop scheduled runs (busy at the top of the hour,
+# disabled after 60 days without repository activity); the scheduler
+# heartbeat makes that visible (GET /calendarSync/admin/overview).
+#
+# Runs only from the default branch. Inert until the owner sets:
+#   secret   CALENDAR_SYNC_CRON_SECRET  (same value as the backend env var;
+#            scoped: it cannot trigger payouts — never use CRON_SECRET here)
+#   variable SYNCGUARD_SWEEP_URL        e.g. https://server.majesticescape.in/api/v1/calendarSync/cron/sweep
+name: calendar-sync-clock
+
+on:
+  schedule:
+    - cron: "7,17,27,37,47,57 * * * *" # off the top of the hour
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: calendar-sync-clock
+  cancel-in-progress: false
+
+jobs:
+  poke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Trigger the due-connection sweep
+        env:
+          SECRET: ${{ secrets.CALENDAR_SYNC_CRON_SECRET }}
+          URL: ${{ vars.SYNCGUARD_SWEEP_URL }}
+        run: |
+          if [ -z "$SECRET" ] || [ -z "$URL" ]; then
+            echo "::notice::SyncGuard clock not configured (secret/variable missing) — nothing to do"
+            exit 0
+          fi
+          code=$(curl -sS -o /tmp/out.json -w '%{http_code}' --max-time 90 \
+            -H "Authorization: Bearer $SECRET" "$URL?source=github")
+          echo "HTTP $code"
+          # This repository is public, and so are its Actions logs: print only
+          # whether the sweep worked — never counters (they reveal how many
+          # calendars Majestic has), headers or the secret. Details live in
+          # the admin overview.
+          node -e 'try{const j=require("/tmp/out.json");const s=j.summary||{};console.log(JSON.stringify({success:!!j.success,anyFailed:(s.failed||0)>0,budgetExhausted:!!s.budgetExhausted}))}catch(e){console.log("non-JSON response")}'
+          test "$code" = "200"

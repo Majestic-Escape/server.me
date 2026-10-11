@@ -17,6 +17,7 @@
 // expiring holds behind, never a permanent block.
 const mongoose = require("mongoose");
 const BookingNight = require("../models/BookingNight");
+const Booking = require("../models/Booking");
 
 const DAY_MS = 86_400_000;
 // Product behaviour (docs §12): a checkout holds its nights for this long.
@@ -59,15 +60,23 @@ function isDuplicateKeyError(err) {
 //   kind: "booking" (hold, expires) | "block" | "ical" (permanent)
 // Returns { ok: true } or { ok: false, conflicts: [BookingNight rows] }.
 // On conflict nothing of ours is left behind.
-async function reserveNights({ propertyId, nights, bookingId, kind = "booking", now = new Date() }) {
+// permanent: insert without an expiry (a booking that is already paid, e.g.
+// an admin date move) so no window exists in which it looks like a hold.
+async function reserveNights({ propertyId, nights, bookingId, kind = "booking", now = new Date(), permanent = false }) {
   if (!nights.length) return { ok: true };
   const pid = new mongoose.Types.ObjectId(propertyId);
-  // 1. Expired holds on the wanted nights are dead weight: reclaim them.
-  await BookingNight.deleteMany({
-    propertyId: pid,
-    date: { $in: nights },
-    expiresAt: { $ne: null, $lte: now },
-  });
+  // 1. Expired holds on the wanted nights are dead weight: reclaim them —
+  //    except rows of a booking that is already PAID (a crash between
+  //    "paid" and making its nights permanent): those are a stay, not a hold.
+  const expired = await BookingNight.find({ propertyId: pid, date: { $in: nights }, expiresAt: { $ne: null, $lte: now } }).select("_id bookingId").lean();
+  if (expired.length) {
+    const others = [...new Set(expired.map((r) => String(r.bookingId)).filter((id) => id !== String(bookingId)))];
+    const paid = new Set(
+      others.length ? (await Booking.find({ _id: { $in: others }, paymentStatus: "paid", status: { $nin: ["cancelled", "rejected"] } }).select("_id").lean()).map((b) => String(b._id)) : [],
+    );
+    const dead = expired.filter((r) => !paid.has(String(r.bookingId))).map((r) => r._id);
+    if (dead.length) await BookingNight.deleteMany({ _id: { $in: dead }, expiresAt: { $ne: null, $lte: now } });
+  }
   // 2. Insert our rows. `ordered: false` inserts every free night and reports
   //    the taken ones as duplicate-key errors.
   const docs = nights.map((date) => ({
@@ -75,10 +84,24 @@ async function reserveNights({ propertyId, nights, bookingId, kind = "booking", 
     date,
     bookingId,
     kind,
-    expiresAt: kind === "booking" ? holdExpiry(now) : null,
+    expiresAt: kind === "booking" && !permanent ? holdExpiry(now) : null,
   }));
   try {
     await BookingNight.insertMany(docs, { ordered: false });
+    // 3'. SyncGuard (docs/syncguard.md §6): an imported OTA booking blocks its
+    //     nights even when it does not own them in this ledger (a night it
+    //     shares with a host block or a booking that has since been
+    //     released). Every caller — Confirm, Pay (secureHold/securePermanent),
+    //     admin keep / date moves — goes through here, so the check lives here.
+    //     Host blocks are exempt: blocking a night someone already blocks can
+    //     never double-book it.
+    if (kind === "booking") {
+      const imported = await importedOverlap(pid, nights, bookingId);
+      if (imported) {
+        await BookingNight.deleteMany({ bookingId });
+        return { ok: false, conflicts: [{ bookingId: imported._id, propertyId: pid, kind: "ical", date: null }] };
+      }
+    }
     return { ok: true };
   } catch (err) {
     if (!isDuplicateKeyError(err)) {
@@ -93,6 +116,40 @@ async function reserveNights({ propertyId, nights, bookingId, kind = "booking", 
     }).lean();
     return { ok: false, conflicts };
   }
+}
+
+// A live imported booking (any connection, incl. rows parked for a rollback)
+// whose nights intersect `nights`. Nights are UTC days: a row covers
+// [utcDay(checkIn), utcDay(checkOut)), so it overlaps [first, last] iff
+// checkIn < last + 1 day and checkOut ≥ first + 1 day.
+//
+// One exception: a possible echo that SyncGuard linked to THIS booking when
+// it arrived (it collided with this booking's own nights — the OTA mirroring
+// the Majestic booking back) does not stop this booking from being kept or
+// moved. A genuine import, or a possible echo of any other booking, still
+// blocks; a booking being created has no link yet.
+async function importedOverlap(propertyId, nights, bookingId) {
+  if (!nights.length) return null;
+  const pid = new mongoose.Types.ObjectId(String(propertyId));
+  const first = nights[0].getTime();
+  const last = nights[nights.length - 1].getTime();
+  const rows = await Booking.find({
+    propertyId: pid,
+    _id: { $ne: bookingId },
+    source: { $in: ["ical", "ical_parked"] },
+    status: { $nin: ["cancelled", "rejected"] },
+    checkIn: { $lt: new Date(last + DAY_MS) },
+    checkOut: { $gte: new Date(first + DAY_MS) },
+  })
+    .select("_id external.echo.suspect external.conflict.withBookingIds")
+    .lean();
+  const own = String(bookingId);
+  const mirrorsThisBooking = (r) => {
+    const ext = r.external || {};
+    const linked = (ext.conflict && ext.conflict.withBookingIds) || [];
+    return !!(ext.echo && ext.echo.suspect) && linked.some((id) => String(id) === own);
+  };
+  return rows.find((r) => !mirrorsThisBooking(r)) || null;
 }
 
 // Rows for an iCal import may legitimately collide with local bookings (the
@@ -140,16 +197,35 @@ async function releaseNights(bookingId) {
 // long as its dates are free — exactly the pre-S behaviour — and refused
 // only when someone else actually holds them.
 async function secureHold({ propertyId, bookingId, nights, now = new Date() }) {
-  if (await extendHold({ bookingId, nights, now })) return { ok: true, extended: true };
+  if (await extendHold({ bookingId, nights, now })) {
+    // SyncGuard: an OTA booking can share a night with a live hold (its
+    // displacement lost a race with this very extension). Never let money
+    // move for such a night: give the hold up and refuse.
+    const pid = new mongoose.Types.ObjectId(String(propertyId));
+    const imported = await importedOverlap(pid, nights, bookingId);
+    if (imported) {
+      await BookingNight.deleteMany({ bookingId });
+      return { ok: false, conflicts: [{ bookingId: imported._id, propertyId: pid, kind: "ical", date: null }] };
+    }
+    return { ok: true, extended: true };
+  }
   const reserved = await reserveNights({ propertyId, nights, bookingId, kind: "booking", now });
   return reserved.ok ? { ok: true, extended: false } : reserved;
 }
 
 // After a payment is confirmed: make our nights permanent, taking any we
 // no longer hold if they are free. Returns { ok } or { ok: false, conflicts }.
+// A live imported booking on any of the nights is a conflict even when the
+// nights are ours (SyncGuard): the caller queues the booking for a human
+// instead of confirming it silently.
 async function securePermanent({ propertyId, bookingId, nights, now = new Date() }) {
   const kept = await finalizeNights({ bookingId, nights });
-  if (kept === nights.length) return { ok: true };
+  if (kept === nights.length) {
+    const pid = new mongoose.Types.ObjectId(String(propertyId));
+    const imported = await importedOverlap(pid, nights, bookingId);
+    if (imported) return { ok: false, conflicts: [{ bookingId: imported._id, propertyId: pid, kind: "ical", date: null }] };
+    return { ok: true };
+  }
   const reserved = await reserveNights({ propertyId, nights, bookingId, kind: "booking", now });
   if (!reserved.ok) return reserved;
   await finalizeNights({ bookingId, nights });
@@ -170,4 +246,5 @@ module.exports = {
   secureHold,
   securePermanent,
   isDuplicateKeyError,
+  importedOverlap,
 };

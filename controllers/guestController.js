@@ -10,6 +10,7 @@
 const mongoose = require("mongoose");
 const ListingProperty = require("../models/ListingProperty");
 const { notifyListingChanged } = require("../services/listingChanged");
+const listingPublish = require("../services/listingPublish");
 const User = require("../models/User");
 const { parseListQuery, listMeta, pageStages } = require("../utils/listQuery");
 const KycHostData = require("../models/KycHostForm");
@@ -241,27 +242,35 @@ async function purgeRenamedHost(userId) {
 }
 
 // PATCH /guests/ban/:userId  { active } — active=true bans, false unbans.
+// The account and its listings change in ONE transaction that also fences the
+// host against a concurrent publish (services/listingPublish.js): a banned
+// host never keeps — or gets — a live listing, even if this request dies
+// half-way. Unban restores the listings the ban took down, except any an admin
+// delisted meanwhile.
 exports.banUser = async (req, res) => {
   const { userId } = req.params;
   const { active } = req.body || {};
+  // a missing or non-boolean flag used to mean "unban" by truthiness
+  if (typeof active !== "boolean") return fail(res, 400, "INVALID_BAN_FLAG", "active must be true (ban) or false (unban)");
   try {
-    const user = await User.findById(userId);
-    if (!user) return fail(res, 404, "USER_NOT_FOUND", "User not found");
-    // Batch P: the listings this flips were (or become) public — purge the
-    // catalogue caches for exactly those ids.
-    const affected = await ListingProperty.distinct("_id", active ? { host: userId, status: "active" } : { host: userId, ban: true });
-    if (active) {
-      user.status.active = false;
-      user.status.banned = true;
-      user.tokenVersion += 1;
-      await ListingProperty.updateMany({ host: userId, status: "active" }, { status: "inactive", ban: true });
-    } else {
-      user.status.active = true;
-      user.status.banned = false;
-      await ListingProperty.updateMany({ host: userId, ban: true }, { status: "active", ban: false });
+    let result;
+    try {
+      result = active ? await listingPublish.banHost(userId) : await listingPublish.unbanHost(userId);
+    } catch (err) {
+      if (err instanceof listingPublish.PublishError) return fail(res, err.status, err.code, err.message);
+      throw err;
     }
-    await user.save();
-    if (affected.length) await notifyListingChanged(affected, active ? "ban" : "unban");
+    const { user, affected } = result;
+    // Batch P: the listings this flipped were (or become) public — purge the
+    // catalogue caches for exactly those ids (after the commit; a purge
+    // failure never undoes the ban).
+    if (affected.length) {
+      try {
+        await notifyListingChanged(affected, active ? "ban" : "unban");
+      } catch (err) {
+        console.error("ban notify failed", err && err.message);
+      }
+    }
     res.status(200).json({ success: true, message: active ? "User banned successfully" : "User unbanned successfully", data: { _id: user._id, status: user.status } });
   } catch (err) {
     console.error("banUser error", err && err.message);

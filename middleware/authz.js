@@ -74,8 +74,7 @@ const requireAdmin = async (req, res, next) => {
   if (actor.kind !== "admin") return forbid(res, "Admin access required");
   // A deactivated account keeps no admin rights, whatever token it still
   // holds (sign-in already refuses it; this closes the tokens issued before).
-  const record = actor.admin || actor.user;
-  if (record && record.status && record.status.active === false) return forbid(res, "This admin account is deactivated");
+  if (!isAdmin(actor)) return forbid(res, "This admin account is deactivated");
   next();
 };
 
@@ -89,8 +88,13 @@ const requireUser = async (req, res, next) => {
 
 // Object-level checks (call after the booking/listing is loaded) ----------
 
+// An admin actor whose account is deactivated (or banned) holds no admin
+// rights anywhere — not only behind requireAdmin: the object-level checks
+// ("host or admin", the listing read policy, booking views) use this too.
 function isAdmin(actor) {
-  return !!actor && actor.kind === "admin";
+  if (!actor || actor.kind !== "admin") return false;
+  const record = actor.admin || actor.user;
+  return !(record && record.status && (record.status.active === false || record.status.banned === true));
 }
 function isBookingGuest(actor, booking) {
   return !!actor && actor.kind === "user" && sameId(actor.id, booking.userId);

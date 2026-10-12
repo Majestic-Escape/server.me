@@ -13,6 +13,9 @@ const userSchema = new mongoose.Schema(
       required: true,
     },
     tokenVersion: { type: Number, default: 0 },
+    // Serialises ban / unban / publish of this host's listings: every such
+    // transaction writes it first (services/listingPublish.js). Internal only.
+    listingFence: { type: Number, default: 0 },
     about: { type: String },
     languages: { type: [String], default: [] },
     isVerified: { type: Boolean, default: false },

@@ -19,6 +19,7 @@ const attention = require("../services/attention");
 const authz = require("../middleware/authz");
 const { isObjectId, rejectInvalidId } = require("../middleware/validateObjectId");
 const { bookingForActor } = require("../utils/bookingView");
+const { bookingListingSnapshot } = require("../utils/sanitizeResponse");
 const { detectContactInParts } = require("../utils/contactModeration");
 
 // Product limits are OFF unless configured: neither the pre-S backend nor the
@@ -157,7 +158,8 @@ exports.createBooking = async (req, res) => {
     if (isHostBlock && !authz.isListingHost(actor, listing)) {
       return fail(res, 403, "FORBIDDEN", "Only the listing's host can block dates");
     }
-    if (!isHostBlock && listing.status !== "active") {
+    // only a public listing (live, not under a moderation ban) is bookable
+    if (!isHostBlock && (listing.status !== "active" || listing.ban === true)) {
       return fail(res, 409, "LISTING_INACTIVE", "This stay is no longer available for booking");
     }
 
@@ -315,6 +317,8 @@ exports.createBooking = async (req, res) => {
       },
       holdExpiresAt: isHostBlock ? null : inventory.holdExpiry(),
       idempotencyKey: idemKey ? `${actor.id}:${idemKey}` : undefined,
+      // what the guest is booking under (docs/listing-visibility.md)
+      listingSnapshot: isHostBlock ? undefined : bookingListingSnapshot(listing),
     });
     try {
       await booking.save();

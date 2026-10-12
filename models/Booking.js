@@ -95,6 +95,13 @@ const bookingSchema = new mongoose.Schema({
     totalPaise: Number,
     currency: { type: String, default: "INR" },
   },
+  // The house facts the guest booked under (check-in / check-out hours,
+  // cancellation terms, rules — masked as guests saw them), taken from the
+  // listing's public view when the booking is made. A guest of a listing that
+  // is no longer public reads these instead of the current, possibly
+  // unpublished, listing text (docs/listing-visibility.md). Absent on
+  // bookings made before it existed and on host blocks.
+  listingSnapshot: { type: mongoose.Schema.Types.Mixed, default: undefined },
   // While unpaid, the reserved nights are a hold that expires at this time.
   holdExpiresAt: { type: Date, default: null },
   // Optional client-supplied Idempotency-Key (unique when present).

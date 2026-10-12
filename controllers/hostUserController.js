@@ -360,24 +360,9 @@ exports.getHostEarnings = async (req, res) => {
   }
 };
 
-exports.toggleHostStatus = async (req, res) => {
-  try {
-    const host = await User.findById(req.params.id);
-    if (!host) {
-      return res.status(404).json({ message: "Host not found" });
-    }
-    host.status.active = !host.status.active;
-    await host.save();
-    res.status(200).json({
-      message: "Host status updated",
-      status: host.status.active ? "Active" : "Inactive",
-    });
-  } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Error toggling host status", error: error.message });
-  }
-};
+// toggleHostStatus was removed: it was never routed, and flipping
+// status.active without the ban flow (services/listingPublish.js) left a
+// "deactivated" host with live listings. Bans go through PATCH /guests/ban/:id.
 
 exports.notifyHost = async (req, res) => {
   try {
@@ -407,38 +392,8 @@ exports.notifyHost = async (req, res) => {
   }
 };
 
-exports.bulkAction = async (req, res) => {
-  try {
-    const { action, hostIds } = req.body;
-    let result;
-
-    switch (action) {
-      case "activate":
-        result = await User.updateMany(
-          { _id: { $in: hostIds } },
-          { "status.active": true }
-        );
-        break;
-      case "deactivate":
-        result = await User.updateMany(
-          { _id: { $in: hostIds } },
-          { "status.active": false }
-        );
-        break;
-      case "delete":
-        result = await User.deleteMany({ _id: { $in: hostIds } });
-        break;
-      default:
-        return res.status(400).json({ message: "Invalid action" });
-    }
-
-    res.status(200).json({ message: "Bulk action completed", result });
-  } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Error performing bulk action", error: error.message });
-  }
-};
+// bulkAction (activate / deactivate / delete hosts) was removed: never routed,
+// and its activate/deactivate bypassed the ban flow the same way.
 exports.getSingleHostById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -510,6 +465,18 @@ exports.getHostById = async (req, res) => {
 exports.updateHost = async (req, res) => {
   try {
     const { firstName, lastName, email, status } = req.body;
+    // An account's standing changes only through the ban flow
+    // (PATCH /guests/ban/:id), which takes the host's listings down with it in
+    // one transaction. Writing status.active here left a "deactivated" host
+    // whose listings stayed public. Refused before anything is changed.
+    if (status !== undefined) {
+      return res.status(400).json({
+        success: false,
+        code: "STATUS_NOT_EDITABLE",
+        message: "Use the ban / unban action to change an account's status",
+        statusCode: 400,
+      });
+    }
 
     const host = await User.findOne({
       _id: req.params.id,
@@ -526,12 +493,15 @@ exports.updateHost = async (req, res) => {
     // Update host details
     host.firstName = firstName || host.firstName;
     host.lastName = lastName || host.lastName;
+    const emailChanged = !!email && String(email).toLowerCase() !== String(host.email).toLowerCase();
     host.email = email || host.email;
-    if (status !== undefined) {
-      host.status.active = status === "Active";
-    }
 
     await host.save();
+    // The listings' hostEmail copy follows the account (notifications already
+    // resolve the account address; this keeps admin lists and exports right).
+    if (emailChanged) {
+      await ListingProperty.updateMany({ host: host._id }, { $set: { hostEmail: host.email } });
+    }
 
     const listingsCount = await ListingProperty.countDocuments({
       host: host._id,

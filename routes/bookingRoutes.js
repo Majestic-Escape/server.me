@@ -23,7 +23,9 @@ router.get("/", ...admin, bookingController.getAllBookings);
 
 // Host analytics (scoped to the caller)
 router.get("/filter", ...auth, bookingController.getAnalyticsFilterBookings);
-router.get("/blocked-dates/:propertyId", validateParam("propertyId"), bookingController.blockedDates);
+// Public calendars; soft auth lets a hidden listing's host / admin / booked
+// guest through (docs/listing-visibility.md) — a stale token is anonymous.
+router.get("/blocked-dates/:propertyId", authMiddleware.soft, validateParam("propertyId"), bookingController.blockedDates);
 router.get("/admin/analytics-filter", ...admin, bookingController.getAllFilterBookings);
 router.get("/analytics-filter", ...auth, bookingController.getHostFilterBookings);
 router.get("/analytics-stats-filter", ...auth, bookingController.getHostFilterBookingStats);
@@ -52,7 +54,7 @@ router.get("/host/:hostId", ...auth, validateParam("hostId"), bookingController.
 router.get("/generate-pdf", ...auth, bookingController.generatePdf);
 router.get("/users-by-host", ...admin, bookingController.getBookingsByHostGroupByUsers);
 
-router.get("/check-dates/:propertyId", validateParam("propertyId"), bookingController.checkDates);
+router.get("/check-dates/:propertyId", authMiddleware.soft, validateParam("propertyId"), bookingController.checkDates);
 
 // Lifecycle (ownership enforced in the controller)
 router.patch("/host/cancel", ...auth, lifecycle.cancelBooking);

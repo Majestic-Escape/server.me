@@ -33,7 +33,7 @@ booking/payment suites.
 | `GET /filter`, `/analytics-filter`, `/analytics-stats-filter`, `/revenue-filter`, `/filter-active-bookings` | 401 | scoped to caller as host | scoped | scoped to own listings | unscoped | `hostId` query cannot widen scope |
 | `GET /` (all), `/admin/analytics-filter`, `/hostEmails`, `/users-by-host` | 401 | 403 | 403 | 403 | 200 | |
 | `GET /generate-pdf` (demo PDF) | 401 | 200 | 200 | 200 | 200 | was anonymous Chromium launch |
-| `GET /check-dates/:propertyId`, `/blocked-dates/:propertyId` | 200 | 200 | 200 | 200 | 200 | public reads, unchanged (404 on malformed id) |
+| `GET /check-dates/:propertyId`, `/blocked-dates/:propertyId` | 200 | 200 | 200 | 200 | 200 | public reads (404 on malformed id); for a listing that is not public only its host / an active admin / a confirmed + paid guest — everyone else `404 LISTING_NOT_PUBLIC` (docs/listing-visibility.md) |
 
 ## Payment (`/api/v1/payment`)
 
@@ -323,3 +323,7 @@ chat: 0 stored last names, 13 legacy messages, none contact-bearing. Images:
 | `GET/POST /service` | 401 | 403 | 403 | 403 | 200 | was any signed-in user |
 | `GET /me` | 401 | 403 | 403 | 403 | 200 | self only (no id in the URL): the caller's own `firstName`, `lastName`, `email` — an Admin record or a role-admin user; deactivated admin 403 |
 | `PATCH /me/name` | 401 | 403 | 403 | 403 | 200 | self only; `{ firstName, lastName, expected }` — same validation, optimistic `expected` (409 `NAME_CHANGED`) and transaction as `PATCH /guests/name/:userId`; audited `admin.rename` (target `Admin`, or `User` for a role-admin user; unchanged → no row); audit failure → 503, nothing saved; every other body field ignored |
+
+## Listing visibility and publication (2026-10)
+
+Read policy for listings that are not public, the publication / ban rules and the routes they changed: see docs/listing-visibility.md.

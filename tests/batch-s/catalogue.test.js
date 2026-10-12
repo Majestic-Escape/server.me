@@ -318,9 +318,13 @@ test("notifications: every public-affecting write notifies with the right tags; 
   mark = calls.length;
   assert.equal((await raw(`/properties/admin-update-property/${P._id}`, { token: AT, method: "PUT", body: { title: "Renamed While Inactive" } })).status, 200);
   assert.deepEqual(since(), []);
+  // (an admin edit never changes the status — docs/listing-visibility.md;
+  // going live is the approve route, which purges)
   mark = calls.length;
   assert.equal((await raw(`/properties/admin-update-property/${P._id}`, { token: AT, method: "PUT", body: { status: "active" } })).status, 200);
-  assert.deepEqual(since().map((c) => c.reason), ["admin-update"]);
+  assert.deepEqual(since(), [], "a status echo in an edit is not a public change");
+  assert.equal((await raw(`/properties/admin/approve/${P._id}`, { token: AT, method: "PATCH" })).status, 200);
+  assert.deepEqual(since().map((c) => c.reason), ["approve"]);
 
   // host wizard PUT on a draft: no purge; the same PUT on the active listing: purge; timings likewise
   const D = await h.makeListing(H, { title: "Draft Cabin", status: "incomplete" });
@@ -372,7 +376,9 @@ test("notifications: every public-affecting write notifies with the right tags; 
   assert.deepEqual(since(), [], "created as processing → not public");
   mark = calls.length;
   assert.equal((await raw(`/prop-listing/${created.json._id}`, { token: AT, method: "PUT", body: { status: "active" } })).status, 200);
-  assert.deepEqual(since().map((c) => c.reason), ["admin-prop-update"]);
+  assert.deepEqual(since(), [], "status is not editable through PUT /prop-listing");
+  assert.equal((await raw(`/properties/admin/approve/${created.json._id}`, { token: AT, method: "PATCH" })).status, 200);
+  assert.deepEqual(since().map((c) => c.reason), ["approve"]);
   mark = calls.length;
   const createdLive = await raw("/prop-listing/", { token: AT, method: "POST", body: { title: "Admin Created Live", host: String(H._id), hostEmail: H.email, status: "active" } });
   assert.equal(createdLive.status, 201);
@@ -468,9 +474,12 @@ test("routes: status is the host's own stage (indexed, status-only); admin docum
   await h.makeListing(O, { status: "active" });
   assert.equal((await S(OT, O.email)).json.status, "activeListings", "each host sees only their own stage");
   assert.equal((await S(AT, O.email)).json.status, "activeListings", "admin may ask for any host");
-  // legacy documents keyed by hostEmail only are still found
+  // legacy documents keyed by hostEmail only: an e-mail address is not proof of
+  // ownership (it can change and be reused — docs/listing-visibility.md), so the
+  // user's own card no longer counts them; an admin lookup by e-mail still does
   await ListingProperty().collection.updateMany({ host: O._id }, { $unset: { host: "" } });
-  assert.equal((await S(OT, O.email)).json.status, "activeListings");
+  assert.equal((await S(OT, O.email)).json.status, "noListings");
+  assert.equal((await S(AT, O.email)).json.status, "activeListings");
   startCounting();
   await S(HT);
   const statusOps = stopCounting();

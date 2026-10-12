@@ -6,6 +6,9 @@ const Payment = require("../models/Payment");
 const moment = require("moment-timezone");
 const jwt = require("jsonwebtoken");
 const ListingProperty = require("../models/ListingProperty");
+const { isPublicListing } = require("../utils/listingProjection");
+const { resolveListingAccess } = require("../services/listingAccess");
+const authMiddleware = require("../middleware/authMiddleware");
 const Users = require("../models/User");
 const fs = require("fs");
 const path = require("path");
@@ -1350,9 +1353,25 @@ exports.getBookingsByHostGroupByUsers = async (req, res) => {
 
 // cancelAdminBooking: moved to controllers/bookingLifecycleController.js (Batch S)
 
+// Calendars of a listing that is not public (draft, in review, delisted,
+// banned) answer only its host, an active admin or a confirmed, paid guest
+// (docs/listing-visibility.md); everyone else is told it is not available.
+// An unknown id keeps its old answer (an empty calendar). Runs before any
+// calendar work — including the SyncGuard nudge — so a hidden listing costs
+// one indexed read.
+async function refuseHiddenCalendar(req, res, propertyId) {
+  const listing = await ListingProperty.findById(propertyId).select("status ban host").lean();
+  if (!listing || isPublicListing(listing)) return false;
+  const { access } = await resolveListingAccess(listing, await authMiddleware.softActor(req));
+  if (access !== "public") return false;
+  res.status(404).json({ success: false, code: "LISTING_NOT_PUBLIC", message: "This stay isn't available", statusCode: 404 });
+  return true;
+}
+
 exports.checkDates = async (req, res) => {
   try {
     const { propertyId } = req.params;
+    if (await refuseHiddenCalendar(req, res, propertyId)) return;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0); // normalize to midnight
@@ -1400,6 +1419,7 @@ exports.checkDates = async (req, res) => {
 exports.blockedDates = async (req, res) => {
   try {
     const { propertyId } = req.params;
+    if (await refuseHiddenCalendar(req, res, propertyId)) return;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0); // normalize to midnight

@@ -152,10 +152,14 @@ test("a host cannot activate, KYC-complete, bank-verify, unban, rate or hand ove
   const delist = await h.api("PUT", `/properties/update-listing-property/${active._id}`, { token: HT, body: { status: "inactive" } });
   assert.equal(delist.status, 403, "delisting has its own route");
 
-  // an admin keeps the full write
-  const adminActivate = await h.api("PUT", `/properties/update-listing-property/${l._id}`, { token: AT, body: { status: "active", kycStatus: "completed" } });
-  assert.equal(adminActivate.status, 200, JSON.stringify(adminActivate.body));
-  assert.equal((await ListingProperty().findById(l._id).lean()).status, "active");
+  // an admin keeps the admin-only fields; the status is never an edit field
+  // (docs/listing-visibility.md) — going live is the approve route
+  const before = (await ListingProperty().findById(l._id).lean()).status;
+  const adminEdit = await h.api("PUT", `/properties/update-listing-property/${l._id}`, { token: AT, body: { status: "active", kycStatus: "completed" } });
+  assert.equal(adminEdit.status, 200, JSON.stringify(adminEdit.body));
+  const after = await ListingProperty().findById(l._id).lean();
+  assert.equal(after.kycStatus, "completed");
+  assert.equal(after.status, before, "status echo ignored");
 });
 
 test("create-listing-property ignores the same fields from a host", async () => {

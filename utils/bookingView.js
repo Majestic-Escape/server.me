@@ -3,12 +3,17 @@
 //    name, photo, ratings — never email / phone / address / last name;
 //  - the caller's own record keeps its own details minus secrets;
 //  - the listing's exact location (street, lines, precise point) is revealed
-//    to the guest only for a confirmed, paid booking; the host owns it;
+//    to the guest only for a confirmed, paid guest booking
+//    (utils/bookingEntitlement.js — the same rule as the listing detail
+//    route); the listing's CURRENT host owns it — a former host keeps their
+//    booking record, not the new owner's listing;
 //  - payment customer details are never returned to users;
 //  - an admin sees the document unchanged.
 // Shapes are otherwise identical to before, so existing consumers keep working.
 const authz = require("../middleware/authz");
-const { toPublicUser, toSelfUser, sanitizeProperty, sanitizePropertyForBookedGuest, SENSITIVE_PROPERTY_FIELDS } = require("./sanitizeResponse");
+const { toPublicUser, toSelfUser, sanitizeProperty, sanitizePropertyForBookedGuest, bookedGuestListingView, listingStubView, SENSITIVE_PROPERTY_FIELDS } = require("./sanitizeResponse");
+const { isPublicListing } = require("./listingProjection");
+const { isPaidGuestBooking } = require("./bookingEntitlement");
 
 function plain(v) {
   if (!v) return v;
@@ -25,9 +30,9 @@ function idOf(v) {
   return String(v);
 }
 
-/** True when the guest may see the exact location: confirmed and paid. */
+/** True when the guest may see the exact location: a confirmed, paid guest booking. */
 function exactLocationForGuest(booking) {
-  return booking.status === "confirmed" && booking.paymentStatus === "paid";
+  return isPaidGuestBooking(booking);
 }
 
 function listingForHost(listing) {
@@ -55,9 +60,25 @@ function bookingForActor(booking, actor) {
   if (isPopulated(b.userId)) out.userId = isGuest ? toSelfUser(b.userId) : toPublicUser(b.userId, { fallbackName: "Guest" });
   if (isPopulated(b.hostId)) out.hostId = isHost ? toSelfUser(b.hostId) : toPublicUser(b.hostId, { fallbackName: "Host" });
   if (isPopulated(b.propertyId)) {
-    if (isHost) out.propertyId = listingForHost(b.propertyId);
-    else if (isGuest && exactLocationForGuest(b)) out.propertyId = sanitizePropertyForBookedGuest(b.propertyId);
-    else out.propertyId = sanitizeProperty(b.propertyId);
+    const listing = plain(b.propertyId);
+    // The booking's host role covers the booking record; the listing itself
+    // is owned by its CURRENT host (a listing may have been reassigned since).
+    if (isHost && idOf(listing.host) === selfId) out.propertyId = listingForHost(b.propertyId);
+    else {
+      const paidGuest = isGuest && exactLocationForGuest(b);
+      const view = paidGuest ? sanitizePropertyForBookedGuest(b.propertyId) : sanitizeProperty(b.propertyId);
+      // A listing that is no longer public (delisted, in review again,
+      // banned): a confirmed, paid guest keeps the operational facts of THIS
+      // booking (its snapshot, its cancellation terms) — never the host's
+      // current, possibly unpublished, listing text; anyone else (another
+      // booking state, a former host) the stub (docs/listing-visibility.md).
+      // A populate that did not select "status" carries only the few fields
+      // it selected and is left as it was.
+      const hidden = listing && listing.status !== undefined && !isPublicListing(listing);
+      if (!hidden) out.propertyId = view;
+      else if (paidGuest) out.propertyId = bookedGuestListingView(view, b);
+      else out.propertyId = listingStubView(sanitizeProperty(b.propertyId));
+    }
   }
   if (isPopulated(b.payment)) {
     const p = plain(b.payment);

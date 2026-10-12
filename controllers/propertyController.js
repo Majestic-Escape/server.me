@@ -20,11 +20,14 @@ const {
   sanitizeProperties,
   SAFE_HOST_SELECT,
 } = require("../utils/sanitizeResponse");
+const { resolveListingAccess, nonPublicView, ownedListingsFilter, hostIdForEmail } = require("../services/listingAccess");
+const authMiddleware = require("../middleware/authMiddleware");
+const listingPublish = require("../services/listingPublish");
 // Batch P — public catalogue: card projection, edge-cache policy, change
 // notifications and the authoritative night ledger for date searches.
 const BookingNight = require("../models/BookingNight");
 const { catalogueCache } = require("../utils/httpCache");
-const { CARD_PROJECTION, pageParams } = require("../utils/listingProjection");
+const { CARD_PROJECTION, CARD_MASK_CONTEXT, publicListingFilter, isPublicListing, pageParams } = require("../utils/listingProjection");
 const { checkListingWrite, refusePublicText, LISTING_TEXT_SELECT, checkListingImages, refuseImages } = require("../utils/publicTextPolicy");
 const { notifyListingChanged } = require("../services/listingChanged");
 const authz = require("../middleware/authz");
@@ -100,7 +103,7 @@ exports.getCustomSearch = async (req, res) => {
     // ids that pass the non-date filters. Strict, nearby, near-me and text
     // modes all run on this single result, so a search is at most 3 ops.
     const [facets] = await ListingProperty.aggregate([
-      { $match: { status: "active" } },
+      { $match: publicListingFilter() },
       {
         $facet: {
           inv: [{ $project: placeSearch.LOCATION_PROJECTION }],
@@ -121,8 +124,9 @@ exports.getCustomSearch = async (req, res) => {
     const pageRows = rows.slice(paging.skip, paging.skip + paging.limit);
     let data = [];
     if (pageRows.length) {
-      const docs = await ListingProperty.find({ _id: { $in: pageRows.map((r) => r.id) }, status: "active" })
+      const docs = await ListingProperty.find(publicListingFilter({ _id: { $in: pageRows.map((r) => r.id) } }))
         .select(CARD_PROJECTION)
+        .select(CARD_MASK_CONTEXT)
         .lean();
       const byId = new Map(docs.map((d) => [String(d._id), d]));
       data = pageRows
@@ -205,7 +209,7 @@ exports.getPropertyCount = async (req, res) => {
     // none, the nearest ones the page falls back to (≤ 250 km). Counting
     // only the stays inside made a card say 0 while its page listed 13.
     // One read for every name.
-    const docs = await ListingProperty.find({ status: "active" }).select(placeSearch.LOCATION_PROJECTION).lean();
+    const docs = await ListingProperty.find(publicListingFilter()).select(placeSearch.LOCATION_PROJECTION).lean();
     const inv = placeSearch.classifyAll(docs);
     const live = placeSearch.livePlaces(inv);
     const openIds = new Set(inv.map((c) => c.id));
@@ -487,16 +491,16 @@ exports.getTiming = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Invalid propertyId" });
     }
-    const property = await ListingProperty.findById(propertyId);
+    // Host or admin only (route guard); the check-in / check-out hours and
+    // nothing else — this used to return the whole raw listing to any
+    // signed-in user (exact street, precise point, unpublished text).
+    const property = await ListingProperty.findById(propertyId).select("checkinTime checkoutTime").lean();
     if (!property) {
       return res
         .status(404)
         .json({ success: false, message: "Property not found" });
     }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("dsajhjkhdsjkhdajhsdjhaj");
-    }
-    res.status(200).json({ success: true, data: property });
+    res.status(200).json({ success: true, data: { _id: property._id, checkinTime: property.checkinTime, checkoutTime: property.checkoutTime } });
   } catch (error) {
     res.status(500).json({
       message: "Failed to fetch properties time",
@@ -512,12 +516,13 @@ async function listActiveCards(req, res) {
     if (!catalogueCache(req, res)) return;
     const { page, limit, skip } = pageParams(req.query, 16);
     const { type } = req.query;
-    const query = { status: { $in: ["active", "completed"] } };
+    const query = { status: { $in: ["active", "completed"] }, ban: { $ne: true } };
     if (type) query.propertyType = type;
 
     const [properties, totalProperties] = await Promise.all([
       ListingProperty.find(query)
         .select(CARD_PROJECTION)
+        .select(CARD_MASK_CONTEXT)
         .sort({ createdAt: -1, _id: -1 })
         .skip(skip)
         .limit(limit)
@@ -545,15 +550,18 @@ async function listActiveCards(req, res) {
 }
 exports.getFrontPageAllStays = listActiveCards;
 exports.getAllStays = listActiveCards;
+// GET /properties/id-and-name/:hostId — admin only (it used to hand anyone a
+// host's whole listing documents; no client calls it). Cards, newest first,
+// at most 50.
 exports.getIdandName = async (req, res) => {
   try {
     const hostId = req.params.id;
-    const filter = { status: "active", host: hostId };
-    const data = await ListingProperty.find(filter);
-
-    if (!data) {
-      return res.status(404).json({ message: "Listing not found" });
-    }
+    const data = await ListingProperty.find(publicListingFilter({ host: hostId }))
+      .select(CARD_PROJECTION)
+      .select(CARD_MASK_CONTEXT)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(50)
+      .lean();
 
     // Sanitize properties to remove hostEmail and other sensitive data
     const sanitizedData = sanitizeProperties(data);
@@ -630,12 +638,13 @@ exports.getAllProperties = async (req, res) => {
     if (!catalogueCache(req, res)) return;
     const { page, limit, skip } = pageParams(req.query, 30);
     const { type } = req.query;
-    const query = { status: "active" };
+    const query = publicListingFilter();
     if (type) query.propertyType = type;
 
     const [properties, totalProperties] = await Promise.all([
       ListingProperty.find(query)
         .select(CARD_PROJECTION)
+        .select(CARD_MASK_CONTEXT)
         .sort({ createdAt: -1, _id: -1 })
         .skip(skip)
         .limit(limit)
@@ -953,61 +962,71 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
   }
 };
 
+// --- Publication and delisting (docs/listing-visibility.md) ----------------
+// Going live is decided by services/listingPublish.js (one transaction that
+// fences the host account: a banned / deactivated / missing host never gets a
+// live listing, whatever runs concurrently). Cache notifications and e-mails
+// run only after the commit, each on its own: an e-mail failure never undoes
+// or hides a committed change, and never blocks the cache purge.
+
+const publishRefusal = (res, err) => listingPublish.sendPublishError(res, err);
+
+// The host's CURRENT account e-mail (never the listing's hostEmail copy, which
+// can be stale after an account e-mail change). null when the listing has no
+// host account — the host e-mail is then skipped, not sent to a stale address.
+function hostRecipient(listing) {
+  const host = listing && listing.host;
+  return listingPublish.hostEmailOf(host && host._id ? host._id : host);
+}
+
+async function afterCommit(label, fn) {
+  try {
+    await fn();
+  } catch (err) {
+    console.error(`${label} side effect failed:`, err && err.message);
+  }
+}
+
+// PATCH /properties/admin/approve/:id — an admin publishes a listing that was
+// submitted for review (processing) or delisted (inactive). Approving a live
+// listing again is a no-op (no write, no e-mail).
 exports.approveListing = async (req, res) => {
   try {
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("entered in new op");
-    }
     const { id } = req.params; // listing ID
-
-    // const property = await ListingProperty.findById(id);
-    // const host = await User.findById(property?.host);
-    // let updatedListing = await ListingProperty.findById(id).populate("host");
-
-    // if (updatedListing.delist == "host") {
-    //   return res.status(200).json({
-    //     message: "Listing approved successfully",
-    //     data: "hostDelist",
-    //   });
-    // }
-    // updatedListing.status = "active";
-
-    const updatedListing = await ListingProperty.findByIdAndUpdate(
-      id,
-      { status: "active" },
-      { new: true },
-    ).populate({ path: "host", select: HOST_CONTACT_SELECT });
+    let result;
+    try {
+      result = await listingPublish.publishListing({ listingId: id, mode: "approve" });
+    } catch (err) {
+      if (err instanceof listingPublish.PublishError) return publishRefusal(res, err);
+      throw err;
+    }
+    const updatedListing = await ListingProperty.findById(id).populate({ path: "host", select: HOST_CONTACT_SELECT });
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
     }
-    await notifyListingChanged([id], "approve"); // PUBLIC_CHANGE: processing → active
-    const hostName =
-      updatedListing.host.firstName + " " + updatedListing.host.lastName;
-    const params = {
-      hostName: hostName,
-      propertyId: id,
-      hostEmail: updatedListing.hostEmail,
-      propertyTitle: updatedListing.title,
-      createdAt: new Date().toLocaleDateString(),
-      updatedAt: new Date().toLocaleDateString(),
-      state: updatedListing.address.state,
-      city: updatedListing.address.city,
-    };
-
-    if (updatedListing.delist == "admin") {
-      await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 48, params)),
-      );
-      await sendEmail(params.hostEmail, 49, params);
-    } else {
-      await sendEmail(params.hostEmail, 25, params);
-
-      await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 26, params)),
-      );
-    }
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("Approve Listing");
+    if (!result.already) {
+      await afterCommit("approve notify", () => notifyListingChanged([id], "approve")); // PUBLIC_CHANGE: processing → active
+      await afterCommit("approve e-mail", async () => {
+        const host = updatedListing.host || {};
+        const params = {
+          hostName: host.firstName + " " + host.lastName,
+          propertyId: id,
+          hostEmail: await hostRecipient(updatedListing),
+          propertyTitle: updatedListing.title,
+          createdAt: new Date().toLocaleDateString(),
+          updatedAt: new Date().toLocaleDateString(),
+          state: updatedListing.address && updatedListing.address.state,
+          city: updatedListing.address && updatedListing.address.city,
+        };
+        // re-approval after an admin delist has its own templates
+        if (result.before.delist == "admin") {
+          await Promise.all(adminEmail.map((email) => sendEmail(email.trim(), 48, params)));
+          if (params.hostEmail) await sendEmail(params.hostEmail, 49, params);
+        } else {
+          if (params.hostEmail) await sendEmail(params.hostEmail, 25, params);
+          await Promise.all(adminEmail.map((email) => sendEmail(email.trim(), 26, params)));
+        }
+      });
     }
     return res.status(200).json({
       message: "Listing approved successfully",
@@ -1021,52 +1040,34 @@ exports.approveListing = async (req, res) => {
     });
   }
 };
+
+// PATCH /properties/host/reactivate/:id — the host relists a listing THEY
+// delisted (inactive + delist:"host"). A draft, a listing in review, an
+// admin-delisted or banned one, or an old delisted row without that
+// provenance goes live only through an admin approval.
 exports.reactivate = async (req, res) => {
   try {
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("entered in new op");
-    }
     const { id } = req.params; // listing ID
-
-    // const property = await ListingProperty.findById(id);
-    // const host = await User.findById(property?.host);
-    let updatedListing = await ListingProperty.findById(id).populate({ path: "host", select: HOST_CONTACT_SELECT });
+    const actor = req.actor || null;
+    try {
+      await listingPublish.publishListing({
+        listingId: id,
+        mode: "reactivate",
+        hostId: authz.isAdmin(actor) ? null : actor && actor.id,
+      });
+    } catch (err) {
+      if (!(err instanceof listingPublish.PublishError)) throw err;
+      // the clients key on this exact answer for an admin-delisted listing
+      if (err.code === "LISTING_ADMIN_DELISTED") {
+        return res.status(200).json({ message: "Listing reactivation failed", listing: "adminDelist" });
+      }
+      return publishRefusal(res, err);
+    }
+    const updatedListing = await ListingProperty.findById(id).populate({ path: "host", select: HOST_CONTACT_SELECT });
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
     }
-    if (updatedListing.delist == "admin") {
-      return res.status(200).json({
-        message: "Listing reactivation failed",
-        listing: "adminDelist",
-      });
-    }
-    // Used to set the field on the loaded document only and report success
-    // without saving — the listing stayed inactive.
-    await ListingProperty.updateOne({ _id: id }, { $set: { status: "active" } });
-    await notifyListingChanged([id], "reactivate"); // PUBLIC_CHANGE: inactive → active
-    // const updatedListing = await ListingProperty.findByIdAndUpdate(
-    //   id,
-    //   { status: "active", delist: "host" },
-    //   { new: true }
-    // ).populate("host");
-    // if (!updatedListing) {
-    //   return res.status(404).json({ message: "Listing not found" });
-    // }
-    updatedListing.status = "active";
-    const hostName =
-      updatedListing.host.firstName + " " + updatedListing.host.lastName;
-    const params = {
-      hostName: hostName,
-      propertyId: id,
-      propertyTitle: updatedListing.title,
-      createdAt: new Date().toLocaleDateString(),
-      state: updatedListing.address.state,
-      city: updatedListing.address.city,
-    };
-
-    // await sendEmail(updatedListing.hostEmail, 25, params);
-    // await sendEmail(adminEmail, 26, params);
-
+    await afterCommit("reactivate notify", () => notifyListingChanged([id], "reactivate")); // PUBLIC_CHANGE: inactive → active
     return res.status(200).json({
       message: "Listing reactivated successfully",
       listing: updatedListing,
@@ -1079,77 +1080,51 @@ exports.reactivate = async (req, res) => {
     });
   }
 };
-exports.deListing = async (req, res) => {
+
+async function delistParams(listing) {
+  const host = listing.host || {};
+  return {
+    hostName: host.firstName + " " + host.lastName,
+    propertyId: listing._id,
+    city: listing.address && listing.address.city,
+    state: listing.state,
+    delistDate: new Date().toLocaleDateString(),
+    hostEmail: await hostRecipient(listing),
+    hostContact: host.phoneNumber,
+  };
+}
+
+// PATCH /properties/host/delist/:id — the host takes THEIR live listing off
+// the site (records delist:"host", which is what makes it relistable without
+// review). Only a live listing can be delisted this way; ownership is part of
+// the write (an admin acting here may delist any live listing).
+exports.hostDeListing = async (req, res) => {
   try {
-    if (process.env.NEXT_PUBLIC_ENV === "dev") {
-      console.log("entered in new op");
+    const { id } = req.params;
+    const actor = req.actor || null;
+    const filter = { _id: id, status: "active", ban: { $ne: true } };
+    if (!authz.isAdmin(actor)) filter.host = actor && actor.id;
+    const updatedListing = await ListingProperty.findOneAndUpdate(
+      filter,
+      { $set: { status: "inactive", delist: "host" } },
+      { new: true },
+    ).populate({ path: "host", select: HOST_CONTACT_SELECT });
+    if (!updatedListing) {
+      const exists = await ListingProperty.exists({ _id: id });
+      if (!exists) return res.status(404).json({ message: "Listing not found" });
+      return res.status(409).json({ success: false, code: "LISTING_NOT_LIVE", message: "Only a live listing can be delisted", statusCode: 409 });
     }
-    const { id } = req.params; // listing ID
-    const { hostSide } = req.query;
-
-    if (hostSide && hostSide == "true") {
-      const updatedListing = await ListingProperty.findByIdAndUpdate(
-        id,
-        { status: "inactive" },
-        { new: true },
-      ).populate({ path: "host", select: HOST_CONTACT_SELECT });
-      if (!updatedListing) {
-        return res.status(404).json({ message: "Listing not found" });
-      }
-      await notifyListingChanged([id], "delist"); // PUBLIC_CHANGE: active → inactive
-
-      const hostName =
-        updatedListing.host.firstName + " " + updatedListing.host.lastName;
-      const params = {
-        hostName: hostName,
-        propertyId: updatedListing._id,
-        city: updatedListing.address.city,
-        state: updatedListing.state,
-        delistDate: new Date().toLocaleDateString(),
-        hostEmail: updatedListing.hostEmail,
-        hostContact: updatedListing.host.phoneNumber,
-      };
-
-      await sendEmail(params.hostEmail, 29, params);
-
-      await Promise.all(
-        adminEmail.map((email) => sendEmail(email.trim(), 49, params)),
-      );
-      return res.status(200).json({
-        sucess: true,
-        message: "Listing delisted successfully",
-        listing: updatedListing,
-      });
-    } else {
-      const updatedListing = await ListingProperty.findByIdAndUpdate(
-        id,
-        { status: "inactive", delist: "admin" },
-        { new: true },
-      ).populate({ path: "host", select: HOST_CONTACT_SELECT });
-      if (!updatedListing) {
-        return res.status(404).json({ message: "Listing not found" });
-      }
-      await notifyListingChanged([id], "admin-delist"); // PUBLIC_CHANGE: active → inactive
-
-      const hostName =
-        updatedListing.host.firstName + " " + updatedListing.host.lastName;
-      const params = {
-        hostName: hostName,
-        propertyId: updatedListing._id,
-        city: updatedListing.address.city,
-        state: updatedListing.state,
-        delistDate: new Date().toLocaleDateString(),
-        hostEmail: updatedListing.hostEmail,
-        hostContact: updatedListing.host.phoneNumber,
-      };
-      await sendEmail(params.hostEmail, 27, params);
-      await sendEmail(adminEmail, 28, params);
-      return res.status(200).json({
-        sucess: true,
-        message: "Listing delisted successfully",
-        data: updatedListing,
-      });
-    }
+    await afterCommit("delist notify", () => notifyListingChanged([id], "delist")); // PUBLIC_CHANGE: active → inactive
+    await afterCommit("delist e-mail", async () => {
+      const params = await delistParams(updatedListing);
+      if (params.hostEmail) await sendEmail(params.hostEmail, 29, params);
+      await Promise.all(adminEmail.map((email) => sendEmail(email.trim(), 49, params)));
+    });
+    return res.status(200).json({
+      sucess: true,
+      message: "Listing delisted successfully",
+      listing: updatedListing,
+    });
   } catch (error) {
     console.error("Error approving delisting:", error);
     return res.status(500).json({
@@ -1158,6 +1133,46 @@ exports.deListing = async (req, res) => {
     });
   }
 };
+
+// PATCH /properties/admin/delist/:id — an admin takes a listing down
+// (delist:"admin": the host cannot relist it; only an admin approval can).
+exports.adminDeListing = async (req, res) => {
+  try {
+    const { id } = req.params;
+    // A draft that was never submitted is not delisted (delist → approve
+    // would publish it without a review). The admin decision replaces a ban
+    // marker: an unban no longer brings this listing back.
+    const updatedListing = await ListingProperty.findOneAndUpdate(
+      { _id: id, status: { $ne: "incomplete" } },
+      { $set: { status: "inactive", delist: "admin", ban: false } },
+      { new: true },
+    ).populate({ path: "host", select: HOST_CONTACT_SELECT });
+    if (!updatedListing) {
+      if (await ListingProperty.exists({ _id: id })) {
+        return res.status(409).json({ success: false, code: "LISTING_NOT_SUBMITTED", message: "A draft that was never submitted cannot be delisted", statusCode: 409 });
+      }
+      return res.status(404).json({ message: "Listing not found" });
+    }
+    await afterCommit("admin-delist notify", () => notifyListingChanged([id], "admin-delist")); // PUBLIC_CHANGE: active → inactive
+    await afterCommit("admin-delist e-mail", async () => {
+      const params = await delistParams(updatedListing);
+      if (params.hostEmail) await sendEmail(params.hostEmail, 27, params);
+      await sendEmail(adminEmail, 28, params);
+    });
+    return res.status(200).json({
+      sucess: true,
+      message: "Listing delisted successfully",
+      data: updatedListing,
+    });
+  } catch (error) {
+    console.error("Error approving delisting:", error);
+    return res.status(500).json({
+      message: "Failed to approve delisting",
+      error: error.message,
+    });
+  }
+};
+
 
 exports.getPropertyById = async (req, res) => {
   try {
@@ -1176,30 +1191,43 @@ exports.getPropertyById = async (req, res) => {
       return res.status(404).json({ message: "Property not found" });
     }
 
-    // Sanitize property to remove ALL sensitive data (host info, address, hostEmail, etc.)
-    const sanitizedData = sanitizeProperty(property);
-
-    res.status(200).json({ success: true, data: sanitizedData });
+    // A public listing reads exactly as before, for everyone. One that is not
+    // public (draft, in review, delisted, banned) keeps its detail for its
+    // host and active admins; a confirmed, paid guest gets the operational
+    // view; everyone else the stub (docs/listing-visibility.md). The caller
+    // was resolved by authMiddleware.soft — a stale token is anonymous here.
+    if (isPublicListing(property)) {
+      return res.status(200).json({ success: true, data: sanitizeProperty(property) });
+    }
+    // (the caller is resolved only here — authMiddleware.soft is lazy)
+    const resolved = await resolveListingAccess(property, await authMiddleware.softActor(req));
+    const { access } = resolved;
+    const data = access === "owner" || access === "admin" ? sanitizeProperty(property) : nonPublicView(property, resolved);
+    res.status(200).json({ success: true, data, access });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
+// GET /properties/active/:hostId — the host dashboard's own live listings.
+// The host themself (and an active admin) read them as before; any other
+// signed-in user used to get another host's raw documents — now the public
+// cards only.
 exports.getActivePropertyById = async (req, res) => {
   try {
     const hostId = req.params.id;
-
-    const filter = {
-      host: hostId,
-      status: "active",
-    };
-
-    const property = await ListingProperty.find(filter);
-
-    if (!property) {
-      return res.status(404).json({ message: "Property not found" });
+    const actor = req.actor || null;
+    if (authz.isAdmin(actor) || (actor && actor.kind === "user" && String(actor.id) === String(hostId))) {
+      const property = await ListingProperty.find({ host: hostId, status: "active" });
+      return res.status(200).json({ success: true, data: property });
     }
-    res.status(200).json({ success: true, data: property });
+    const cards = await ListingProperty.find(publicListingFilter({ host: hostId }))
+      .select(CARD_PROJECTION)
+      .select(CARD_MASK_CONTEXT)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(50)
+      .lean();
+    res.status(200).json({ success: true, data: sanitizeProperties(cards) });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -1526,6 +1554,9 @@ exports.hostDeleteListing = async (req, res) => {
 exports.createListingProperty = async (req, res) => {
   try {
     const propertyData = authz.isAdmin(req.actor) ? { ...req.body } : stripHostImmutableFields(req.body);
+    // moderation ban / delist provenance are never set on creation
+    delete propertyData.ban;
+    delete propertyData.delist;
     const user = await User.findOne({ email: req.body.hostEmail });
     if (process.env.NEXT_PUBLIC_ENV === "dev") {
       console.log("xmennn", propertyData);
@@ -1568,11 +1599,15 @@ exports.adminUpdateListingProperty = async (req, res) => {
     if (!policy.ok) return refusePublicText(res, policy);
     const images = checkListingImages(before, req.body);
     if (!images.ok) return refuseImages(res, images);
-    const property = await ListingProperty.findOneAndUpdate(
-      { _id: id },
-      { $set: req.body },
-      { new: true, runValidators: true },
-    ).populate({ path: "host", select: HOST_CONTACT_SELECT });
+    // status / host / ban / delist follow the publish rules
+    // (services/listingPublish.js) — an echoed value is ignored.
+    try {
+      await listingPublish.applyAdminListingPatch(id, req.body);
+    } catch (err) {
+      if (err instanceof listingPublish.PublishError) return publishRefusal(res, err);
+      throw err;
+    }
+    const property = await ListingProperty.findById(id).populate({ path: "host", select: HOST_CONTACT_SELECT });
     if (!property) {
       return res
         .status(404)
@@ -1580,7 +1615,7 @@ exports.adminUpdateListingProperty = async (req, res) => {
     }
     // PUBLIC_CHANGE only when the listing was or is publicly visible.
     if ((before && before.status === "active") || property.status === "active") {
-      await notifyListingChanged([id], "admin-update");
+      await afterCommit("admin-update notify", () => notifyListingChanged([id], "admin-update"));
     }
     // if (property.host.kyc === true) {
     //   property.kycStatus = "completed";
@@ -1645,7 +1680,14 @@ exports.updateListingProperty = async (req, res) => {
     }
     const isAdmin = authz.isAdmin(req.actor);
     const patch = isAdmin ? { ...req.body } : stripHostImmutableFields(req.body);
-    if (!isAdmin && patch.status !== undefined && patch.status !== before.status && !HOST_SETTABLE_STATUSES.includes(patch.status)) {
+    if (!isAdmin) {
+      // The delist provenance belongs to the delist / relist routes. An echoed
+      // status is not a change — and must never write "active" back over a
+      // ban or delist that landed after the wizard loaded the listing.
+      delete patch.delist;
+      if (patch.status !== undefined && patch.status === before.status) delete patch.status;
+    }
+    if (!isAdmin && patch.status !== undefined && !HOST_SETTABLE_STATUSES.includes(patch.status)) {
       return res.status(403).json({
         success: false,
         code: "LISTING_STATUS_NOT_ALLOWED",
@@ -1659,11 +1701,30 @@ exports.updateListingProperty = async (req, res) => {
     if (!policy.ok) return refusePublicText(res, policy);
     const images = checkListingImages(before, patch);
     if (!images.ok) return refuseImages(res, images);
-    const property = await ListingProperty.findOneAndUpdate(
-      { _id: id },
-      { $set: patch },
-      { new: true, runValidators: true },
-    ).populate({ path: "host", select: HOST_CONTACT_SELECT });
+    let property;
+    if (isAdmin) {
+      try {
+        await listingPublish.applyAdminListingPatch(id, patch);
+      } catch (err) {
+        if (err instanceof listingPublish.PublishError) return publishRefusal(res, err);
+        throw err;
+      }
+      property = await ListingProperty.findById(id).populate({ path: "host", select: HOST_CONTACT_SELECT });
+    } else {
+      // Ownership is part of the write (the route's check ran earlier; the
+      // listing may have changed hands since), and a status change only
+      // applies to the state the host saw.
+      const filter = { _id: id, host: req.actor.id };
+      if (patch.status !== undefined) filter.status = before.status;
+      property = await ListingProperty.findOneAndUpdate(
+        filter,
+        { $set: patch },
+        { new: true, runValidators: true },
+      ).populate({ path: "host", select: HOST_CONTACT_SELECT });
+      if (!property && (await ListingProperty.exists({ _id: id, host: req.actor.id }))) {
+        return res.status(409).json({ success: false, code: "LISTING_CHANGED", message: "The listing changed meanwhile. Reload and try again.", statusCode: 409 });
+      }
+    }
 
     if (!property) {
       return res
@@ -1707,13 +1768,12 @@ exports.updateListingProperty = async (req, res) => {
       }
     }
 
-    const hostEmail = property.hostEmail;
     const newStatus = property.status;
     if (status == "inactive") {
       await agenda
         .create("sendPropertyReminderEmail", {
+          // the recipient is resolved from the listing when the job runs
           newStatus,
-          hostEmail,
           host,
           propertyId: property._id.toString(),
         })
@@ -1767,7 +1827,14 @@ exports.getUserPropertyListings = async (req, res) => {
   try {
     const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const query = { hostEmail: userEmail };
+    // The host's own portfolio (route: the caller's own e-mail, or an admin):
+    // by account id — a listing reassigned away must leave it, one reassigned
+    // here must appear — e-mail only for legacy rows without a host id.
+    const actor = req.actor || null;
+    let email = userEmail;
+    try { email = decodeURIComponent(userEmail); } catch { /* as sent */ }
+    const hostId = actor && actor.kind === "user" && !authz.isAdmin(actor) ? actor.id : await hostIdForEmail(email);
+    const query = ownedListingsFilter({ hostId, email, legacyByEmail: authz.isAdmin(actor) });
     const [listings, totalListings] = await Promise.all([
       ListingProperty.find(query)
         .sort({ createdAt: -1 })

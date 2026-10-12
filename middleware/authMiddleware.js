@@ -120,4 +120,53 @@ authMiddleware.optional = (req, res, next) => {
   return authMiddleware(req, res, next);
 };
 
+// Public read that answers MORE to an entitled caller (the listing read
+// policy: owner / admin / booked guest) and never LESS to anyone: a missing,
+// invalid, expired, revoked or banned token is simply anonymous here — the
+// route answered anonymous callers before, so a stale session in a browser
+// must not turn a public page into a 401. Only a fully valid session (the
+// same checks as authMiddleware) gets an actor.
+//
+// Lazy: nothing is verified or read here. Almost every listing is public and
+// reads the same for everyone, so the caller is resolved only when a handler
+// asks — authMiddleware.softActor(req) — i.e. for a listing that is not public.
+// No user lookup on the common path.
+authMiddleware.soft = (req, res, next) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (token) req.softAuthToken = token;
+  return next();
+};
+
+// The caller behind authMiddleware.soft (null = anonymous), resolved once.
+authMiddleware.softActor = async (req) => {
+  if (req.actor !== undefined) return req.actor;
+  const token = req.softAuthToken;
+  req.actor = null;
+  if (!token) return null;
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    if (decoded.admin == 0) {
+      const user = await User.findById(decoded.userId);
+      if (user && user.status?.banned !== true && decoded.tokenVersion === user.tokenVersion) {
+        req.user = user;
+        req.actor = undefined;
+        await authz.resolveActor(req);
+      }
+    } else {
+      req.user = decoded;
+      req.actor = undefined;
+      const actor = await authz.resolveActor(req);
+      if (!actor) {
+        delete req.user;
+        req.actor = null;
+      }
+    }
+  } catch {
+    delete req.user;
+    req.actor = null;
+  }
+  return req.actor || null;
+};
+
 module.exports = authMiddleware;

@@ -585,10 +585,13 @@ exports.updateReview = async (req, res) => {
       hostEmail: review.hostId.email,
       hostContact: review.hostId.phoneNumber,
     };
-    if (status == "accept") {
-      await sendEmail(property.hostEmail, 37, params);
-    } else if (status == "reject") {
-      await sendEmail(property.hostEmail, 38, params);
+    // the reviewed stay's host, at their CURRENT account e-mail (the
+    // listing's hostEmail copy can be stale)
+    const hostTo = review.hostId && review.hostId.email;
+    if (hostTo && status == "accept") {
+      await sendEmail(hostTo, 37, params);
+    } else if (hostTo && status == "reject") {
+      await sendEmail(hostTo, 38, params);
     }
 
     res.status(200).json({ success: true, data: review });

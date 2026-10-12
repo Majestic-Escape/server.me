@@ -5,6 +5,9 @@ const {
   sanitizePropertyForOwner,
   SAFE_HOST_SELECT,
 } = require("../utils/sanitizeResponse");
+const { resolveListingAccess, nonPublicView, ownedListingsFilter, hostIdForEmail } = require("../services/listingAccess");
+const listingPublish = require("../services/listingPublish");
+const { isPublicListing } = require("../utils/listingProjection");
 const authz = require("../middleware/authz");
 const { checkListingWrite, refusePublicText, LISTING_TEXT_SELECT, checkListingImages, refuseImages } = require("../utils/publicTextPolicy");
 const { notifyListingChanged } = require("../services/listingChanged");
@@ -21,11 +24,11 @@ exports.getListingStatus = async (req, res) => {
   try {
     const email = String(req.query.email || "").trim().toLowerCase();
     const actor = req.actor; // resolved by requireSelfEmailQueryOrAdmin
-    const or = [];
-    if (email) or.push({ hostEmail: email });
-    if (actor && actor.kind === "user") or.push({ host: actor.id });
-    const listings = or.length
-      ? await ListingProperty.find({ $or: or }).select("status").lean()
+    // the caller's own listings by account id; an admin asking by e-mail gets
+    // that account's (e-mail matches only legacy rows without a host id)
+    const hostId = actor && actor.kind === "user" ? actor.id : await hostIdForEmail(email);
+    const listings = hostId || email
+      ? await ListingProperty.find(ownedListingsFilter({ hostId, email, legacyByEmail: authz.isAdmin(actor) })).select("status").lean()
       : [];
 
     if (!listings.length) {
@@ -97,13 +100,17 @@ exports.getAllPListings = async (req, res) => {
           statusCode: actor ? 403 : 401,
         });
       }
-      query.hostEmail = hostEmail;
+      // The listings OF that host: by account id (a reassigned listing leaves
+      // the old owner's list), e-mail only for legacy rows without a host id.
+      const hostId = own ? actor.id : await hostIdForEmail(hostEmail);
+      query.$and = [...(query.$and || []), ownedListingsFilter({ hostId, email: hostEmail, legacyByEmail: !own && authz.isAdmin(actor) })];
     }
     // Drafts, listings in review and delisted ones are not public: anyone
     // but an admin or the host listing their own sees active listings only
     // (anonymous `?status=incomplete` used to list every draft).
     if (!own && !authz.isAdmin(req.actor || null)) {
       query.status = "active";
+      query.ban = { $ne: true };
     }
 
     let sortQuery = {};
@@ -143,28 +150,31 @@ exports.getUserPListingById = async (req, res) => {
   const { id } = req.params;
   const { hostEmail } = req.query;
   try {
-    let query = { _id: id };
-    if (hostEmail) {
-      query.hostEmail = hostEmail;
-    }
-
-    const listing = await ListingProperty.findOne(query).populate({
+    const listing = await ListingProperty.findById(id).populate({
       path: "host",
       select: SAFE_HOST_SELECT,
     });
 
-    if (!listing) {
+    // The owner (the edit wizard writes this object back) and admins read the
+    // stored document; everyone else the public view (approximate point, no
+    // street, no owner flags) — and, for a listing that is not public, the
+    // narrow views of docs/listing-visibility.md. authMiddleware.optional
+    // resolved req.actor (the owner check runs first, so a host's own live
+    // listing keeps its stored address).
+    const actor = req.actor || null;
+    const owner = !!listing && (authz.isAdmin(actor) || authz.isListingHost(actor, listing));
+    // ?hostEmail= narrows the owner's own read as before; for anyone else it
+    // would only be an e-mail ↔ listing oracle, so it is ignored.
+    if (!listing || (owner && hostEmail && String(listing.hostEmail || "").toLowerCase() !== String(hostEmail).toLowerCase())) {
       return res.status(404).json({
         message: "Listing not found",
       });
     }
 
-    // The owner (the edit wizard writes this object back) and admins read the
-    // stored document; everyone else the public view (approximate point, no
-    // street, no owner flags). authMiddleware.optional resolved req.actor.
-    const actor = req.actor || null;
-    const owner = authz.isAdmin(actor) || authz.isListingHost(actor, listing);
-    const sanitizedListing = owner ? sanitizePropertyForOwner(listing) : sanitizeProperty(listing);
+    let sanitizedListing;
+    if (owner) sanitizedListing = sanitizePropertyForOwner(listing);
+    else if (isPublicListing(listing)) sanitizedListing = sanitizeProperty(listing);
+    else sanitizedListing = nonPublicView(listing, await resolveListingAccess(listing, actor));
     res.status(200).json(sanitizedListing);
   } catch (error) {
     console.error("Error fetching user property listing:", error);
@@ -196,9 +206,29 @@ exports.createPListing = async (req, res) => {
     if (!policy.ok) return refusePublicText(res, policy);
     const images = checkListingImages(null, req.body);
     if (!images.ok) return refuseImages(res, images);
-    const newListing = new ListingProperty(req.body);
-    const savedListing = await newListing.save();
-    if (savedListing.status === "active") await notifyListingChanged([savedListing._id], "admin-create"); // PUBLIC_CHANGE only when created live
+    const doc = { ...(req.body || {}) };
+    for (const k of listingPublish.NOT_EDITABLE) delete doc[k];
+    let savedListing;
+    if (doc.status === "active") {
+      // Created live: only for an eligible host, fenced like any publish.
+      try {
+        savedListing = await listingPublish.createPublishedListing(doc);
+      } catch (err) {
+        if (err instanceof listingPublish.PublishError) return listingPublish.sendPublishError(res, err);
+        throw err;
+      }
+    } else {
+      // hostEmail is the host account's, never the body's
+      if (doc.host) doc.hostEmail = (await listingPublish.hostEmailOf(doc.host)) || undefined;
+      savedListing = await new ListingProperty(doc).save();
+    }
+    if (savedListing.status === "active") {
+      try {
+        await notifyListingChanged([savedListing._id], "admin-create"); // PUBLIC_CHANGE only when created live
+      } catch (err) {
+        console.error("admin-create notify failed", err && err.message);
+      }
+    }
     res.status(201).json(savedListing);
   } catch (error) {
     res
@@ -215,16 +245,25 @@ exports.updatePListing = async (req, res) => {
     if (!policy.ok) return refusePublicText(res, policy);
     const images = checkListingImages(before, req.body);
     if (!images.ok) return refuseImages(res, images);
-    const updatedListing = await ListingProperty.findByIdAndUpdate(
-      id,
-      req.body,
-      { new: true },
-    );
+    // status / host / ban / delist follow the publish rules
+    // (services/listingPublish.js) — an echoed value is ignored.
+    try {
+      await listingPublish.applyAdminListingPatch(id, req.body);
+    } catch (err) {
+      if (!(err instanceof listingPublish.PublishError)) throw err;
+      if (err.status === 404) return res.status(404).json({ message: "Listing not found" });
+      return listingPublish.sendPublishError(res, err);
+    }
+    const updatedListing = await ListingProperty.findById(id);
     if (!updatedListing) {
       return res.status(404).json({ message: "Listing not found" });
     }
     if ((before && before.status === "active") || updatedListing.status === "active") {
-      await notifyListingChanged([id], "admin-prop-update"); // PUBLIC_CHANGE when visible before or after
+      try {
+        await notifyListingChanged([id], "admin-prop-update"); // PUBLIC_CHANGE when visible before or after
+      } catch (err) {
+        console.error("admin-prop-update notify failed", err && err.message);
+      }
     }
     res.status(200).json(updatedListing);
   } catch (error) {
@@ -249,39 +288,8 @@ exports.deletePListing = async (req, res) => {
   }
 };
 
-exports.bulkActionPListings = async (req, res) => {
-  const { propertyIds, action, hostEmail } = req.body;
-  try {
-    let query = { _id: { $in: propertyIds } };
-    if (hostEmail) {
-      query.hostEmail = hostEmail;
-    }
-
-    let result;
-    switch (action) {
-      case "approve":
-        result = await ListingProperty.updateMany(query, {
-          $set: { status: "Active" },
-        });
-        break;
-      case "disable":
-        result = await ListingProperty.updateMany(query, {
-          $set: { status: "Inactive" },
-        });
-        break;
-      case "delete":
-        result = await ListingProperty.deleteMany(query);
-        break;
-      default:
-        return res.status(400).json({ message: "Invalid action" });
-    }
-    res.status(200).json({ message: "Bulk action completed", result });
-  } catch (error) {
-    res
-      .status(400)
-      .json({ message: "Error performing bulk action", error: error.message });
-  }
-};
+// bulkActionPListings was removed (its route went in Batch A2): it wrote
+// "Active" / "Inactive" statuses outside the publish rules.
 
 exports.exportPListings = async (req, res) => {
   const { format = "csv", hostEmail } = req.query;

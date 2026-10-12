@@ -18,10 +18,12 @@ router.get("/", propertyController.getAllProperties);
 router.get("/static", propertyController.getAllStaticProperties);
 router.get("/dynamic", propertyController.getAllStays);
 router.get("/front/dynamic", propertyController.getFrontPageAllStays);
-router.get("/id-and-name/:id", validateParam("id"), propertyController.getIdandName);
+// A host's whole live portfolio by host id: admin only (no client uses it).
+router.get("/id-and-name/:id", ...admin, validateParam("id"), propertyController.getIdandName);
 router.get(
   "/active/:id",
   authMiddleware,
+  validateParam("id"),
   propertyController.getActivePropertyById,
 );
 // Batch P: admin host-profile data (host contact details) — admin only.
@@ -34,14 +36,18 @@ router.get(
 router.get("/countstays", propertyController.getPropertyCount);
 router.get("/admin-filter", ...admin, propertyController.getAdminFilter); // Batch P: was anonymous
 router.get("/search-properties", propertyController.getCustomSearch);
-router.get("/:id", validateParam("id"), propertyController.getPropertyById);
+// Public read with an entitled-caller upgrade (docs/listing-visibility.md):
+// soft auth — a stale or invalid token is anonymous, never a 401.
+router.get("/:id", authMiddleware.soft, validateParam("id"), propertyController.getPropertyById);
 // Legacy `Property` model endpoints (no client uses them): admin only.
 router.post("/", ...admin, propertyController.createProperty);
 router.put("/:id", ...admin, validateParam("id"), propertyController.updateProperty);
 
+// Every live listing as stored (exact street, precise point): the admin
+// reviews page only — it was open to any signed-in user.
 router.get(
   "/admin/active",
-  authMiddleware,
+  ...admin,
   propertyController.getAllActiveProperty,
 );
 router.get(
@@ -62,8 +68,9 @@ router.patch(
   propertyController.approveListing,
 );
 
-router.patch("/admin/delist/:id", ...admin, validateParam("id"), propertyController.deListing);
-router.patch("/host/delist/:id", authMiddleware, requireListingHostOrAdmin("id"), propertyController.deListing);
+// Which kind of delist this is comes from the route, never from ?hostSide.
+router.patch("/admin/delist/:id", ...admin, validateParam("id"), propertyController.adminDeListing);
+router.patch("/host/delist/:id", authMiddleware, requireListingHostOrAdmin("id"), propertyController.hostDeListing);
 router.patch(
   "/host/reactivate/:id",
   authMiddleware,
@@ -106,6 +113,7 @@ router.get(
 router.get(
   "/get-timings/:propertyId",
   authMiddleware,
+  requireListingHostOrAdmin("propertyId"),
   propertyController.getTiming,
 );
 router.post("/timings", authMiddleware, requireBodyListingHostOrAdmin, propertyController.timing);

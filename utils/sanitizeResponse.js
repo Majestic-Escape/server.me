@@ -15,6 +15,7 @@
  */
 const crypto = require("crypto");
 const { maskContactInfo, maskContactInfoParts, buildAddressTokens, isAcceptableName } = require("./contactModeration");
+const { cancellationTypeOf } = require("./bookingEntitlement");
 
 // What the counterpart / the public may see of a user (allow-list).
 const PUBLIC_USER_FIELDS = [
@@ -32,7 +33,8 @@ const PUBLIC_USER_FIELDS = [
 ];
 
 // Never returned to anyone but an admin — not even to the user themselves.
-const SECRET_USER_FIELDS = ["otp", "otpRetries", "lockUntil", "tokenVersion", "password", "__v"];
+// listingFence: the ban / publish serialisation counter (services/listingPublish.js).
+const SECRET_USER_FIELDS = ["otp", "otpRetries", "lockUntil", "tokenVersion", "listingFence", "password", "__v"];
 
 // What a user may see of their OWN record (allow-list; every User schema
 // path is classified here or in SECRET_USER_FIELDS — tests/batch-s/pii.test.js
@@ -85,9 +87,9 @@ const SENSITIVE_ADDRESS_FIELDS = ["street", "registrationNumber"];
 const PRIVATE_LISTING_FIELDS = ["line1", "line2"];
 
 // Admin / owner workflow state that no public or guest reader needs: the
-// host's KYC stage on the listing, the moderation ban flag and Mongoose's
-// version counter.
-const INTERNAL_LISTING_FIELDS = ["kycStatus", "ban", "__v"];
+// host's KYC stage on the listing, the moderation ban flag, who delisted it
+// (host / admin — moderation provenance) and Mongoose's version counter.
+const INTERNAL_LISTING_FIELDS = ["kycStatus", "ban", "delist", "__v"];
 
 // Never returned to anyone through a listing response: the chat-widget
 // vectors (large, and excluded at the model).
@@ -105,6 +107,7 @@ const SENSITIVE_HOST_FIELDS = [
   "otpRetries",
   "lockUntil",
   "tokenVersion",
+  "listingFence",
   "password",
   "verification",
   "preferences",
@@ -418,6 +421,123 @@ function sanitizePropertyForOwner(property) {
   return propObj;
 }
 
+// --- Listings that are not public (draft, in review, delisted, banned) ------
+// docs/listing-visibility.md. Their owner and an active admin read them as
+// before; everyone else gets one of the two narrow views below. Both are
+// built from an ALREADY SANITIZED view (masking needs the full document —
+// street, line1, line2 — which the caller passed to the sanitizer first), and
+// both are allow-lists: a field added to the schema later is not exposed by
+// default.
+
+function pickDefined(src, keys) {
+  const out = {};
+  if (!src || typeof src !== "object") return out;
+  for (const k of keys) if (src[k] !== undefined) out[k] = src[k];
+  return out;
+}
+
+function stubHost(host) {
+  if (!host || typeof host !== "object" || isObjectId(host)) return host;
+  return pickDefined(host, ["_id", "firstName", "profilePicture"]);
+}
+
+function firstPhoto(photos) {
+  return Array.isArray(photos) && photos.length ? [photos[0]] : [];
+}
+
+/**
+ * What anyone may still learn about a listing that is not public: enough to
+ * name it in an old conversation, a checkout that must say "no longer
+ * available" or the chat server's host check — no description, rules,
+ * amenities, calendar or location beyond the city.
+ * @param {Object} view output of sanitizeProperty (public view)
+ */
+function listingStubView(view) {
+  if (!view) return view;
+  const out = {
+    _id: view._id,
+    title: view.title,
+    photos: firstPhoto(view.photos),
+    propertyType: view.propertyType,
+    placeType: view.placeType,
+    basePrice: view.basePrice,
+    address: pickDefined(view.address, ["city", "district", "state", "country"]),
+    host: stubHost(view.host),
+    averageRating: view.averageRating,
+    reviewCount: view.reviewCount,
+    status: view.status,
+  };
+  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
+  return out;
+}
+
+/**
+ * What the guest of a confirmed, paid booking reads about a listing that is
+ * no longer public: where it is (as precise as the caller's sanitizer
+ * allowed), what it is, and — only in the context of ONE booking — that
+ * booking's operational facts: check-in / check-out hours and house rules
+ * recorded when it was made (Booking.listingSnapshot) and the cancellation
+ * terms the booking is actually bound by (Booking.cancellationPolicy, what
+ * refunds are computed from — never the listing's current policy). Never the
+ * listing's current marketing text or a draft the host is editing.
+ *   tripFacts: false — the listing-level view (GET /properties/:id): a guest
+ *   may hold several bookings with different facts, so none are shown there.
+ * Bookings made before the snapshot existed show no rules (intentional sparse
+ * fallback) and the listing's current hours.
+ * @param {Object} view sanitizeProperty / sanitizePropertyForBookedGuest output
+ * @param {{ listingSnapshot?: Object, cancellationPolicy?: string }|null} booking
+ * @param {{ tripFacts?: boolean }} [opts]
+ */
+function bookedGuestListingView(view, booking, { tripFacts = true } = {}) {
+  if (!view) return view;
+  const snap = booking && booking.listingSnapshot && typeof booking.listingSnapshot === "object" ? booking.listingSnapshot : null;
+  const out = {
+    _id: view._id,
+    title: view.title,
+    photos: firstPhoto(view.photos),
+    propertyType: view.propertyType,
+    placeType: view.placeType,
+    // the nightly price is public listing data, and the apps format it
+    basePrice: view.basePrice,
+    address: view.address && typeof view.address === "object" ? { ...view.address } : view.address,
+    line1: view.line1,
+    line2: view.line2,
+    host: stubHost(view.host),
+    averageRating: view.averageRating,
+    reviewCount: view.reviewCount,
+    status: view.status,
+  };
+  if (tripFacts) {
+    out.checkinTime = snap && snap.checkinTime !== undefined ? snap.checkinTime : view.checkinTime;
+    out.checkoutTime = snap && snap.checkoutTime !== undefined ? snap.checkoutTime : view.checkoutTime;
+    out.cancellationType = cancellationTypeOf(booking && booking.cancellationPolicy) || (snap ? snap.cancellationType : undefined);
+    out.selectedRules = snap ? snap.selectedRules : undefined;
+    out.customRules = snap ? snap.customRules : undefined;
+  }
+  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
+  return out;
+}
+
+/**
+ * The house facts a booking records when it is made (Booking.listingSnapshot),
+ * taken from the public view so the rules are masked exactly as guests saw
+ * them.
+ */
+function bookingListingSnapshot(listing) {
+  const view = sanitizeProperty(listing);
+  if (!view) return undefined;
+  const snap = {
+    checkinTime: view.checkinTime,
+    checkoutTime: view.checkoutTime,
+    cancellationType: view.cancellationType,
+    selectedRules: view.selectedRules,
+    customRules: view.customRules,
+    capturedAt: new Date(),
+  };
+  for (const k of Object.keys(snap)) if (snap[k] === undefined) delete snap[k];
+  return snap;
+}
+
 module.exports = {
   toPublicUser,
   toSelfUser,
@@ -428,6 +548,9 @@ module.exports = {
   sanitizeProperties,
   sanitizePropertyForBookedGuest,
   sanitizePropertyForOwner,
+  listingStubView,
+  bookedGuestListingView,
+  bookingListingSnapshot,
   sanitizeAddress,
   approximateLocation,
   resetLocationKeyCache,

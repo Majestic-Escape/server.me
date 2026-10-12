@@ -474,9 +474,12 @@ test("routes: status is the host's own stage (indexed, status-only); admin docum
   await h.makeListing(O, { status: "active" });
   assert.equal((await S(OT, O.email)).json.status, "activeListings", "each host sees only their own stage");
   assert.equal((await S(AT, O.email)).json.status, "activeListings", "admin may ask for any host");
-  // legacy documents keyed by hostEmail only are still found
+  // legacy documents keyed by hostEmail only: an e-mail address is not proof of
+  // ownership (it can change and be reused — docs/listing-visibility.md), so the
+  // user's own card no longer counts them; an admin lookup by e-mail still does
   await ListingProperty().collection.updateMany({ host: O._id }, { $unset: { host: "" } });
-  assert.equal((await S(OT, O.email)).json.status, "activeListings");
+  assert.equal((await S(OT, O.email)).json.status, "noListings");
+  assert.equal((await S(AT, O.email)).json.status, "activeListings");
   startCounting();
   await S(HT);
   const statusOps = stopCounting();

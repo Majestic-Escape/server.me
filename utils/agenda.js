@@ -22,12 +22,43 @@ async function stillConfirmed({ bookingId, params, bookingStatus }) {
   }
 }
 
+// The listing reminder goes to the host's CURRENT account e-mail, looked up
+// when it is sent (a day or more after it was scheduled — the account address
+// may have changed, the listing may have moved to another host or been
+// deleted). Jobs scheduled before propertyId was stored keep their address.
+async function reminderRecipient(data) {
+  if (!data || !data.propertyId) return data && data.hostEmail;
+  try {
+    const l = await require("../models/ListingProperty").findById(data.propertyId).select("host").lean();
+    if (!l || !l.host) return null;
+    return await require("../services/listingPublish").hostEmailOf(l.host);
+  } catch (err) {
+    console.error("listing reminder: recipient lookup failed", err.message);
+    return null;
+  }
+}
+
+// The review reminder's host copy goes to the booking host's CURRENT account
+// e-mail (the address may have changed since the stay was confirmed).
+async function reviewHostRecipient({ bookingId, hostEmail }) {
+  if (!bookingId) return hostEmail;
+  try {
+    const b = await require("../models/Booking").findById(bookingId).select("hostId").lean();
+    if (!b || !b.hostId) return hostEmail;
+    const u = await require("../models/User").findById(b.hostId).select("email").lean();
+    return u && u.email ? u.email : hostEmail;
+  } catch (err) {
+    console.error("review reminder: host recipient lookup failed", err.message);
+    return hostEmail;
+  }
+}
+
 // Define the job once globally
 agenda.define("sendReviewEmail", async (job, done) => {
   if (process.env.NEXT_PUBLIC_ENV === "dev") {
     console.log("Agenda Function");
   }
-  const { userEmail, hostEmail, params } = job.attrs.data;
+  const { userEmail, params } = job.attrs.data;
 
   try {
     if (await stillConfirmed(job.attrs.data)) {
@@ -35,7 +66,8 @@ agenda.define("sendReviewEmail", async (job, done) => {
         console.log("Agenda Function Inside");
       }
       await sendEmail(userEmail, 12, params);
-      await sendEmail(hostEmail, 43, params);
+      const hostTo = await reviewHostRecipient(job.attrs.data);
+      if (hostTo) await sendEmail(hostTo, 43, params);
       if (process.env.NEXT_PUBLIC_ENV === "dev") {
         console.log("Agenda Function complete");
       }
@@ -48,10 +80,11 @@ agenda.define("sendReviewEmail", async (job, done) => {
 });
 
 agenda.define("sendPropertyReminderEmail", async (job, done) => {
-  const { newStatus, hostEmail, host } = job.attrs.data;
+  const { newStatus, host, propertyId } = job.attrs.data;
+  const hostEmail = await reminderRecipient(job.attrs.data);
   const params = { hostName: host };
   try {
-    if (newStatus == "incomplete") {
+    if (newStatus == "incomplete" && hostEmail) {
       if (process.env.HOST_COMMISSION_OFFER == "true") {
         await sendEmail(hostEmail, 52, params);
       } else {
@@ -61,6 +94,7 @@ agenda.define("sendPropertyReminderEmail", async (job, done) => {
         newStatus,
         hostEmail,
         host,
+        propertyId,
       });
     }
   } catch (err) {
@@ -70,10 +104,11 @@ agenda.define("sendPropertyReminderEmail", async (job, done) => {
   }
 });
 agenda.define("sendPropertyReminderAgainEmail", async (job, done) => {
-  const { newStatus, hostEmail, host } = job.attrs.data;
+  const { newStatus, host } = job.attrs.data;
+  const hostEmail = await reminderRecipient(job.attrs.data);
   const params = { hostName: host };
   try {
-    if (newStatus == "incomplete") {
+    if (newStatus == "incomplete" && hostEmail) {
       if (process.env.HOST_COMMISSION_OFFER == "true") {
         await sendEmail(hostEmail, 52, params);
       } else {
@@ -93,4 +128,6 @@ agenda.define("sendPropertyReminderAgainEmail", async (job, done) => {
   }
 })();
 
+// exposed for tests (recipient resolution only)
+agenda.__recipients = { reminderRecipient, reviewHostRecipient };
 module.exports = agenda;

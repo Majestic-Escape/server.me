@@ -58,16 +58,18 @@ function nonPublicView(listing, { access } = {}) {
  * "The listings of host X" for an owner-scoped read (a host's own portfolio,
  * an admin looking at one host). Ownership is the listing's `host` id — the
  * account — never an e-mail: hostEmail is a copy that can go stale (a
- * listing reassigned to another host must leave the old owner's lists). The
- * only e-mail match left is for legacy rows that have no host id at all
- * (they cannot belong to anyone else).
- * @param {{ hostId?: string|null, email?: string|null }} who
+ * listing reassigned to another host must leave the old owner's lists), and an
+ * e-mail address is not proof of ownership (an account's address can change and
+ * a later account can take the old one). A user's own read is by account id
+ * only; legacy rows without a host id are reachable by e-mail only for an
+ * ADMIN looking a host up (legacyByEmail) until an admin binds them.
+ * @param {{ hostId?: string|null, email?: string|null, legacyByEmail?: boolean }} who
  * @returns {Object} a Mongo filter (matches nothing when neither is given)
  */
-function ownedListingsFilter({ hostId, email }) {
+function ownedListingsFilter({ hostId, email, legacyByEmail = false }) {
   const or = [];
   if (hostId) or.push({ host: hostId });
-  const e = typeof email === "string" ? email.trim() : "";
+  const e = legacyByEmail && typeof email === "string" ? email.trim() : "";
   if (e) or.push({ host: null, hostEmail: { $in: [...new Set([e, e.toLowerCase()])] } });
   return or.length ? { $or: or } : { _id: null };
 }

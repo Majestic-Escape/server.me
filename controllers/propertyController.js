@@ -971,6 +971,14 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
 
 const publishRefusal = (res, err) => listingPublish.sendPublishError(res, err);
 
+// The host's CURRENT account e-mail (never the listing's hostEmail copy, which
+// can be stale after an account e-mail change). null when the listing has no
+// host account — the host e-mail is then skipped, not sent to a stale address.
+function hostRecipient(listing) {
+  const host = listing && listing.host;
+  return listingPublish.hostEmailOf(host && host._id ? host._id : host);
+}
+
 async function afterCommit(label, fn) {
   try {
     await fn();
@@ -1003,7 +1011,7 @@ exports.approveListing = async (req, res) => {
         const params = {
           hostName: host.firstName + " " + host.lastName,
           propertyId: id,
-          hostEmail: updatedListing.hostEmail,
+          hostEmail: await hostRecipient(updatedListing),
           propertyTitle: updatedListing.title,
           createdAt: new Date().toLocaleDateString(),
           updatedAt: new Date().toLocaleDateString(),
@@ -1013,9 +1021,9 @@ exports.approveListing = async (req, res) => {
         // re-approval after an admin delist has its own templates
         if (result.before.delist == "admin") {
           await Promise.all(adminEmail.map((email) => sendEmail(email.trim(), 48, params)));
-          await sendEmail(params.hostEmail, 49, params);
+          if (params.hostEmail) await sendEmail(params.hostEmail, 49, params);
         } else {
-          await sendEmail(params.hostEmail, 25, params);
+          if (params.hostEmail) await sendEmail(params.hostEmail, 25, params);
           await Promise.all(adminEmail.map((email) => sendEmail(email.trim(), 26, params)));
         }
       });
@@ -1073,7 +1081,7 @@ exports.reactivate = async (req, res) => {
   }
 };
 
-function delistParams(listing) {
+async function delistParams(listing) {
   const host = listing.host || {};
   return {
     hostName: host.firstName + " " + host.lastName,
@@ -1081,7 +1089,7 @@ function delistParams(listing) {
     city: listing.address && listing.address.city,
     state: listing.state,
     delistDate: new Date().toLocaleDateString(),
-    hostEmail: listing.hostEmail,
+    hostEmail: await hostRecipient(listing),
     hostContact: host.phoneNumber,
   };
 }
@@ -1108,8 +1116,8 @@ exports.hostDeListing = async (req, res) => {
     }
     await afterCommit("delist notify", () => notifyListingChanged([id], "delist")); // PUBLIC_CHANGE: active → inactive
     await afterCommit("delist e-mail", async () => {
-      const params = delistParams(updatedListing);
-      await sendEmail(params.hostEmail, 29, params);
+      const params = await delistParams(updatedListing);
+      if (params.hostEmail) await sendEmail(params.hostEmail, 29, params);
       await Promise.all(adminEmail.map((email) => sendEmail(email.trim(), 49, params)));
     });
     return res.status(200).json({
@@ -1147,8 +1155,8 @@ exports.adminDeListing = async (req, res) => {
     }
     await afterCommit("admin-delist notify", () => notifyListingChanged([id], "admin-delist")); // PUBLIC_CHANGE: active → inactive
     await afterCommit("admin-delist e-mail", async () => {
-      const params = delistParams(updatedListing);
-      await sendEmail(params.hostEmail, 27, params);
+      const params = await delistParams(updatedListing);
+      if (params.hostEmail) await sendEmail(params.hostEmail, 27, params);
       await sendEmail(adminEmail, 28, params);
     });
     return res.status(200).json({
@@ -1827,7 +1835,7 @@ exports.getUserPropertyListings = async (req, res) => {
     let email = userEmail;
     try { email = decodeURIComponent(userEmail); } catch { /* as sent */ }
     const hostId = actor && actor.kind === "user" && !authz.isAdmin(actor) ? actor.id : await hostIdForEmail(email);
-    const query = ownedListingsFilter({ hostId, email });
+    const query = ownedListingsFilter({ hostId, email, legacyByEmail: authz.isAdmin(actor) });
     const [listings, totalListings] = await Promise.all([
       ListingProperty.find(query)
         .sort({ createdAt: -1 })

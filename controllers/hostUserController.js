@@ -493,9 +493,15 @@ exports.updateHost = async (req, res) => {
     // Update host details
     host.firstName = firstName || host.firstName;
     host.lastName = lastName || host.lastName;
+    const emailChanged = !!email && String(email).toLowerCase() !== String(host.email).toLowerCase();
     host.email = email || host.email;
 
     await host.save();
+    // The listings' hostEmail copy follows the account (notifications already
+    // resolve the account address; this keeps admin lists and exports right).
+    if (emailChanged) {
+      await ListingProperty.updateMany({ host: host._id }, { $set: { hostEmail: host.email } });
+    }
 
     const listingsCount = await ListingProperty.countDocuments({
       host: host._id,

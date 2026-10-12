@@ -423,11 +423,18 @@ test("hostEmail follows the host account: never edited from a body, synced on re
   const c = await h.api("POST", "/prop-listing", { token: AT, body: { title: "Derived", host: String(B._id), hostEmail: "forged@x.test", status: "processing" } });
   assert.equal(c.status, 201);
   assert.equal((await ListingProperty().findById(c.body._id).lean()).hostEmail, B.email);
-  // a legacy row with no host id still belongs to its e-mail owner (and nobody else)
+  // an e-mail address never proves ownership: a host-less legacy row is not in
+  // a user's own list (until an admin binds it); an admin lookup by e-mail finds it
   const legacy = await ListingProperty().create({ title: "Hostless legacy", hostEmail: A.email, status: "processing" });
   const own = await h.api("GET", `/properties/user-properties/${encodeURIComponent(A.email)}`, { token: h.userToken(A) });
-  assert.ok(own.body.listings.some((x) => String(x._id) === String(legacy._id)), "legacy host-less row by e-mail");
+  assert.ok(!own.body.listings.some((x) => String(x._id) === String(legacy._id)), "no e-mail-only private access");
   assert.ok(!own.body.listings.some((x) => String(x._id) === String(l._id)), "reassigned row left A's list");
+  const adminView = await h.api("GET", `/properties/user-properties/${encodeURIComponent(A.email)}`, { token: AT });
+  assert.ok(adminView.body.listings.some((x) => String(x._id) === String(legacy._id)), "admin lookup by e-mail still finds the legacy row");
+  // an admin e-mail change of the host account updates the copies
+  assert.equal((await h.api("PUT", `/hosts/${B._id}`, { token: AT, body: { email: "heb-new@visibility.test" } })).status, 200);
+  assert.equal((await ListingProperty().findById(l._id).lean()).hostEmail, "heb-new@visibility.test");
+  B.email = "heb-new@visibility.test";
   const stat = await h.api("GET", `/prop-listing/status?email=${encodeURIComponent(B.email)}`, { token: h.userToken(B) });
   assert.equal(stat.status, 200);
   assert.notEqual(stat.body.status, "noListings", "B's stage card sees the reassigned listing");

@@ -65,9 +65,18 @@ listing's own address; the sanitizer strips those fields again.
 **Current owner, not historical parties.** Full listing rights follow the
 listing's current `host` id: a booking's `hostId` covers the booking record,
 not the (possibly reassigned) listing; owner-scoped lists (`/properties/user-properties/:email`,
-`/prop-listing/?hostEmail=`, `/prop-listing/status`) select by host id — the e-mail
-matches only legacy rows without a host id. `hostEmail` is derived from the host
-account on create and reassignment and is never editable from a request body.
+`/prop-listing/?hostEmail=`, `/prop-listing/status`) select by host id. An e-mail
+address never grants a user private access (addresses change and get reused):
+legacy rows without a host id are reachable by e-mail only in an ADMIN lookup,
+until an admin binds them to an account.
+
+**Notifications go to the host ACCOUNT.** Approve / delist / relist e-mails, the
+listing reminders and review notifications resolve the recipient from the host's
+current account e-mail at send time (scheduled jobs look it up when they run);
+no account → no host e-mail, never a stale address. The listing's `hostEmail`
+copy is derived on create, reassignment and publish, updated when an admin
+changes the account's e-mail (`PUT /hosts/:id`), and never editable from a
+request body.
 
 **Contract note (soft auth).** `GET /properties/:id` and the two calendar reads treat a
 missing, invalid, expired or revoked token as anonymous (they were public before;

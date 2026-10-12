@@ -110,11 +110,13 @@ async function publishListing({ listingId, mode, hostId = null }) {
       throw new PublishError(409, "HOST_NOT_ELIGIBLE", "The host's account is banned, deactivated or missing");
     }
     await hook("afterFence", { op: "publish", listingId: String(l._id), hostId: idOf(l.host) });
+    // the copy follows the account (a legacy row may still carry an old address)
+    const hostEmail = await hostEmailOf(l.host, session);
     const filter = { _id: l._id, host: l.host, status: l.status, ban: { $ne: true } };
     if (mode === "reactivate") filter.delist = "host";
     const upd = await ListingProperty.updateOne(
       filter,
-      { $set: { status: "active" }, $unset: { delist: "" } },
+      { $set: { status: "active", ...(hostEmail ? { hostEmail } : {}) }, $unset: { delist: "" } },
       { session, runValidators: true },
     );
     if (upd.matchedCount !== 1) throw new PublishError(409, "LISTING_CHANGED", "The listing changed meanwhile. Reload and try again.");

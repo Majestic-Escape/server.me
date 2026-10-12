@@ -28,7 +28,7 @@ exports.getListingStatus = async (req, res) => {
     // that account's (e-mail matches only legacy rows without a host id)
     const hostId = actor && actor.kind === "user" ? actor.id : await hostIdForEmail(email);
     const listings = hostId || email
-      ? await ListingProperty.find(ownedListingsFilter({ hostId, email })).select("status").lean()
+      ? await ListingProperty.find(ownedListingsFilter({ hostId, email, legacyByEmail: authz.isAdmin(actor) })).select("status").lean()
       : [];
 
     if (!listings.length) {
@@ -103,7 +103,7 @@ exports.getAllPListings = async (req, res) => {
       // The listings OF that host: by account id (a reassigned listing leaves
       // the old owner's list), e-mail only for legacy rows without a host id.
       const hostId = own ? actor.id : await hostIdForEmail(hostEmail);
-      query.$and = [...(query.$and || []), ownedListingsFilter({ hostId, email: hostEmail })];
+      query.$and = [...(query.$and || []), ownedListingsFilter({ hostId, email: hostEmail, legacyByEmail: !own && authz.isAdmin(actor) })];
     }
     // Drafts, listings in review and delisted ones are not public: anyone
     // but an admin or the host listing their own sees active listings only

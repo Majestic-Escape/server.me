@@ -1768,13 +1768,12 @@ exports.updateListingProperty = async (req, res) => {
       }
     }
 
-    const hostEmail = property.hostEmail;
     const newStatus = property.status;
     if (status == "inactive") {
       await agenda
         .create("sendPropertyReminderEmail", {
+          // the recipient is resolved from the listing when the job runs
           newStatus,
-          hostEmail,
           host,
           propertyId: property._id.toString(),
         })

@@ -159,6 +159,7 @@ Verdict table (`services/kycVerdict.js`): `http_response_code === 200` and `resu
 | `GET /properties/admin-filter` | 401 | 403 | 403 | 200 | Batch P: was anonymous; the admin already sends the token |
 | `GET /properties/active/filter/:hostId` | 401 | 403 | 403 | 200 | Batch P: was any authenticated user (host contact details); admin host-profile page only |
 | `GET /properties/` (bare) | 200 | 200 | 200 | 200 | Batch P: active listings only, card projection (was every status incl. drafts, no consumer) |
+| `GET /properties/:id/related` | 200 | 200 | 200 | 200 | public rows of public listings only (card allow-list, approximate points); a source that is not public → empty rows + `no-store`; only `?fresh=1` (with the site secret) is accepted — docs/related-stays.md |
 | `POST /review/` | 401 | 403 | 201 (booking's guest) | 403 | Batch P: only the guest who made the booking; a review changes the public rating and purges the catalogue |
 | `POST /review/guest` | 401 | 403 | 200 (booking's host) | 403 | Batch P: only the booking's host |
 | `PATCH /review/update` | 401 | 403 | 403 | 200 | Batch P: review moderation is admin-only (admin Reviews page); ids validated |

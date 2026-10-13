@@ -23,6 +23,7 @@ const {
 const { resolveListingAccess, nonPublicView, ownedListingsFilter, hostIdForEmail } = require("../services/listingAccess");
 const authMiddleware = require("../middleware/authMiddleware");
 const listingPublish = require("../services/listingPublish");
+const relatedStays = require("../services/relatedStays");
 // Batch P — public catalogue: card projection, edge-cache policy, change
 // notifications and the authoritative night ledger for date searches.
 const BookingNight = require("../models/BookingNight");
@@ -1173,6 +1174,29 @@ exports.adminDeListing = async (req, res) => {
   }
 };
 
+
+// GET /properties/:id/related — "More stays hosted by …" and "Similar stays
+// nearby" for a public stay (docs/related-stays.md). Public data only, the
+// same for every caller (no auth). Only ?fresh=1 (the site server's
+// secret-gated cache bypass) is accepted; anything else is refused before any
+// database work. Edge-cache headers are installed only once the final body
+// is ready and only for a public source — an unknown / non-public source or
+// a read that changed under us stays no-store.
+exports.getRelatedStays = async (req, res) => {
+  const keys = Object.keys(req.query || {});
+  if (keys.some((k) => k !== "fresh") || (req.query.fresh !== undefined && req.query.fresh !== "1")) {
+    return res.status(400).json({ success: false, code: "INVALID_PARAM", message: "Only ?fresh=1 is accepted here", statusCode: 400 });
+  }
+  try {
+    if (!catalogueCache(req, res, { cacheable: false })) return; // validates ?fresh
+    const { body, cacheable } = await relatedStays.relatedFor(req.params.id);
+    if (cacheable && !catalogueCache(req, res)) return;
+    return res.status(200).json(body);
+  } catch (error) {
+    console.error("related stays error:", error && error.message);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
 
 exports.getPropertyById = async (req, res) => {
   try {

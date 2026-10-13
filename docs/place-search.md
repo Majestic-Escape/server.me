@@ -181,7 +181,9 @@ memoised, plan in ~25 ms.
 **Scale path:** the aggregate returns every active listing's location fields
 (~150 B each). Past ~5,000 active listings add a GeoJSON point + 2dsphere
 index and prefilter by the place's bounding box (strict) / `$geoNear`
-(nearby) — the plan/classification code is unchanged.
+(nearby) — the plan/classification code is unchanged. The stay page's
+related-stays rows (docs/related-stays.md) scan the same active inventory
+and share this scale path.
 
 ## Privacy / security invariants (tested)
 - Exact coordinates never influence output: distances and nearby order use

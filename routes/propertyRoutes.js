@@ -38,6 +38,8 @@ router.get("/admin-filter", ...admin, propertyController.getAdminFilter); // Bat
 router.get("/search-properties", propertyController.getCustomSearch);
 // Public read with an entitled-caller upgrade (docs/listing-visibility.md):
 // soft auth — a stale or invalid token is anonymous, never a 401.
+// "More stays hosted by …" / "Similar stays nearby" (docs/related-stays.md)
+router.get("/:id/related", validateParam("id"), propertyController.getRelatedStays);
 router.get("/:id", authMiddleware.soft, validateParam("id"), propertyController.getPropertyById);
 // Legacy `Property` model endpoints (no client uses them): admin only.
 router.post("/", ...admin, propertyController.createProperty);

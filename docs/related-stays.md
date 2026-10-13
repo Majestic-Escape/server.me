@@ -92,31 +92,66 @@ Rows can only shrink (no refill query). After a concurrent change they may
 not be the global optimum until the next refresh; they are always eligible
 and correctly attributed.
 
-## Cost (measured, tests/batch-s/related-stays.test.js)
-- Edge hit: 0 DB operations. Edge miss: ≤ 3 listing queries, 0 other
-  collections. Unknown / non-public id: 1 indexed read.
+## Cost
+**What is bounded, and what is not** (measured: `tests/batch-s/related-stays.test.js`
+"cost", driver command monitoring + `explain("executionStats")`).
+
+| | Sparse inventory (5,001 live, 11 candidates) | Dense (5,001 live, all candidates) |
+|---|---|---|
+| Mongoose queries | ≤ 3 | ≤ 3 |
+| Driver commands (`find` + `getMore`) | 3 (one per query) | 3 — Q2 uses `batchSize(20000)`; before, 8 (`find`, `find`, 5 × `getMore`, `find`) |
+| Documents returned to Node by Q2 | 11 | 5,001 |
+| **Documents MongoDB examines for Q2** | **5,001** (IXSCAN `status_1_createdAt_-1__id_-1`, then FETCH applying the host-or-box predicate) | 5,001 |
+
+- The box **reduces what is transferred to Node and ranked** for spread
+  inventory. It does **not** reduce what MongoDB examines: with the declared
+  indexes (`{status, createdAt, _id}`, `{host}`) the spatial branch has no
+  index, so Q2 is **O(live listings)** server-side, exactly like search
+  (docs/place-search.md), and a dense box is unbounded by any fixed candidate
+  count. The "abuse cost" of an edge miss is therefore *not* bounded by the
+  box.
+- Edge hit: 0 DB operations. Unknown / non-public id: 1 indexed read.
 - The site renders the rows on the server inside the stay page's ISR
   (revalidate 3600 s, tags `listings` + `listing:<id>`), so most guests never
   reach the endpoint; the browser only calls it when the server render could
   not get the rows.
-- Local (mongodb-memory-server, test client and API in one process), 15
-  requests each, nearest-rank p95, worst case for the box (every bulk
-  listing within ~150 km of the source): 2,000 live listings p95 ≈ 87–89
-  ms; 5,000 live listings p95 ≈ 114–132 ms (target 150 ms). Payload ≈ 4.8
-  KB for 20 cards (budget 40 KB). Spread inventory is cheaper: only the
-  host's stays and the box are read.
-- Before the box (whole inventory), at 5,000: Q2 ≈ 40 ms, public points ≈
-  26 ms (one HMAC per listing), ranking ≈ 5 ms. Production had 19 live
-  listings at the 2026-10-12 audit.
 - The endpoint has no rate limit of its own (none of the catalogue reads
-  has; `Vary: Origin` lets a caller miss the edge on purpose). The box
-  bounds what one miss can cost; a platform rate limit is an owner
-  decision.
+  has; `Vary: Origin` lets a caller miss the edge on purpose). A platform
+  rate limit is a separate, cross-cutting decision.
+- Production had 19 live listings at the 2026-10-12 audit: the scan is
+  microseconds there.
 
-**Scale path** (same as search, docs/place-search.md): when one region
-alone holds several thousand live listings, memoise public points per
-`(id, lat, lng)` and add a 2dsphere index on the **public** point (Q2 then
-reads the box through the index). The ranking code is unchanged.
+**Scale path (verified, not shipped).** An index on
+`{ status: 1, "address.latitude": 1, "address.longitude": 1 }` turns the
+plan into `OR(IXSCAN host_1, IXSCAN spatial)` and MongoDB examines the
+candidates only — same 11 candidates, **11 documents examined instead of
+5,001** (the "cost" test creates the index, asserts the equality of the
+candidate set and the drop, and removes it). It is deliberately **not**
+added to the schema: production indexes are created by an explicit,
+owner-run step (`scripts/ensure-indexes.js`; `autoIndex` is off), it would
+change planner choices on the busiest collection for no benefit at 19 live
+listings, and the query itself would not change (so the equivalence tests
+still hold). Add it when live listings reach the low thousands, together
+with memoised public points (one HMAC per listing per miss: ≈ 26 ms at
+5,000). A dense region still needs a candidate cap or the 2dsphere index
+below; either changes ranking input and needs its own equivalence proof.
+Later: a 2dsphere index on the **public** point.
+
+## Performance gate (separate from the functional tests)
+`npm run perf:related` (`tests/perf/related-stays.perf.js`; **not** part of
+`npm test`, which runs files in parallel and would measure other test files).
+- Budget: **p95 ≤ 150 ms** at 2,000 and 5,000 live listings, payload < 40
+  KB. Worst case for the box (every bulk listing inside it). Gate = median
+  of 3 rounds × 15 requests of the nearest-rank p95; the environment (node,
+  OS, CPU, RAM, local mongodb-memory-server with client and API in one
+  process) is printed with the result.
+- It first samples the whole machine's CPU; above 35 % busy
+  (`PERF_MAX_BUSY`) it fails as **INCONCLUSIVE** instead of reporting a
+  number that describes other programs. `PERF_BUDGET_MS` overrides the
+  budget for a slower declared environment.
+- A green functional run says nothing about the 150 ms target — only this
+  gate does, on an idle machine. Results are recorded in
+  `tests/pw-final/evidence/related-stays-2026-10.md`.
 
 ## Tests
 `tests/batch-s/related-stays.test.js`: golden boundaries, host ordering,
@@ -130,4 +165,4 @@ answered `unavailable` — candidate delisted / moved past 250 km /
 reassigned); response-filter and DB failures; the box contains every point
 within 250 km + the offset at six latitudes and 72 bearings, falls back at
 a pole / the antimeridian, and the API rows equal a whole-inventory ranking
-with stays straddling 250 km; the 2,000 / 5,000 budget.
+with stays straddling 250 km; the cost test (driver commands, examined documents, spatial-index scale path).

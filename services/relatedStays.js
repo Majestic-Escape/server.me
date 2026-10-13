@@ -35,6 +35,7 @@ const WIDE_BAND_KM = 25;
 const PRICE_TOLERANCE = 0.35;
 const GUESTS_TOLERANCE = 2;
 const EPS = 1e-9;
+const POOL_BATCH = 20000;
 const KM_PER_DEG = (2 * Math.PI * 6371) / 360; // the sphere of utils/places.js distanceKm
 // beyond the largest approximation offset, plus float slack
 const PREFILTER_MARGIN_KM = OFFSET_MAX_M / 1000 + 0.65;
@@ -228,7 +229,10 @@ async function relatedFor(id) {
   const src = summarize(srcDoc);
   const filter = poolFilter(src);
   if (!filter) return { body: EMPTY(src.host), cacheable: true };
-  const pool = (await ListingProperty.find(filter).select(POOL_PROJECTION).lean()).map(summarize);
+  // batchSize: the default 101 + 1,000-per-getMore turns a dense box into a
+  // chain of round trips; 10 fields per document, so one batch is ~1.5 MB
+  // for 5,000 listings (the server caps a batch at 16 MB and then continues)
+  const pool = (await ListingProperty.find(filter).select(POOL_PROJECTION).batchSize(POOL_BATCH).lean()).map(summarize);
   if (typeof hooks.afterPool === "function") await hooks.afterPool({ id });
 
   const hostPicked = rankHost(src, pool);

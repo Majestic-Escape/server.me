@@ -4,10 +4,18 @@
 //   5 km bands), host ordering, scope, seeded randomized invariants
 //   API — input, public inventory only, card allow-list + masking + public
 //   points, caching headers, ≤ 3 queries, races between the scan and the
-//   card read, budgets at 2,000 / 5,000 live listings
+//   card read, driver commands + documents examined (sparse and dense).
+// Latency lives in tests/perf/related-stays.perf.js (npm run perf:related):
+// a timing budget does not belong in a suite that runs files in parallel.
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const mongoose = require("mongoose");
+// driver command monitoring (find / getMore round trips), set before the
+// connection is made
+const realConnect = mongoose.connect;
+mongoose.connect = function (uri, options) {
+  return realConnect.call(this, uri, { ...options, monitorCommands: true });
+};
 const h = require("./setup");
 const R = () => require("../../services/relatedStays");
 const ListingProperty = () => require("../../models/ListingProperty");
@@ -371,7 +379,15 @@ test("prefilter: API rows equal a full-inventory ranking (seeded, incl. 249–25
   }
   const ins = await L.collection.insertMany(docs);
   const ids = Object.values(ins.insertedIds);
-  const srcs = [await h.makeListing(hostX, { title: "Eq source", address: { city: "Eqcity", state: "Eqstate", latitude: C.lat, longitude: C.lng } })];
+  // several source locations: the centre (the 250 km band decides its row) and
+  // points 120 / 240 / 400 km away on different bearings, in both hemispheres of the cloud
+  const at = (dLat, dLng) => ({ city: "Eqcity", state: "Eqstate", latitude: C.lat + dLat / KM_PER_DEG_LAT, longitude: C.lng + dLng / (KM_PER_DEG_LAT * Math.cos((C.lat * Math.PI) / 180)) });
+  const srcs = [
+    await h.makeListing(hostX, { title: "Eq source 0", address: at(0, 0) }),
+    await h.makeListing(OTHER, { title: "Eq source 1", address: at(120, 0) }),
+    await h.makeListing(hostX, { title: "Eq source 2", address: at(-170, 170) }),
+    await h.makeListing(OTHER, { title: "Eq source 3", address: at(0, -400) }),
+  ];
   const r = R();
   const { publicListingFilter } = require("../../utils/listingProjection");
   try {
@@ -384,46 +400,72 @@ test("prefilter: API rows equal a full-inventory ranking (seeded, incl. 249–25
       assert.deepEqual(res.json.host.map((c) => String(c._id)), hostRow.map((c) => c.id), "host row");
       assert.deepEqual(res.json.nearby.map((c) => String(c._id)), near.items.map((x) => x.c.id), "nearby row");
       assert.equal(res.json.nearbyScope, near.scope);
-      assert.ok(res.json.nearby.length >= 4 && res.json.nearby.every((c) => c.distanceKm >= 245 && c.distanceKm <= 250.05), `the 250 km edge decided the row: ${res.json.nearby.map((c) => c.distanceKm)}`);
+      if (s === srcs[0]) assert.ok(res.json.nearby.filter((c) => c.distanceKm >= 245 && c.distanceKm <= 250.05).length >= 4, `the 250 km edge decided the row: ${res.json.nearby.map((c) => c.distanceKm)}`);
     }
   } finally {
     await L.deleteMany({ _id: { $in: [...ids, ...srcs.map((x) => x._id)] } });
   }
 });
 
-test("budget: 2,000 and 5,000 live listings — latency, payload, memory (measured)", async () => {
+test("cost: driver commands and documents examined — sparse and dense inventory", async () => {
   const L = ListingProperty();
-  for (const total of [2000, 5000]) {
-    const have = await L.countDocuments({ title: /^Bulk / });
-    const docs = [];
-    for (let i = have; i < total; i++) {
-      docs.push({
-        title: `Bulk ${i}`, host: i % 50 === 0 ? HOST._id : OTHER._id, hostEmail: "bulk@related.test", status: "active",
-        propertyType: ["villa", "flat", "cottage"][i % 3], basePrice: 1000 + (i % 40) * 250, guests: 1 + (i % 10),
-        photos: [`https://cdn.test/bulk${i}.jpg`], description: "x".repeat(400), amenities: ["wifi", "pool"],
-        address: { street: `${i} Bulk Road`, city: "Panaji", state: "Goa", latitude: PANAJI.lat + ((i % 200) - 100) / 100, longitude: PANAJI.lng + (Math.floor(i / 200) % 25 - 12) / 100 },
-        createdAt: new Date(Date.now() - i * 1000),
-      });
+  const r = R();
+  const { publicListingFilter } = require("../../utils/listingProjection");
+  const bulk = (n) =>
+    Array.from({ length: n }, (_, i) => ({
+      title: `Bulk ${i}`, host: OTHER._id, hostEmail: "bulk@related.test", status: "active", propertyType: "villa", basePrice: 5000, guests: 4,
+      photos: ["https://cdn.test/b.jpg"], description: "x".repeat(200),
+      address: i < 10
+        ? { city: "Panaji", state: "Goa", latitude: PANAJI.lat + i / 400, longitude: PANAJI.lng + i / 400 }
+        : { city: "Leh", state: "Ladakh", latitude: 30 + (i % 150) / 20, longitude: 76 + (i % 90) / 20 }, // > 1,000 km away
+      createdAt: new Date(Date.now() - i * 1000),
+    }));
+  const stagesOf = (plan) => JSON.stringify(plan.queryPlanner.winningPlan).match(/"stage":"[A-Z_]+"/g).map((x) => x.slice(9, -1));
+  const sourceSummary = r.summarize(await L.findById(src._id).lean());
+  const explain = () => L.find(r.poolFilter(sourceSummary)).select(r.POOL_PROJECTION).lean().explain("executionStats");
+  const client = mongoose.connection.getClient();
+  const commands = [];
+  const onStart = (e) => {
+    if (e.commandName === "find" || e.commandName === "getMore") commands.push(e.commandName);
+  };
+  client.on("commandStarted", onStart);
+  try {
+    await L.collection.insertMany(bulk(5000));
+    const live = await L.countDocuments(publicListingFilter());
+    // sparse: a handful of candidates among ~5,000 live listings
+    let plan = await explain();
+    const sparse = { returned: plan.executionStats.nReturned, docs: plan.executionStats.totalDocsExamined, stages: stagesOf(plan) };
+    console.log(`[cost] sparse, ${live} live: returned ${sparse.returned}, docsExamined ${sparse.docs}, plan ${sparse.stages.join(" > ")}`);
+    assert.ok(sparse.returned < 60, "the box returns the neighbourhood, not the inventory");
+    assert.ok(!sparse.stages.includes("COLLSCAN"), "an index scan, never a collection scan");
+    // the honest trade-off: without a spatial index the scan is O(live listings)
+    assert.ok(sparse.docs <= live + 1, "bounded by the live inventory");
+    // the scale path (docs/related-stays.md): with { status, lat, lng } MongoDB examines the candidates only
+    await L.collection.createIndex({ status: 1, "address.latitude": 1, "address.longitude": 1 }, { name: "related_probe_spatial" });
+    try {
+      plan = await explain();
+      const withIndex = { returned: plan.executionStats.nReturned, docs: plan.executionStats.totalDocsExamined, stages: stagesOf(plan) };
+      console.log(`[cost] sparse + spatial index: returned ${withIndex.returned}, docsExamined ${withIndex.docs}, plan ${withIndex.stages.join(" > ")}`);
+      assert.equal(withIndex.returned, sparse.returned, "same candidates with or without the index");
+      assert.ok(withIndex.docs <= withIndex.returned + 5, `index: examined ${withIndex.docs} for ${withIndex.returned} candidates`);
+    } finally {
+      await L.collection.dropIndex("related_probe_spatial");
     }
-    if (docs.length) await L.collection.insertMany(docs);
-    const times = [];
-    let bytes = 0;
-    const heap0 = process.memoryUsage().heapUsed;
-    for (let k = 0; k < 15; k++) {
-      const t0 = performance.now();
-      const r = await raw(`/properties/${src._id}/related`);
-      times.push(performance.now() - t0);
-      bytes = r.text.length;
-      assert.equal(r.status, 200);
-      assert.equal(r.json.host.length, 12);
-      assert.equal(r.json.nearby.length, 8);
-    }
-    times.sort((a, b) => a - b);
-    const p95 = times[Math.ceil(times.length * 0.95) - 1]; // nearest rank
-    const heapMb = (process.memoryUsage().heapUsed - heap0) / 1048576;
-    console.log(`[budget] ${total} live: p50 ${times[Math.floor(times.length / 2)].toFixed(0)} ms, p95 ${p95.toFixed(0)} ms, payload ${bytes} B, heap Δ ${heapMb.toFixed(1)} MB`);
-    assert.ok(bytes < 40000, `payload ${bytes} B`);
-    assert.ok(p95 < 2000, `p95 ${p95.toFixed(0)} ms (target 150 ms locally — see the [budget] line)`);
+    // dense: every listing inside the box — all of them are candidates
+    await L.updateMany({ title: /^Bulk / }, { $set: { "address.latitude": PANAJI.lat, "address.longitude": PANAJI.lng } });
+    await L.updateMany({ title: /^Bulk \d{1,2}$/ }, { $set: { host: HOST._id } }); // the source's host has stays too
+    commands.length = 0;
+    const out = await r.relatedFor(String(src._id));
+    console.log(`[cost] dense, ${live} live: driver commands ${commands.join(", ")}`);
+    assert.equal(out.body.host.length, 12);
+    assert.equal(out.body.nearby.length, 8);
+    assert.deepEqual(commands, ["find", "find", "find"], "one command per query — no getMore chain in a dense box");
+    // unknown / non-public source: a single indexed read
+    commands.length = 0;
+    await r.relatedFor("0123456789abcdef01234567");
+    assert.deepEqual(commands, ["find"]);
+  } finally {
+    client.off("commandStarted", onStart);
+    await L.deleteMany({ title: /^Bulk / });
   }
-  await L.deleteMany({ title: /^Bulk / });
 });

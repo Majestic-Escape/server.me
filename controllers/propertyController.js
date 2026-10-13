@@ -1188,9 +1188,13 @@ exports.getRelatedStays = async (req, res) => {
     return res.status(400).json({ success: false, code: "INVALID_PARAM", message: "Only ?fresh=1 is accepted here", statusCode: 400 });
   }
   try {
-    if (!catalogueCache(req, res, { cacheable: false })) return; // validates ?fresh
+    // One cache decision per request: a `fresh` bypass (secret checked here,
+    // before any DB work) is answered no-store; otherwise the public / CDN
+    // headers go on only for a cacheable answer, once it is known.
+    const bypass = req.query.fresh !== undefined;
+    if (bypass && !catalogueCache(req, res)) return;
     const { body, cacheable } = await relatedStays.relatedFor(req.params.id);
-    if (cacheable && !catalogueCache(req, res)) return;
+    if (!bypass && cacheable) catalogueCache(req, res);
     return res.status(200).json(body);
   } catch (error) {
     console.error("related stays error:", error && error.message);

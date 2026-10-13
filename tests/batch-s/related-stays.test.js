@@ -122,6 +122,35 @@ test("ranking: seeded randomized invariants (bounded, deterministic, no self / d
   }
 });
 
+test("prefilter: the box is a superset of the 250 km ring of PUBLIC points; poles / antimeridian scan everything", () => {
+  const { OFFSET_MAX_M } = require("../../utils/sanitizeResponse");
+  const r = R();
+  assert.ok(r.PREFILTER_MARGIN_KM * 1000 > OFFSET_MAX_M, "margin beyond the largest approximation offset");
+  const box = (src) => r.poolFilter(src).$or.find((c) => c["address.latitude"]);
+  // every exact point within 250 km + offset of the source's public point lies inside the box
+  for (const lat of [-60, -10, 0, 15.49, 34.15, 60]) {
+    const src = S("s", { host: null, point: { lat, lng: 74 } });
+    const b = box(src);
+    const reach = 250 + OFFSET_MAX_M / 1000;
+    for (let bearing = 0; bearing < 360; bearing += 5) {
+      const t = (bearing * Math.PI) / 180;
+      const δ = reach / 6371;
+      const φ1 = (lat * Math.PI) / 180;
+      const φ2 = Math.asin(Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(t));
+      const λ2 = (74 * Math.PI) / 180 + Math.atan2(Math.sin(t) * Math.sin(δ) * Math.cos(φ1), Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2));
+      const p = { lat: (φ2 * 180) / Math.PI, lng: (λ2 * 180) / Math.PI };
+      assert.ok(p.lat >= b["address.latitude"].$gte && p.lat <= b["address.latitude"].$lte, `lat ${lat} bearing ${bearing}`);
+      assert.ok(p.lng >= b["address.longitude"].$gte && p.lng <= b["address.longitude"].$lte, `lng ${lat} bearing ${bearing}`);
+    }
+  }
+  const all = JSON.stringify(require("../../utils/listingProjection").publicListingFilter());
+  assert.equal(JSON.stringify(r.poolFilter(S("s", { point: { lat: 86, lng: 10 } }))), all, "near a pole: whole inventory");
+  assert.equal(JSON.stringify(r.poolFilter(S("s", { point: { lat: 10, lng: 179.5 } }))), all, "across the antimeridian: whole inventory");
+  assert.equal(r.poolFilter(S("s", { host: null, point: null })), null, "nothing to relate");
+  const hostOnly = r.poolFilter(S("s", { host: "h1", point: null }));
+  assert.deepEqual(hostOnly.$or, [{ host: "h1" }], "no point: the host's stays only");
+});
+
 // --- API --------------------------------------------------------------------
 let HOST, OTHER, src;
 const PANAJI = { lat: 15.4909, lng: 73.8278 };
@@ -167,7 +196,7 @@ test("API: unknown / non-public source → empty rows, no-store, one indexed rea
     const r = await raw(`/properties/${id}/related`);
     mongoose.set("debug", false);
     assert.equal(r.status, 200);
-    assert.deepEqual(r.json, { host: [], nearby: [], nearbyScope: null, sourceHostId: null });
+    assert.deepEqual(r.json, { host: [], nearby: [], nearbyScope: null, sourceHostId: null, unavailable: true });
     assert.match(r.h.get("cache-control") || "", /no-store/);
     assert.equal(r.h.get("cdn-cache-control"), null);
     assert.equal(r.h.get("vercel-cache-tag"), null);
@@ -213,6 +242,7 @@ test("API: rows — public inventory only, host row then nearby, no duplicates, 
   const text = r.text;
   for (const leak of ["Copper Lantern", "Flat 9", "secret description", "hostEmail", "street", "line1"]) assert.ok(!text.includes(leak), `leaked ${leak}`);
   assert.ok(!/"host":\s*[{"]/.test(text), "no host object / id on a card (only the row key and sourceHostId)");
+  assert.equal(r.json.unavailable, undefined, "a real answer carries no unavailable flag");
   // the distance shown agrees with the points shown (both public)
   const { distanceKm } = require("../../utils/places");
   const sp = approximateLocation(String(src._id), src.address.latitude, src.address.longitude);
@@ -292,17 +322,19 @@ test("API: races between the pool scan and the card read", async () => {
   };
   // the source is delisted between the reads → fail closed, not cached
   let r = await run(() => ListingProperty().updateOne({ _id: src._id }, { $set: { status: "inactive", delist: "host" } }));
-  assert.deepEqual([r.json.host.length, r.json.nearby.length, r.json.sourceHostId], [0, 0, null]);
+  assert.deepEqual([r.json.host.length, r.json.nearby.length, r.json.sourceHostId, r.json.unavailable], [0, 0, null, true]);
   assert.equal(r.h.get("cdn-cache-control"), null);
   await ListingProperty().updateOne({ _id: src._id }, { $set: { status: "active" }, $unset: { delist: 1 } });
   // the source changes host → fail closed (no other host's cards under this host's name)
   r = await run(() => ListingProperty().updateOne({ _id: src._id }, { $set: { host: OTHER._id } }));
   assert.equal(r.json.host.length + r.json.nearby.length, 0);
+  assert.equal(r.json.unavailable, true, "a fail-closed answer says so (the site must not keep it)");
   assert.equal(r.h.get("cdn-cache-control"), null);
   await ListingProperty().updateOne({ _id: src._id }, { $set: { host: HOST._id } });
   // the source moves → fail closed
   r = await run(() => ListingProperty().updateOne({ _id: src._id }, { $set: { "address.latitude": 20 } }));
   assert.equal(r.json.host.length + r.json.nearby.length, 0);
+  assert.equal(r.json.unavailable, true);
   await ListingProperty().updateOne({ _id: src._id }, { $set: { "address.latitude": PANAJI.lat } });
   // a candidate is delisted → dropped, no refill
   r = await run(() => ListingProperty().updateOne({ _id: other._id }, { $set: { status: "inactive" } }));
@@ -318,6 +350,45 @@ test("API: races between the pool scan and the card read", async () => {
   assert.ok(!r.json.host.some((c) => String(c._id) === String(sib._id)), "no longer this host's");
   assert.ok(!r.json.nearby.some((c) => String(c._id) === String(sib._id)), "and not refilled into nearby");
   await ListingProperty().deleteMany({ _id: { $in: [sib._id, other._id] } });
+});
+
+test("prefilter: API rows equal a full-inventory ranking (seeded, incl. 249–252 km edges)", async () => {
+  const L = ListingProperty();
+  const hostX = await h.makeUser({ role: "host", firstName: "Eqx", email: "eqx@related.test" });
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const docs = [];
+  const C = { lat: 22.5, lng: 80 };
+  for (let i = 0; i < 400; i++) {
+    const km = i < 40 ? 249 + rnd() * 3 : 300 + rnd() * 300; // only a band straddling 250 km is in reach
+    const t = rnd() * 2 * Math.PI;
+    docs.push({
+      title: `Eq ${i}`, host: rnd() < 0.1 ? hostX._id : OTHER._id, hostEmail: "eq@related.test", status: rnd() < 0.9 ? "active" : "processing",
+      propertyType: ["villa", "flat"][i % 2], basePrice: 1000 + Math.floor(rnd() * 8000), guests: 1 + (i % 8),
+      address: { city: "Eqcity", state: "Eqstate", latitude: C.lat + (km / KM_PER_DEG_LAT) * Math.cos(t), longitude: C.lng + (km / (KM_PER_DEG_LAT * Math.cos((C.lat * Math.PI) / 180))) * Math.sin(t) },
+      createdAt: new Date(Date.now() - i * 1000),
+    });
+  }
+  const ins = await L.collection.insertMany(docs);
+  const ids = Object.values(ins.insertedIds);
+  const srcs = [await h.makeListing(hostX, { title: "Eq source", address: { city: "Eqcity", state: "Eqstate", latitude: C.lat, longitude: C.lng } })];
+  const r = R();
+  const { publicListingFilter } = require("../../utils/listingProjection");
+  try {
+    for (const s of srcs) {
+      const res = await raw(`/properties/${s._id}/related`);
+      const full = (await L.find(publicListingFilter()).select(r.POOL_PROJECTION).lean()).map(r.summarize);
+      const me = full.find((c) => c.id === String(s._id));
+      const hostRow = r.rankHost(me, full);
+      const near = r.rankNearby(me, full, { exclude: new Set(hostRow.map((c) => c.id)) });
+      assert.deepEqual(res.json.host.map((c) => String(c._id)), hostRow.map((c) => c.id), "host row");
+      assert.deepEqual(res.json.nearby.map((c) => String(c._id)), near.items.map((x) => x.c.id), "nearby row");
+      assert.equal(res.json.nearbyScope, near.scope);
+      assert.ok(res.json.nearby.length >= 4 && res.json.nearby.every((c) => c.distanceKm >= 245 && c.distanceKm <= 250.05), `the 250 km edge decided the row: ${res.json.nearby.map((c) => c.distanceKm)}`);
+    }
+  } finally {
+    await L.deleteMany({ _id: { $in: [...ids, ...srcs.map((x) => x._id)] } });
+  }
 });
 
 test("budget: 2,000 and 5,000 live listings — latency, payload, memory (measured)", async () => {
@@ -348,7 +419,7 @@ test("budget: 2,000 and 5,000 live listings — latency, payload, memory (measur
       assert.equal(r.json.nearby.length, 8);
     }
     times.sort((a, b) => a - b);
-    const p95 = times[Math.floor(times.length * 0.95) - 1] || times[times.length - 1];
+    const p95 = times[Math.ceil(times.length * 0.95) - 1]; // nearest rank
     const heapMb = (process.memoryUsage().heapUsed - heap0) / 1048576;
     console.log(`[budget] ${total} live: p50 ${times[Math.floor(times.length / 2)].toFixed(0)} ms, p95 ${p95.toFixed(0)} ms, payload ${bytes} B, heap Δ ${heapMb.toFixed(1)} MB`);
     assert.ok(bytes < 40000, `payload ${bytes} B`);

@@ -6,7 +6,11 @@
 //
 // relatedFor(id) runs at most three listing queries:
 //   Q1  the source, by _id (indexed) — a source that is not public ends here
-//   Q2  the public pool, minimal projection, for ranking
+//   Q2  the ranking pool, minimal projection: the source host's public stays
+//       plus the public stays inside a box around the source's PUBLIC point
+//       that reaches past 250 km by more than the approximation offset — a
+//       superset of everything the nearby ring can keep, so the result is
+//       still a function of the public points alone (poolFilter)
 //   Q3  the picked cards plus the source again, with the card projection and
 //       the masking context — skipped when nothing was picked
 // Between Q2 and Q3 a listing may change. Q3 re-checks everything it shows:
@@ -18,7 +22,7 @@
 // concurrent change.
 const ListingProperty = require("../models/ListingProperty");
 const { validPoint, distanceKm } = require("../utils/places");
-const { approximateLocation, sanitizeProperty } = require("../utils/sanitizeResponse");
+const { approximateLocation, sanitizeProperty, OFFSET_MAX_M } = require("../utils/sanitizeResponse");
 const { CARD_PROJECTION, CARD_MASK_CONTEXT, publicListingFilter } = require("../utils/listingProjection");
 
 const HOST_LIMIT = 12;
@@ -31,6 +35,9 @@ const WIDE_BAND_KM = 25;
 const PRICE_TOLERANCE = 0.35;
 const GUESTS_TOLERANCE = 2;
 const EPS = 1e-9;
+const KM_PER_DEG = (2 * Math.PI * 6371) / 360; // the sphere of utils/places.js distanceKm
+// beyond the largest approximation offset, plus float slack
+const PREFILTER_MARGIN_KM = OFFSET_MAX_M / 1000 + 0.65;
 
 // The ranking pool: exactly the fields ranking reads (no titles, amenities…).
 const POOL_PROJECTION = {
@@ -94,6 +101,13 @@ function similarity(src, c) {
   return s;
 }
 
+/** "near" (all ≤ 25 km), "wide" (none), "mixed", or null for no items. */
+function scopeOf(distances) {
+  if (!distances.length) return null;
+  const nNear = distances.filter((d) => d <= NEAR_KM + EPS).length;
+  return nNear === distances.length ? "near" : nNear === 0 ? "wide" : "mixed";
+}
+
 const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
 /** The source host's other public stays, best first. */
@@ -131,9 +145,7 @@ function rankNearby(src, pool, { exclude = new Set(), limit = NEARBY_LIMIT } = {
   wide.sort(order);
   const items = near.slice(0, limit);
   if (near.length < MIN_NEAR) items.push(...wide.slice(0, limit - items.length));
-  const nNear = items.filter((x) => x.d <= NEAR_KM + EPS).length;
-  const scope = !items.length ? null : nNear === items.length ? "near" : nNear === 0 ? "wide" : "mixed";
-  return { items: items.map(({ c, d }) => ({ c, d })), scope };
+  return { items: items.map(({ c, d }) => ({ c, d })), scope: scopeOf(items.map((x) => x.d)) };
 }
 
 /** The public card a row shows (allow-list; the doc was masked with its full context). */
@@ -162,6 +174,35 @@ function cardOf(sanitized, distance) {
   return out;
 }
 
+/**
+ * The Q2 filter for a source summary, or null when nothing can be related
+ * (no host and no public point). The box is on the stored (exact) points:
+ * a stay whose public point is within 250 km of the source's public point
+ * has its exact point within 250 km + OFFSET_MAX_M of it — inside the box
+ * (latitude span exact along a meridian; longitude span sized at the box's
+ * most poleward latitude). Near a pole or across the antimeridian the box
+ * is not a plain range: then the whole public inventory is the pool.
+ */
+function poolFilter(src) {
+  const or = [];
+  if (src.host) or.push({ host: src.host });
+  if (src.point) {
+    const reach = WIDE_KM + PREFILTER_MARGIN_KM;
+    const dLat = reach / KM_PER_DEG;
+    const lat0 = src.point.lat - dLat;
+    const lat1 = src.point.lat + dLat;
+    const edge = Math.max(Math.abs(lat0), Math.abs(lat1));
+    if (edge >= 85) return publicListingFilter();
+    const dLng = reach / (KM_PER_DEG * Math.cos((edge * Math.PI) / 180));
+    const lng0 = src.point.lng - dLng;
+    const lng1 = src.point.lng + dLng;
+    if (lng0 < -180 || lng1 > 180) return publicListingFilter();
+    or.push({ "address.latitude": { $gte: lat0, $lte: lat1 }, "address.longitude": { $gte: lng0, $lte: lng1 } });
+  }
+  if (!or.length) return null;
+  return publicListingFilter({ $or: or });
+}
+
 // --- orchestration -----------------------------------------------------------
 
 let hooks = {};
@@ -170,6 +211,10 @@ function __setTestHooks(h) {
 }
 
 const EMPTY = (sourceHostId = null) => ({ host: [], nearby: [], nearbyScope: null, sourceHostId });
+// No rows because no answer could be given (the source is not public, or
+// it changed while the rows were built): never cached, and the site must
+// not keep it as "this stay has nothing related" (lib/related-stays.ts).
+const UNAVAILABLE = () => ({ ...EMPTY(), unavailable: true });
 
 /**
  * @param {string} id listing id (already validated)
@@ -179,9 +224,11 @@ const EMPTY = (sourceHostId = null) => ({ host: [], nearby: [], nearbyScope: nul
  */
 async function relatedFor(id) {
   const srcDoc = await ListingProperty.findOne(publicListingFilter({ _id: id })).select(POOL_PROJECTION).lean();
-  if (!srcDoc) return { body: EMPTY(), cacheable: false };
+  if (!srcDoc) return { body: UNAVAILABLE(), cacheable: false };
   const src = summarize(srcDoc);
-  const pool = (await ListingProperty.find(publicListingFilter()).select(POOL_PROJECTION).lean()).map(summarize);
+  const filter = poolFilter(src);
+  if (!filter) return { body: EMPTY(src.host), cacheable: true };
+  const pool = (await ListingProperty.find(filter).select(POOL_PROJECTION).lean()).map(summarize);
   if (typeof hooks.afterPool === "function") await hooks.afterPool({ id });
 
   const hostPicked = rankHost(src, pool);
@@ -194,12 +241,15 @@ async function relatedFor(id) {
     .select(CARD_PROJECTION)
     .select(CARD_MASK_CONTEXT)
     .select("host")
+    // a card shows one photo; the text fields stay — masking reads title +
+    // description + rules as one text, exactly as for the search cards
+    .select({ photos: { $slice: 1 } })
     .lean();
   // Re-check the source against Q1: still public, same host, same public point.
   const again = docs.find((d) => idOf(d._id) === src.id);
   const src2 = again ? summarize(again) : null;
   const samePoint = (a, b) => (!a && !b) || (a && b && a.lat === b.lat && a.lng === b.lng);
-  if (!src2 || src2.host !== src.host || !samePoint(src2.point, src.point)) return { body: EMPTY(), cacheable: false };
+  if (!src2 || src2.host !== src.host || !samePoint(src2.point, src.point)) return { body: UNAVAILABLE(), cacheable: false };
 
   // Rank again on what is left; the summaries are built from the same
   // documents (and the same public points) the cards are emitted from.
@@ -211,19 +261,13 @@ async function relatedFor(id) {
   const hostRowIds = new Set(hostRow.map((c) => c.id));
   const { items } = rankNearby(src2, sums.filter((c) => !hostIds.has(c.id)), { exclude: hostRowIds });
 
-  const card = (c, d) => {
-    const view = sanitizeProperty(byIdDoc.get(c.id));
-    const out = cardOf(view, d);
-    // the emitted point and the distance must agree (both public)
-    if (d !== undefined && !(out.address.latitude !== undefined && src2.point)) return null;
-    return out;
-  };
-  const host = hostRow.map((c) => card(c)).filter(Boolean);
-  const kept = items.map(({ c, d }) => ({ d, out: card(c, d) })).filter((x) => x.out);
-  const nearby = kept.map((x) => x.out);
+  // Ranked nearby items always have a valid public point (rankNearby skips
+  // the rest) — the one cardOf emits, so distance and shown point agree.
+  const card = (c, d) => cardOf(sanitizeProperty(byIdDoc.get(c.id)), d);
+  const host = hostRow.map((c) => card(c));
+  const nearby = items.map(({ c, d }) => card(c, d));
   // the scope describes the rows actually shown (raw distances, not rounded)
-  const nNear = kept.filter((x) => x.d <= NEAR_KM + EPS).length;
-  const nearbyScope = !kept.length ? null : nNear === kept.length ? "near" : nNear === 0 ? "wide" : "mixed";
+  const nearbyScope = scopeOf(items.map((x) => x.d));
   return { body: { host, nearby, nearbyScope, sourceHostId: src.host }, cacheable: true };
 }
 
@@ -236,7 +280,10 @@ module.exports = {
   rankHost,
   rankNearby,
   cardOf,
+  scopeOf,
+  poolFilter,
   POOL_PROJECTION,
+  PREFILTER_MARGIN_KM,
   HOST_LIMIT,
   NEARBY_LIMIT,
   NEAR_KM,

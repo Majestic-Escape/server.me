@@ -539,6 +539,7 @@ function bookingListingSnapshot(listing) {
 }
 
 module.exports = {
+  OFFSET_MAX_M,
   toPublicUser,
   toSelfUser,
   publicFirstName,

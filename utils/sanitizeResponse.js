@@ -214,6 +214,27 @@ function locationKey() {
 }
 function resetLocationKeyCache() {
   locationKeyCache = null;
+  offsetMemo.clear();
+}
+
+// The offset (bearing, distance) depends only on the key and the listing id,
+// so it is computed once per id: the related-stays pool and the search scan
+// derive a public point for every live listing on each cache miss. Bounded
+// (oldest entry evicted first; ~100 B per entry) and cleared with the key.
+const OFFSET_MEMO_MAX = 50_000;
+const offsetMemo = new Map();
+function locationOffset(listingId) {
+  const id = String(listingId || "");
+  let o = offsetMemo.get(id);
+  if (o) return o;
+  const mac = crypto.createHmac("sha256", locationKey()).update(id).digest();
+  o = {
+    bearing: (mac.readUInt32BE(0) / 0x100000000) * 2 * Math.PI,
+    distance: OFFSET_MIN_M + (mac.readUInt32BE(4) / 0x100000000) * (OFFSET_MAX_M - OFFSET_MIN_M),
+  };
+  if (offsetMemo.size >= OFFSET_MEMO_MAX) offsetMemo.delete(offsetMemo.keys().next().value);
+  offsetMemo.set(id, o);
+  return o;
 }
 
 /**
@@ -226,9 +247,7 @@ function approximateLocation(listingId, latitude, longitude) {
   if (typeof latitude !== "number" || typeof longitude !== "number" || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
     return { latitude, longitude };
   }
-  const mac = crypto.createHmac("sha256", locationKey()).update(String(listingId || "")).digest();
-  const bearing = (mac.readUInt32BE(0) / 0x100000000) * 2 * Math.PI;
-  const distance = OFFSET_MIN_M + (mac.readUInt32BE(4) / 0x100000000) * (OFFSET_MAX_M - OFFSET_MIN_M);
+  const { bearing, distance } = locationOffset(listingId);
   const dLat = (distance * Math.cos(bearing)) / EARTH_METRES_PER_DEG_LAT;
   const metresPerDegLng = EARTH_METRES_PER_DEG_LAT * Math.cos((latitude * Math.PI) / 180) || EARTH_METRES_PER_DEG_LAT;
   const dLng = (distance * Math.sin(bearing)) / metresPerDegLng;

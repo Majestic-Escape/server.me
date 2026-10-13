@@ -83,7 +83,8 @@ function summarize(doc) {
     type: normType(doc.propertyType),
     price: finitePositive(doc.basePrice),
     guests: finitePositive(doc.guests),
-    rating: typeof doc.averageRating === "number" && Number.isFinite(doc.averageRating) ? doc.averageRating : null,
+    // a star rating is 0–5; anything else (legacy / corrupt rows) ranks as unrated
+    rating: typeof doc.averageRating === "number" && Number.isFinite(doc.averageRating) && doc.averageRating >= 0 && doc.averageRating <= 5 ? doc.averageRating : null,
     reviews: typeof doc.reviewCount === "number" && Number.isFinite(doc.reviewCount) && doc.reviewCount > 0 ? doc.reviewCount : 0,
     created: timeOf(doc.createdAt),
     point: publicPoint(doc),

@@ -23,7 +23,7 @@
 const ListingProperty = require("../models/ListingProperty");
 const { validPoint, distanceKm } = require("../utils/places");
 const { approximateLocation, sanitizeProperty, OFFSET_MAX_M } = require("../utils/sanitizeResponse");
-const { CARD_PROJECTION, CARD_MASK_CONTEXT, publicListingFilter } = require("../utils/listingProjection");
+const { CARD_MASK_CONTEXT, publicListingFilter } = require("../utils/listingProjection");
 
 const HOST_LIMIT = 12;
 const NEARBY_LIMIT = 8;
@@ -36,9 +36,20 @@ const PRICE_TOLERANCE = 0.35;
 const GUESTS_TOLERANCE = 2;
 const EPS = 1e-9;
 const POOL_BATCH = 20000;
+// server-side limit for each listing query: a request the caller has given up
+// on (site: 2.5 s server render, 5 s per browser attempt) cannot keep a scan
+// running unbounded; exceeding it is a 500, never cached
+const QUERY_MAX_MS = 3000;
 const KM_PER_DEG = (2 * Math.PI * 6371) / 360; // the sphere of utils/places.js distanceKm
 // beyond the largest approximation offset, plus float slack
 const PREFILTER_MARGIN_KM = OFFSET_MAX_M / 1000 + 0.65;
+
+// The card read (Q3): what cardOf emits plus every input of the masking —
+// maskListingText reads title + description + customRules + safety-feature
+// descriptions as ONE text (a number split across them is masked), and the
+// exact address lines (CARD_MASK_CONTEXT, selected next to it). Only the
+// cardOf allow-list leaves the server; the rest is masking context.
+const CARD_READ = "title description customRules safetyFeatures propertyType basePrice guests bedrooms averageRating reviewCount createdAt host address.city address.district address.state address.latitude address.longitude";
 
 // The ranking pool: exactly the fields ranking reads (no titles, amenities…).
 const POOL_PROJECTION = {
@@ -118,7 +129,6 @@ function rankHost(src, pool, limit = HOST_LIMIT) {
   const ratingKey = (c) => (c.reviews > 0 && c.rating !== null ? c.rating : -1);
   return pool
     .filter((c) => c.id !== src.id && c.host && c.host === src.host)
-    .slice()
     .sort((a, b) => ratingKey(b) - ratingKey(a) || b.reviews - a.reviews || b.created - a.created || byId(a, b))
     .slice(0, limit);
 }
@@ -217,6 +227,9 @@ const EMPTY = (sourceHostId = null) => ({ host: [], nearby: [], nearbyScope: nul
 // it changed while the rows were built): never cached, and the site must
 // not keep it as "this stay has nothing related" (lib/related-stays.ts).
 const UNAVAILABLE = () => ({ ...EMPTY(), unavailable: true });
+// status: 200 for a definite answer (incl. "the source is not public"); 503
+// when the rows could not be built consistently (a race) — transient, so no
+// cache layer (edge, Next's data cache, the browser's query cache) keeps it.
 
 /**
  * @param {string} id listing id (already validated)
@@ -225,36 +238,34 @@ const UNAVAILABLE = () => ({ ...EMPTY(), unavailable: true });
  *   consistent read (a public source with empty rows is cacheable too).
  */
 async function relatedFor(id) {
-  const srcDoc = await ListingProperty.findOne(publicListingFilter({ _id: id })).select(POOL_PROJECTION).lean();
-  if (!srcDoc) return { body: UNAVAILABLE(), cacheable: false };
+  const srcDoc = await ListingProperty.findOne(publicListingFilter({ _id: id })).select(POOL_PROJECTION).maxTimeMS(QUERY_MAX_MS).lean();
+  if (!srcDoc) return { body: UNAVAILABLE(), cacheable: false, status: 200 };
   const src = summarize(srcDoc);
   const filter = poolFilter(src);
-  if (!filter) return { body: EMPTY(src.host), cacheable: true };
+  if (!filter) return { body: EMPTY(src.host), cacheable: true, status: 200 };
   // batchSize: the default 101 + 1,000-per-getMore turns a dense box into a
   // chain of round trips; 10 fields per document, so one batch is ~1.5 MB
   // for 5,000 listings (the server caps a batch at 16 MB and then continues)
-  const pool = (await ListingProperty.find(filter).select(POOL_PROJECTION).batchSize(POOL_BATCH).lean()).map(summarize);
+  const pool = (await ListingProperty.find(filter).select(POOL_PROJECTION).batchSize(POOL_BATCH).maxTimeMS(QUERY_MAX_MS).lean()).map(summarize);
   if (typeof hooks.afterPool === "function") await hooks.afterPool({ id });
 
   const hostPicked = rankHost(src, pool);
   const hostIds = new Set(hostPicked.map((c) => c.id));
   const nearPicked = rankNearby(src, pool, { exclude: hostIds }).items;
   const picked = [...hostIds, ...nearPicked.map((x) => x.c.id)];
-  if (!picked.length) return { body: EMPTY(src.host), cacheable: true };
+  if (!picked.length) return { body: EMPTY(src.host), cacheable: true, status: 200 };
 
   const docs = await ListingProperty.find(publicListingFilter({ _id: { $in: [...picked, src.id] } }))
-    .select(CARD_PROJECTION)
+    .select(CARD_READ)
     .select(CARD_MASK_CONTEXT)
-    .select("host")
-    // a card shows one photo; the text fields stay — masking reads title +
-    // description + rules as one text, exactly as for the search cards
-    .select({ photos: { $slice: 1 } })
+    .select({ photos: { $slice: 1 } }) // a card shows one photo
+    .maxTimeMS(QUERY_MAX_MS)
     .lean();
   // Re-check the source against Q1: still public, same host, same public point.
   const again = docs.find((d) => idOf(d._id) === src.id);
   const src2 = again ? summarize(again) : null;
   const samePoint = (a, b) => (!a && !b) || (a && b && a.lat === b.lat && a.lng === b.lng);
-  if (!src2 || src2.host !== src.host || !samePoint(src2.point, src.point)) return { body: UNAVAILABLE(), cacheable: false };
+  if (!src2 || src2.host !== src.host || !samePoint(src2.point, src.point)) return { body: UNAVAILABLE(), cacheable: false, status: 503 };
 
   // Rank again on what is left; the summaries are built from the same
   // documents (and the same public points) the cards are emitted from.
@@ -273,7 +284,7 @@ async function relatedFor(id) {
   const nearby = items.map(({ c, d }) => card(c, d));
   // the scope describes the rows actually shown (raw distances, not rounded)
   const nearbyScope = scopeOf(items.map((x) => x.d));
-  return { body: { host, nearby, nearbyScope, sourceHostId: src.host }, cacheable: true };
+  return { body: { host, nearby, nearbyScope, sourceHostId: src.host }, cacheable: true, status: 200 };
 }
 
 module.exports = {
@@ -288,6 +299,8 @@ module.exports = {
   scopeOf,
   poolFilter,
   POOL_PROJECTION,
+  CARD_READ,
+  QUERY_MAX_MS,
   PREFILTER_MARGIN_KM,
   HOST_LIMIT,
   NEARBY_LIMIT,

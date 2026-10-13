@@ -436,3 +436,69 @@ test("[S4–S6, S10] recursive allow-list; street / line / phone / e-mail in tit
   assert.deepEqual([asOwner.cdn, asAdmin.cdn], [r.cdn, r.cdn]);
   await L().deleteMany({ _id: { $in: [src._id, ...ids] } });
 });
+
+// ---------------------------------------------------------------------------
+// round-3 adversarial review findings (kept as regression tests)
+test("[review #1] a contact number split between the title and a custom rule or a safety-feature description is masked on the card", async () => {
+  const src = await h.makeListing(A, { title: "Split src", address: addr(2000, 0) });
+  const coll = L().collection;
+  const ins = await coll.insertMany([
+    { title: "Ring 98765", customRules: ["43210 for the best rate"], host: B._id, hostEmail: "s@lifecycle.test", status: "active", address: { city: "S", latitude: P.lat + 2001 / KM, longitude: P.lng }, createdAt: new Date() },
+    { title: "Dial 91234", safetyFeatures: { smokeAlarm: { available: true, description: "56789 any time" } }, host: B._id, hostEmail: "s@lifecycle.test", status: "active", address: { city: "S", latitude: P.lat + 2002 / KM, longitude: P.lng }, createdAt: new Date() },
+  ]);
+  const r = await rel(src._id);
+  assert.equal(r.nearIds.length, 2, "both shown");
+  for (const frag of ["98765", "91234"]) assert.ok(!r.text.includes(frag), `card title leaks the first half of a split number (${frag})`);
+  for (const k of ["customRules", "safetyFeatures"]) assert.ok(!r.text.includes(k), `${k} never emitted`);
+  await L().deleteMany({ _id: { $in: [src._id, ...Object.values(ins.insertedIds)] } });
+});
+
+test("[review #3] non-canonical (upper-case) ids are refused before any database work — no cache-busting variants", async () => {
+  const l = await h.makeListing(A, { title: "Case src", address: addr(2100, 0) });
+  const mongoose = require("mongoose");
+  const ops = [];
+  mongoose.set("debug", (coll, method) => ops.push(`${coll}.${method}`));
+  const upper = String(l._id).toUpperCase();
+  const r = await fetch(`${h.baseUrl()}/properties/${upper}/related`);
+  mongoose.set("debug", false);
+  assert.equal(r.status, 400);
+  assert.equal(r.headers.get("cdn-cache-control"), null);
+  assert.equal(ops.filter((o) => o.startsWith("listingproperties.")).length, 0);
+  assert.equal((await rel(l._id)).status, 200, "the canonical id still works");
+  await L().deleteOne({ _id: l._id });
+});
+
+test("[review #2] a race (fail-closed) answer is a 503 + no-store, so no cache layer keeps it; a non-public source stays a 200", async () => {
+  const src = await h.makeListing(A, { title: "Race503 src", address: addr(2200, 0) });
+  const sib = await h.makeListing(A, { title: "Race503 sib", address: addr(2201, 0) });
+  R().__setTestHooks({ afterPool: async () => { await L().updateOne({ _id: src._id }, { $set: { "address.latitude": P.lat + 2300 / KM } }); } });
+  let r;
+  try { r = await fetch(`${h.baseUrl()}/properties/${src._id}/related`); } finally { R().__setTestHooks(null); }
+  const j = await r.json();
+  assert.equal(r.status, 503, "transient: retryable, never stored by Next's data cache or the edge");
+  assert.match(r.headers.get("cache-control") || "", /no-store/);
+  assert.equal(r.headers.get("cdn-cache-control"), null);
+  assert.deepEqual([j.unavailable, j.host.length, j.nearby.length], [true, 0, 0]);
+  await L().updateOne({ _id: src._id }, { $set: { status: "inactive", delist: "host" } });
+  const np = await rel(src._id);
+  assert.deepEqual([np.status, np.json.unavailable], [200, true], "non-public: a definite answer, still no-store");
+  await L().deleteMany({ _id: { $in: [src._id, sib._id] } });
+});
+
+test("[review #4] every listing query carries a server-side time limit (an abandoned scan cannot run unbounded)", async () => {
+  const mongoose = require("mongoose");
+  const src = await h.makeListing(A, { title: "MaxTime src", address: addr(2400, 0) });
+  await h.makeListing(A, { title: "MaxTime sib", address: addr(2401, 0) });
+  const client = mongoose.connection.getClient();
+  const finds = [];
+  const on = (e) => { if (e.commandName === "find" && e.command.find === "listingproperties") finds.push(e.command.maxTimeMS); };
+  // monitorCommands is only on in this file if the connection was opened with it: fall back to the query options
+  const origExec = mongoose.Query.prototype.exec;
+  const seen = [];
+  mongoose.Query.prototype.exec = function (...a) { if (this.model && this.model.modelName === "ListingProperty") seen.push(this.getOptions().maxTimeMS); return origExec.apply(this, a); };
+  client.on("commandStarted", on);
+  try { await R().relatedFor(String(src._id)); } finally { mongoose.Query.prototype.exec = origExec; client.off("commandStarted", on); }
+  assert.equal(seen.length, 3, `three listing queries (${seen.length})`);
+  assert.ok(seen.every((t) => typeof t === "number" && t > 0 && t <= 5000), `maxTimeMS on every query: ${JSON.stringify(seen)}`);
+  await L().deleteMany({ title: /^MaxTime/ });
+});

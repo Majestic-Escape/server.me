@@ -1183,6 +1183,11 @@ exports.adminDeListing = async (req, res) => {
 // is ready and only for a public source — an unknown / non-public source or
 // a read that changed under us stays no-store.
 exports.getRelatedStays = async (req, res) => {
+  // one canonical spelling per listing (ids are lower-case hex): case variants
+  // would each be a separate edge entry and a fresh scan
+  if (/[A-F]/.test(req.params.id)) {
+    return res.status(400).json({ success: false, code: "INVALID_PARAM", message: "Use the lower-case listing id", statusCode: 400 });
+  }
   const keys = Object.keys(req.query || {});
   if (keys.some((k) => k !== "fresh") || (req.query.fresh !== undefined && req.query.fresh !== "1")) {
     return res.status(400).json({ success: false, code: "INVALID_PARAM", message: "Only ?fresh=1 is accepted here", statusCode: 400 });
@@ -1193,9 +1198,9 @@ exports.getRelatedStays = async (req, res) => {
     // headers go on only for a cacheable answer, once it is known.
     const bypass = req.query.fresh !== undefined;
     if (bypass && !catalogueCache(req, res)) return;
-    const { body, cacheable } = await relatedStays.relatedFor(req.params.id);
-    if (!bypass && cacheable) catalogueCache(req, res);
-    return res.status(200).json(body);
+    const { body, cacheable, status = 200 } = await relatedStays.relatedFor(req.params.id);
+    if (!bypass && cacheable && status === 200) catalogueCache(req, res);
+    return res.status(status).json(body);
   } catch (error) {
     console.error("related stays error:", error && error.message);
     return res.status(500).json({ success: false, message: "Internal server error" });

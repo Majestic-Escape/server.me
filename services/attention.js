@@ -153,4 +153,25 @@ async function resolve({ booking, resolution, manualListing, actorId }) {
   return { ok: false, code: "VALIDATION" };
 }
 
-module.exports = { flag, retryAlert, list, resolve, alertEmails, REASONS };
+// A cancellation that should refund failed at the gateway (e.g. "Your account
+// does not have enough balance to carry out the refund operation"). The
+// booking is left exactly as it was (payment still "paid", booking still
+// active) so the cancel can simply be retried — but it must never be silent:
+// the guest was told it failed and nobody else knew. Logs and alerts ops on
+// every failed attempt; never throws (the caller's 502 is what matters).
+async function refundFailed({ bookingId, paymentId, amountPaise, reason, gateway }) {
+  const description = (gateway && (gateway.description || gateway.message)) || String(gateway || "unknown error");
+  console.error("[refund] FAILED at the gateway", { bookingId: String(bookingId), paymentId, amountPaise, reason, gateway: description });
+  const message =
+    `Refund failed for booking ${bookingId} (payment ${paymentId || "-"}, ₹${(Number(amountPaise) || 0) / 100}). ` +
+    `Razorpay said: "${description}". Nothing was refunded and the booking is unchanged (still paid and active); ` +
+    `the guest's cancellation did not go through. Fix the cause (for an insufficient balance: add funds in the Razorpay dashboard ` +
+    `or ask Razorpay to allow refunds against future settlements), then cancel it again from the admin bookings page to refund.`;
+  try {
+    await Promise.all(alertEmails().map((email) => emailer.sendHostNotification(email, "Admin", message)));
+  } catch (err) {
+    console.error("[refund] alert e-mail failed", err.message);
+  }
+}
+
+module.exports = { flag, retryAlert, list, resolve, alertEmails, refundFailed, REASONS };

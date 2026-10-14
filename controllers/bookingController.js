@@ -1391,10 +1391,21 @@ exports.checkDates = async (req, res) => {
     // Batch S: nights under an unexpired checkout hold are unavailable too
     // (createBooking would refuse them), so the calendar never offers a date
     // the server will reject.
+    // Except the caller's OWN unpaid hold: createBooking hands the same guest
+    // the same pending booking back for those dates (idempotent re-submit),
+    // so a guest who closed the payment window can pay again — before this,
+    // their own hold was reported as booked and checkout said someone else
+    // had taken the dates. Everyone else still sees the nights as held.
+    const caller = await authMiddleware.softActor(req);
+    const ownHolds =
+      caller && caller.kind === "user"
+        ? await Booking.find({ propertyId, userId: caller.id, status: "pending", paymentStatus: "unpaid" }).distinct("_id")
+        : [];
     const held = await BookingNight.find({
       propertyId,
       expiresAt: { $gt: new Date() },
       date: { $gte: today },
+      ...(ownHolds.length ? { bookingId: { $nin: ownHolds } } : {}),
     })
       .select("date")
       .lean();

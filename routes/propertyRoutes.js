@@ -36,6 +36,10 @@ router.get(
 router.get("/countstays", propertyController.getPropertyCount);
 router.get("/admin-filter", ...admin, propertyController.getAdminFilter); // Batch P: was anonymous
 router.get("/search-properties", propertyController.getCustomSearch);
+// "More stays hosted by …" / "Similar stays nearby" (docs/related-stays.md):
+// anonymous on purpose — the answer is edge-cached alike for everyone, so it
+// must never depend on who asks (no auth middleware here).
+router.get("/:id/related", validateParam("id"), propertyController.getRelatedStays);
 // Public read with an entitled-caller upgrade (docs/listing-visibility.md):
 // soft auth — a stale or invalid token is anonymous, never a 401.
 router.get("/:id", authMiddleware.soft, validateParam("id"), propertyController.getPropertyById);

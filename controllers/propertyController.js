@@ -23,6 +23,7 @@ const {
 const { resolveListingAccess, nonPublicView, ownedListingsFilter, hostIdForEmail } = require("../services/listingAccess");
 const authMiddleware = require("../middleware/authMiddleware");
 const listingPublish = require("../services/listingPublish");
+const relatedStays = require("../services/relatedStays");
 // Batch P — public catalogue: card projection, edge-cache policy, change
 // notifications and the authoritative night ledger for date searches.
 const BookingNight = require("../models/BookingNight");
@@ -1173,6 +1174,38 @@ exports.adminDeListing = async (req, res) => {
   }
 };
 
+
+// GET /properties/:id/related — "More stays hosted by …" and "Similar stays
+// nearby" for a public stay (docs/related-stays.md). Public data only, the
+// same for every caller (no auth). Only ?fresh=1 (the site server's
+// secret-gated cache bypass) is accepted; anything else is refused before any
+// database work. Edge-cache headers are installed only once the final body
+// is ready and only for a public source — an unknown / non-public source or
+// a read that changed under us stays no-store.
+exports.getRelatedStays = async (req, res) => {
+  // one canonical spelling per listing (ids are lower-case hex): case variants
+  // would each be a separate edge entry and a fresh scan
+  if (/[A-F]/.test(req.params.id)) {
+    return res.status(400).json({ success: false, code: "INVALID_PARAM", message: "Use the lower-case listing id", statusCode: 400 });
+  }
+  const keys = Object.keys(req.query || {});
+  if (keys.some((k) => k !== "fresh") || (req.query.fresh !== undefined && req.query.fresh !== "1")) {
+    return res.status(400).json({ success: false, code: "INVALID_PARAM", message: "Only ?fresh=1 is accepted here", statusCode: 400 });
+  }
+  try {
+    // One cache decision per request: a `fresh` bypass (secret checked here,
+    // before any DB work) is answered no-store; otherwise the public / CDN
+    // headers go on only for a cacheable answer, once it is known.
+    const bypass = req.query.fresh !== undefined;
+    if (bypass && !catalogueCache(req, res)) return;
+    const { body, cacheable, status = 200 } = await relatedStays.relatedFor(req.params.id);
+    if (!bypass && cacheable && status === 200) catalogueCache(req, res);
+    return res.status(status).json(body);
+  } catch (error) {
+    console.error("related stays error:", error && error.message);
+    return res.status(500).json({ success: false, message: "Internal server error" });
+  }
+};
 
 exports.getPropertyById = async (req, res) => {
   try {

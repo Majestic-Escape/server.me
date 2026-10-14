@@ -105,6 +105,12 @@ and correctly attributed.
 | Documents returned to Node by Q2 | 11 | 5,001 |
 | **Documents MongoDB examines for Q2** | **5,001** (IXSCAN `status_1_createdAt_-1__id_-1`, then FETCH applying the host-or-box predicate) | 5,001 |
 
+- **Measured after the two-step read** (`npm run perf:related`, cost report, `PERF_PRIORITY=high`, 2026-10-15):
+  dense 5,000 → 3 queries, 233 documents / 50 KB returned to Node (was 5,023 / 850 KB), service p50 / p95
+  26 / 32 ms; dense 2,000 → 93 documents; sparse 2,000 / 5,000 → 4 queries, same documents as before
+  (55 / 115); a host owning 1,000 stays → 2,023 documents (unchanged, no document read twice); 20 concurrent
+  dense-2,000 requests 0.30 s wall (was ~1.03 s). Perf gate, 5 interleaved runs each: 5,000-dense median p95
+  41–53 ms (old read 108–154 ms, same runs).
 - **Dense areas (perf gate D8).** Before the two-step read a dense box was
   transferred and ranked whole (5,001 documents in the perf fixture). Now a
   source with ≥ 8 eligible stays within 5 km reads that band + its host's

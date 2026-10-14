@@ -382,6 +382,8 @@ async function refundBookingPayment({ booking, reason }) {
       { _id: payment._id, status: "refund initiated" },
       { $set: { status: "paid", refundInitiatedAt: null } },
     );
+    // Never silent: ops are told (see attention.refundFailed).
+    await attention.refundFailed({ bookingId, paymentId: payment.paymentId, amountPaise: payment.amount, reason, gateway: err.error || err.message });
     throw new PaymentError(502, "REFUND_FAILED", "Payment refund failed", {
       gateway: err.error || err.message,
     });

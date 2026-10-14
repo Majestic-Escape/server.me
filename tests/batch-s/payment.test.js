@@ -281,11 +281,16 @@ test("refund: authorized, once, and never marked refunded when the gateway fails
   assert.equal(h.razorpay().__mock.calls.paymentsRefund, 0);
   // gateway failure: nothing refunded, payment stays paid, booking untouched
   h.razorpay().__mock.fail.paymentsRefund = true;
+  h.resetEmails();
   let r = await h.api("PATCH", "/booking/host/terminate", { token: HT, body: { bookingId: booking._id } });
   assert.equal(r.status, 502);
   assert.equal(r.body.code, "REFUND_FAILED");
   assert.equal((await Payment().findOne({ orderId: order.id })).status, "paid");
   assert.equal((await Booking().findById(booking._id)).status, "confirmed");
+  // …and it is never silent: every ops address is alerted about this booking
+  const alerts = h.sentEmails().filter((e) => JSON.stringify(e).includes(`Refund failed for booking ${booking._id}`));
+  assert.equal(alerts.length, require("../../services/attention").alertEmails().length, JSON.stringify(h.sentEmails()).slice(0, 400));
+  assert.ok(alerts.length > 0, "at least one ops alert");
   h.razorpay().__mock.fail.paymentsRefund = false;
   const refundsBefore = h.razorpay().__mock.calls.paymentsRefund; // (the failed call above counted)
   // two concurrent refund attempts (host terminate + admin cancel) → one gateway refund

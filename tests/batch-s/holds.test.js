@@ -197,6 +197,39 @@ test("payment delay: clicking Pay re-arms the hold for 30 minutes; retries reuse
   assert.equal(o2.body.reused, true);
 });
 
+test("closed the payment window: the guest's own hold is not 'booked' for them (they can pay again); everyone else still sees it held; once paid it is booked for all", async () => {
+  const L = await h.makeListing(HOST, { bookingType: { manual: false }, cancellationType: { flexible: true } });
+  const { r, checkIn, checkOut } = await create(L, { nights: 1 });
+  assert.equal(r.status, 201);
+  const b = r.body.data;
+  const OTHER = await h.makeUser();
+  const OT = h.userToken(OTHER);
+  const dates = async (token) => {
+    const cd = await h.api("GET", `/booking/check-dates/${L._id}`, { token });
+    assert.equal(cd.status, 200);
+    return cd.body.data;
+  };
+  assert.ok((await dates()).includes(checkIn), "anonymous: held night is unavailable");
+  assert.ok((await dates(OT)).includes(checkIn), "another guest: held night is unavailable");
+  assert.ok(!(await dates(T)).includes(checkIn), "the holder: own hold is not reported as booked");
+  // the holder goes back and pays again → the same booking and the same order
+  const o1 = await order(b);
+  assert.equal(o1.status, 200);
+  const again = await h.api("POST", "/booking/", { token: T, body: h.bookingBody(L, { checkIn, checkOut }) });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.data._id, b._id);
+  const o2 = await order(b);
+  assert.equal(o2.body.data.id, o1.body.data.id);
+  // the other guest still cannot take the night
+  const taken = await h.api("POST", "/booking/", { token: OT, body: h.bookingBody(L, { checkIn, checkOut }) });
+  assert.equal(taken.status, 409);
+  assert.equal(taken.body.code, "DATES_UNAVAILABLE");
+  // paid → booked for everyone, the guest included
+  await payFor(b);
+  assert.ok((await dates(T)).includes(checkIn), "paid: booked for the guest too");
+  assert.ok((await dates()).includes(checkIn), "paid: booked for everyone");
+});
+
 test("pending unpaid booking cancelled by the guest releases the hold at once; host block and unblock", async () => {
   const L = await h.makeListing(HOST);
   const { r, checkIn, checkOut } = await create(L);

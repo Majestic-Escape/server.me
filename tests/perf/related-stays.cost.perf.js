@@ -130,7 +130,7 @@ test("cost report: sparse / dense × 2,000 / 5,000, big host portfolio, unknown 
       const svcOld = await measure(`${shape} ${total} service (baseline a2b431f)`, () => base.relatedFor(String(src._id)));
       const rt = await rankTime();
       report.scenarios.push({ scenario: `${shape} ${total}`, live: total + 1, explainQ2: p, current: { mongooseQueries: cur.mongooseQueries, driverCommands: cur.driverCommands, docsReturned: cur.docsReturned, bytesReturned: cur.bytesReturned }, baseline: { mongooseQueries: old.mongooseQueries, driverCommands: old.driverCommands, docsReturned: old.docsReturned, bytesReturned: old.bytesReturned }, ranking: rt, responseBytes: res.bytes, latency: { http: lat, serviceCurrent: svcNew, serviceBaseline: svcOld } });
-      assert.ok(cur.mongooseQueries <= 3, "≤ 3 Mongoose queries");
+      assert.ok(cur.mongooseQueries <= 4, "≤ 4 Mongoose queries (the full box only when the first band is short)");
       assert.ok(!cur.driverCommands.includes("getMore"), `no getMore chain (${cur.driverCommands})`);
       assert.ok(res.bytes < 40000);
       if (shape === "sparse") assert.ok(cur.docsReturned < old.docsReturned, "the box returns fewer documents to Node than the whole-inventory baseline");
@@ -146,7 +146,7 @@ test("cost report: sparse / dense × 2,000 / 5,000, big host portfolio, unknown 
     const lat = await measure("host owns 1,000 HTTP", http);
     report.scenarios.push({ scenario: "source host owns 1,000 stays (+1,000 nearby)", explainQ2: await plan(), current: { mongooseQueries: cur.mongooseQueries, driverCommands: cur.driverCommands, docsReturned: cur.docsReturned, bytesReturned: cur.bytesReturned }, latency: { http: lat } });
     assert.equal(cur.out.body.host.length, 12);
-    assert.ok(cur.mongooseQueries <= 3);
+    assert.ok(cur.mongooseQueries <= 4);
   }
 
   // unknown and non-public ids: one indexed read, then stop

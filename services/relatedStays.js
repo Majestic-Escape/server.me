@@ -195,11 +195,11 @@ function cardOf(sanitized, distance) {
  * most poleward latitude). Near a pole or across the antimeridian the box
  * is not a plain range: then the whole public inventory is the pool.
  */
-function poolFilter(src) {
+function poolFilter(src, reachKm = WIDE_KM) {
   const or = [];
   if (src.host) or.push({ host: src.host });
   if (src.point) {
-    const reach = WIDE_KM + PREFILTER_MARGIN_KM;
+    const reach = reachKm + PREFILTER_MARGIN_KM;
     const dLat = reach / KM_PER_DEG;
     const lat0 = src.point.lat - dLat;
     const lat1 = src.point.lat + dLat;
@@ -213,6 +213,28 @@ function poolFilter(src) {
   }
   if (!or.length) return null;
   return publicListingFilter({ $or: or });
+}
+
+/**
+ * True when the pool decides the nearby row exactly without a wider read:
+ * at least NEARBY_LIMIT eligible stays (not the source, not in the host row)
+ * have their PUBLIC point in the first 5 km band. Bands sort first, so the
+ * row is then the first band's best NEARBY_LIMIT, and with ≥ MIN_NEAR near
+ * stays the wide ring is never appended — the stays further out cannot
+ * change it. `pool` must contain every listing whose public point lies in
+ * the first band (poolFilter(src, NEAR_BAND_KM) guarantees it) and all of
+ * the source host's stays (the host row is computed from the same pool).
+ */
+function firstBandDecides(src, pool, hostIds) {
+  if (!src.point) return true; // no public point → no nearby row; the host's stays are all in the pool
+  let n = 0;
+  for (const c of pool) {
+    if (c.id === src.id || hostIds.has(c.id) || !c.point) continue;
+    const d = distanceKm(src.point, c.point);
+    // the same band test as rankNearby: band 0 ⇔ floor((d + EPS) / 5) === 0
+    if (Number.isFinite(d) && Math.floor((d + EPS) / NEAR_BAND_KM) === 0 && ++n >= NEARBY_LIMIT) return true;
+  }
+  return false;
 }
 
 // --- orchestration -----------------------------------------------------------
@@ -246,10 +268,24 @@ async function relatedFor(id) {
   // batchSize: the default 101 + 1,000-per-getMore turns a dense box into a
   // chain of round trips; 10 fields per document, so one batch is ~1.5 MB
   // for 5,000 listings (the server caps a batch at 16 MB and then continues)
-  const pool = (await ListingProperty.find(filter).select(POOL_PROJECTION).batchSize(POOL_BATCH).maxTimeMS(QUERY_MAX_MS).lean()).map(summarize);
+  const readPool = async (f) => (await ListingProperty.find(f).select(POOL_PROJECTION).batchSize(POOL_BATCH).maxTimeMS(QUERY_MAX_MS).lean()).map(summarize);
+  // Q2 in two steps, same rows as one read of the 250 km box: first the 5 km
+  // band (+ the host's stays). Where at least 8 eligible stays are that close
+  // they decide the nearby row (firstBandDecides) — a dense area costs its
+  // first band, not its whole 250 km box. Otherwise the rest of the box is
+  // read ($nor: never a document twice) and the two reads are the full box.
+  const first = src.point ? poolFilter(src, NEAR_BAND_KM) : null;
+  let pool = null;
+  let hostPicked = null;
+  if (first && first.$or) {
+    const near = await readPool(first);
+    const picked = rankHost(src, near);
+    if (firstBandDecides(src, near, new Set(picked.map((c) => c.id)))) [pool, hostPicked] = [near, picked];
+    else pool = near.concat(await readPool({ ...filter, $nor: first.$or }));
+  } else pool = await readPool(filter);
+  if (!hostPicked) hostPicked = rankHost(src, pool);
   if (typeof hooks.afterPool === "function") await hooks.afterPool({ id });
 
-  const hostPicked = rankHost(src, pool);
   const hostIds = new Set(hostPicked.map((c) => c.id));
   const nearPicked = rankNearby(src, pool, { exclude: hostIds }).items;
   const picked = [...hostIds, ...nearPicked.map((x) => x.c.id)];
@@ -298,6 +334,7 @@ module.exports = {
   cardOf,
   scopeOf,
   poolFilter,
+  firstBandDecides,
   POOL_PROJECTION,
   CARD_READ,
   QUERY_MAX_MS,

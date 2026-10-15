@@ -281,11 +281,16 @@ test("refund: authorized, once, and never marked refunded when the gateway fails
   assert.equal(h.razorpay().__mock.calls.paymentsRefund, 0);
   // gateway failure: nothing refunded, payment stays paid, booking untouched
   h.razorpay().__mock.fail.paymentsRefund = true;
+  h.resetEmails();
   let r = await h.api("PATCH", "/booking/host/terminate", { token: HT, body: { bookingId: booking._id } });
   assert.equal(r.status, 502);
   assert.equal(r.body.code, "REFUND_FAILED");
   assert.equal((await Payment().findOne({ orderId: order.id })).status, "paid");
   assert.equal((await Booking().findById(booking._id)).status, "confirmed");
+  // …and it is never silent: every ops address is alerted about this booking
+  const alerts = h.sentEmails().filter((e) => JSON.stringify(e).includes(`Refund failed for booking ${booking._id}`));
+  assert.equal(alerts.length, require("../../services/attention").alertEmails().length, JSON.stringify(h.sentEmails()).slice(0, 400));
+  assert.ok(alerts.length > 0, "at least one ops alert");
   h.razorpay().__mock.fail.paymentsRefund = false;
   const refundsBefore = h.razorpay().__mock.calls.paymentsRefund; // (the failed call above counted)
   // two concurrent refund attempts (host terminate + admin cancel) → one gateway refund
@@ -301,6 +306,8 @@ test("refund: authorized, once, and never marked refunded when the gateway fails
   assert.equal(pay.status, "refunded");
   assert.ok(pay.refundId);
   assert.equal(pay.refundAmount, 2340000);
+  // guests get their money fast: the refund is requested at optimum (instant) speed
+  assert.equal(h.razorpay().__mock.refunds.get(pay.refundId).speed_requested, "optimum");
   const bk = await Booking().findById(booking._id);
   assert.equal(bk.paymentStatus, "refunded");
   assert.ok(["cancelled", "rejected"].includes(bk.status));

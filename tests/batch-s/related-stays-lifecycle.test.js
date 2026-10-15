@@ -498,7 +498,8 @@ test("[review #4] every listing query carries a server-side time limit (an aband
   mongoose.Query.prototype.exec = function (...a) { if (this.model && this.model.modelName === "ListingProperty") seen.push(this.getOptions().maxTimeMS); return origExec.apply(this, a); };
   client.on("commandStarted", on);
   try { await R().relatedFor(String(src._id)); } finally { mongoose.Query.prototype.exec = origExec; client.off("commandStarted", on); }
-  assert.equal(seen.length, 3, `three listing queries (${seen.length})`);
+  // source, first band (short here: one sibling) → the full box, cards: 4 — every one time-limited
+  assert.equal(seen.length, 4, `four listing queries (${seen.length})`);
   assert.ok(seen.every((t) => typeof t === "number" && t > 0 && t <= 5000), `maxTimeMS on every query: ${JSON.stringify(seen)}`);
   await L().deleteMany({ title: /^MaxTime/ });
 });

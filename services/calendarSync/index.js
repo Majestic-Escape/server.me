@@ -112,7 +112,8 @@ async function alertIfClockStale(now = new Date()) {
   const emailer = require("../../utils/sendEmail");
   const text = `Calendar sync clock is ${status.state === "STALE" ? "stopped" : "running late"}: last sweep ${status.lastSweepFinishedAt ? new Date(status.lastSweepFinishedAt).toISOString() : "never"}, ${status.overdueConnections} calendar(s) overdue. Bookings stay protected (they re-check calendars first), but bookings taken on one site reach the others slowly. Check the GitHub clock workflow (CALENDAR_SYNC_CRON_SECRET, SYNCGUARD_SWEEP_URL) and the admin Calendar sync page.`;
   try {
-    await Promise.all(alertEmails().map((email) => emailer.sendHostNotification(email, "Admin", text)));
+    const subject = `Action needed: calendar sync clock is ${status.state === "STALE" ? "stopped" : "running late"}`;
+    await Promise.all(alertEmails().map((email) => emailer.sendHostNotification(email, "Admin", text, { subject, tag: "Action needed" })));
   } catch (err) {
     await CalendarSyncState.updateOne({ _id: "scheduler" }, { $set: { clockAlertAt: claimed.clockAlertAt || null } });
     throw err;

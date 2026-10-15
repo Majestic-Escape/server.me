@@ -380,7 +380,7 @@ exports.notifyHost = async (req, res) => {
     }
 
     // Send email notification
-    await sendHostNotification(host.email, host.firstName, message);
+    await sendHostNotification(host.email, host.firstName, message, { subject: "A message from the Majestic Escape team" });
 
     res.status(200).json({ message: "Notification sent to host successfully" });
   } catch (error) {

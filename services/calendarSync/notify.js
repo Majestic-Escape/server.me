@@ -1,5 +1,5 @@
-// Host e-mails for SyncGuard, through the existing generic host
-// notification template (utils/sendEmail.js#sendHostNotification). Callers
+// Host e-mails for SyncGuard, through the plain notification mail
+// (utils/sendEmail.js#sendHostNotification). Callers
 // claim exactly-once flags before calling; these only send.
 const User = require("../../models/User");
 const emailer = require("../../utils/sendEmail");
@@ -10,6 +10,10 @@ async function hostContact(listing) {
   const email = (user && user.email) || listing.hostEmail;
   return email ? { email, firstName: (user && user.firstName) || "there" } : null;
 }
+
+// Where the host fixes calendar-sync problems.
+const CALENDAR_CTA = { ctaUrl: `${process.env.SITE_URL || "https://majesticescape.in"}/host/dashboard/calendar`, ctaLabel: "Open my calendar" };
+const titleOf = (listing) => `“${listing.title || "your stay"}”`;
 
 function niceDays(nights) {
   return (nights || []).slice(0, 6).join(", ") + ((nights || []).length > 6 ? ` and ${nights.length - 6} more` : "");
@@ -26,7 +30,11 @@ async function conflict({ listing, channel, nights, possible = false }) {
       `This is often just ${label(channel)} mirroring the Majestic booking — please open ${label(channel)} and check there is no second guest on those dates. Our team has been alerted too.`
     : `${label(channel)} now shows a booking on ${niceDays(nights)} for ${where}, but a guest has already booked those nights on Majestic Escape. ` +
       `Please check ${label(channel)} and contact us so one of the guests can be moved. Our team has been alerted too.`;
-  await emailer.sendHostNotification(to.email, to.firstName, text);
+  await emailer.sendHostNotification(to.email, to.firstName, text, {
+    subject: `Please check ${label(channel)}: nights already booked on Majestic Escape for ${titleOf(listing)}`,
+    tag: "Please check",
+    ...CALENDAR_CTA,
+  });
 }
 
 // Two connected sites report the same nights and neither looks like a copy
@@ -41,6 +49,7 @@ async function overlap({ listing, channel, otherChannels = [], nights }) {
     to.firstName,
     `${label(channel)} shows ${niceDays(nights)} as booked or unavailable for “${listing.title || "your stay"}”, and ${others} shows the same nights as booked or unavailable too. ` +
       `If both are real bookings, one guest has to be moved — please check both sites. Majestic Escape keeps these nights blocked either way.`,
+    { subject: `Same nights booked on two sites for ${titleOf(listing)}`, tag: "Please check", ...CALENDAR_CTA },
   );
 }
 
@@ -52,6 +61,7 @@ async function broken({ listing, channel, message }) {
     to.firstName,
     `We can't read your ${label(channel)} calendar for “${listing.title || "your stay"}”: ${message} ` +
       `Until it works again Majestic Escape cannot see bookings you take on ${label(channel)}. Open Calendar → Calendar sync in your host dashboard to fix or remove it.`,
+    { subject: `We can't read your ${label(channel)} calendar for ${titleOf(listing)}`, tag: "Action needed", ...CALENDAR_CTA },
   );
 }
 
@@ -65,6 +75,7 @@ async function anomaly({ listing, channel }) {
     to.firstName,
     `Your ${label(channel)} calendar for “${listing.title || "your stay"}” suddenly shows no upcoming bookings. To be safe, Majestic Escape keeps those dates blocked for at least 12 hours. ` +
       `If the bookings really were cancelled you can release the dates now under Calendar → Calendar sync; if they were not, please check the ${label(channel)} calendar link.`,
+    { subject: `Your ${label(channel)} calendar for ${titleOf(listing)} suddenly looks empty`, tag: "Please check", ...CALENDAR_CTA },
   );
 }
 

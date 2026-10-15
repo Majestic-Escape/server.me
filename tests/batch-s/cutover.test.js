@@ -207,7 +207,7 @@ test("pre-S open order at a client-chosen amount: the captured payment is record
   assert.equal(bk.attentionDetails.capturedPaise, 100);
   assert.equal(bk.attentionDetails.expectedPaise, 1170000);
   assert.equal((await Payment().findOne({ orderId: order.id })).status, "paid", "the gateway fact is recorded");
-  const alerts = h.sentEmails().filter((e) => e.templateId === 2);
+  const alerts = h.sentEmails().filter((e) => e.kind === "notification");
   assert.equal(alerts.length, 2, "one alert per configured admin address, sent once");
   assert.deepEqual(alerts.map((e) => e.recipientEmail).sort(), ["admin1@test.local", "admin2@test.local"]);
   // the guest cannot open another order while it is under review

@@ -451,3 +451,79 @@ test("cancelling a booking that was never paid mails nobody about a booking they
   assert.equal(await nights(b._id), 0);
   assert.equal(mails().filter((m) => m.to === HOST.email || ADMINS.includes(m.to)).length, 0, `host/admins were mailed about an unpaid hold: ${JSON.stringify(allTpl())}`);
 });
+
+// ---------------------------------------------------------------------------
+// Ops / host notifications (2026-10-15): they went out as Brevo template 2 —
+// the guest WELCOME mail, which never renders params.message — so a failed
+// refund reached the admins as "Welcome to Majestic Escape! Hi Admin" with
+// the alert text missing. They are now plain mails built by the server.
+// ---------------------------------------------------------------------------
+test("a failed refund reaches ops as a readable alert (own subject + text), never the welcome template", async () => {
+  const L = await listing({ bookingType: { manual: false }, cancellationType: { flexible: true } });
+  const b = await paidInstant(L, { startsIn: 20 });
+  reset();
+  h.razorpay().__mock.fail.paymentsRefund = true;
+  try {
+    const r = await h.api("PATCH", "/booking/user/terminate", { token: GT, body: { bookingId: b._id } });
+    assert.equal(r.status, 502);
+    assert.equal(r.body.code, "REFUND_FAILED");
+  } finally {
+    h.razorpay().__mock.fail.paymentsRefund = false;
+  }
+  const alerts = wire.filter((w) => !w.failed && ADMINS.includes(w.payload.to[0].email));
+  assert.equal(alerts.length, ADMINS.length, "one alert per ops address");
+  for (const { payload } of alerts) {
+    assert.equal(payload.templateId, undefined, "no Brevo template (template 2 is the welcome mail)");
+    assert.equal(payload.subject, `Action needed: refund failed for booking ${b._id}`);
+    assert.match(payload.htmlContent, new RegExp(`Refund failed for booking ${b._id}`));
+    assert.match(payload.htmlContent, /Action needed/);
+    assert.match(payload.textContent, new RegExp(`Refund failed for booking ${b._id}`));
+    assert.doesNotMatch(payload.htmlContent, /Welcome to Majestic Escape/);
+    assert.equal(payload.sender.email, "notify@majesticescape.in");
+  }
+  // nothing else was mailed: the booking is unchanged, the guest just saw the error
+  assert.equal(wire.filter((w) => !w.failed).length, ADMINS.length);
+  assert.equal((await get(b._id)).status, "confirmed");
+});
+
+test("notification text is HTML-escaped and the subject is one header line", async () => {
+  reset();
+  const { sendHostNotification } = require("../../utils/sendEmail");
+  await sendHostNotification("host@test.local", "<b>Rahul</b>", 'Calendar says <img src=x onerror="alert(1)"> & more\n\nSecond paragraph', {
+    subject: "Line one\r\nBcc: attacker@evil.test",
+    ctaUrl: "javascript:alert(1)",
+  });
+  const [{ payload }] = wire;
+  assert.equal(payload.subject, "Line one Bcc: attacker@evil.test", "CR/LF can never start a new header");
+  assert.doesNotMatch(payload.htmlContent, /<img src=x/);
+  assert.doesNotMatch(payload.htmlContent, /<b>Rahul<\/b>/);
+  assert.match(payload.htmlContent, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt; &amp; more/);
+  assert.match(payload.htmlContent, /Second paragraph/);
+  assert.doesNotMatch(payload.htmlContent, /javascript:/, "only https links become a button");
+  assert.equal(payload.to[0].email, "host@test.local");
+});
+
+test("a guest's refunded booking stays in their bookings list (Cancelled tab); another guest's never shows", async () => {
+  const L = await listing({ bookingType: { manual: false }, cancellationType: { flexible: true } });
+  const b = await paidInstant(L, { startsIn: 20 });
+  const r = await h.api("PATCH", "/booking/user/terminate", { token: GT, body: { bookingId: b._id } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.refunded, true);
+  assert.equal(r.body.data.refundAmount > 0, true, "the response carries the refunded amount for the guest's toast");
+  const list = await h.api("GET", `/booking/data?userId=${G._id}`, { token: GT });
+  assert.equal(list.status, 200);
+  const row = list.body.data.find((x) => String(x._id) === String(b._id));
+  assert.ok(row, "refunded booking is listed");
+  assert.equal(row.status, "cancelled");
+  assert.equal(row.paymentStatus, "refunded");
+  assert.ok(row.refundAmount > 0);
+  // exact address is for confirmed, paid stays only
+  assert.equal(row.propertyId && row.propertyId.address && row.propertyId.address.street, undefined);
+  // an unpaid hold is still not a booking in the guest's history
+  const hold = await book(L);
+  const again = await h.api("GET", `/booking/data?userId=${G._id}`, { token: GT });
+  assert.equal(again.body.data.some((x) => String(x._id) === String(hold._id)), false);
+  // and the list stays the caller's own
+  const other = await h.api("GET", `/booking/data?userId=${G._id}`, { token: ST });
+  assert.ok(other.status === 403 || !(other.body.data || []).some((x) => String(x._id) === String(b._id)), `stranger: ${other.status}`);
+});

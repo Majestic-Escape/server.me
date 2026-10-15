@@ -44,7 +44,7 @@ const webhook = (order, p) =>
   });
 const verify = (order, p) =>
   h.api("POST", "/payment/verify-payment", { token: T, body: { razorpay_order_id: order.id, razorpay_payment_id: p.id, razorpay_signature: h.signature(order.id, p.id) } });
-const alerts = () => h.sentEmails().filter((e) => e.templateId === 2);
+const alerts = () => h.sentEmails().filter((e) => e.kind === "notification");
 
 test("payment success + inventory conflict: callback ×2 and webhook ×2 racing → one flag, one alert per admin, queue entry visible to admins only", async () => {
   const { b, order, p } = await conflictSetup();

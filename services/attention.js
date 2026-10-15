@@ -13,7 +13,7 @@
 //                        that only a human can resolve (docs/syncguard.md §3).
 // Flagging is exactly-once (conditional claim on notifications.attentionAt),
 // so callback + webhook + retries produce one alert. The alert reuses the
-// existing Brevo notification template and goes to OPS_ALERT_EMAIL (falls
+// plain notification mail (utils/sendEmail.js#sendHostNotification) and goes to OPS_ALERT_EMAIL (falls
 // back to ADMIN_EMAIL). Nothing here refunds, cancels or rebooks: an admin
 // resolves the item (see resolve()).
 const Booking = require("../models/Booking");
@@ -64,7 +64,8 @@ async function flag(bookingId, reason, details = {}) {
   console.error("[attention] booking flagged", { bookingId: String(bookingId), reason, ...details });
   const message = describe(String(bookingId), reason, details);
   try {
-    await Promise.all(alertEmails().map((email) => emailer.sendHostNotification(email, "Admin", message)));
+    const subject = `Action needed: booking ${bookingId} needs attention (${reason.replace(/_/g, " ")})`;
+    await Promise.all(alertEmails().map((email) => emailer.sendHostNotification(email, "Admin", message, { subject, tag: "Action needed" })));
     return { flagged: true, alerted: alertEmails().length > 0 };
   } catch (err) {
     // The queue entry stays (needsAttention is set); release the claim so a
@@ -168,7 +169,8 @@ async function refundFailed({ bookingId, paymentId, amountPaise, reason, gateway
     `the guest's cancellation did not go through. Fix the cause (for an insufficient balance: add funds in the Razorpay dashboard ` +
     `or ask Razorpay to allow refunds against future settlements), then cancel it again from the admin bookings page to refund.`;
   try {
-    await Promise.all(alertEmails().map((email) => emailer.sendHostNotification(email, "Admin", message)));
+    const subject = `Action needed: refund failed for booking ${bookingId}`;
+    await Promise.all(alertEmails().map((email) => emailer.sendHostNotification(email, "Admin", message, { subject, tag: "Action needed" })));
   } catch (err) {
     console.error("[refund] alert e-mail failed", err.message);
   }

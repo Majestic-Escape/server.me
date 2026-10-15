@@ -882,7 +882,10 @@ exports.getAllUserBookings = async (req, res) => {
       userId: userId,
       source: "local",
       action: "user",
-      paymentStatus: "paid",
+      // refunded = a paid booking that was later cancelled / declined with
+      // its money returned: it must stay in the guest's history (Cancelled /
+      // Rejected tabs). Unpaid holds are still left out.
+      paymentStatus: { $in: ["paid", "refunded"] },
     })
       .populate(populateFor(actor, "guest"))
       .sort({ createdAt: -1 })

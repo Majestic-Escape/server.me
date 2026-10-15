@@ -306,6 +306,8 @@ test("refund: authorized, once, and never marked refunded when the gateway fails
   assert.equal(pay.status, "refunded");
   assert.ok(pay.refundId);
   assert.equal(pay.refundAmount, 2340000);
+  // guests get their money fast: the refund is requested at optimum (instant) speed
+  assert.equal(h.razorpay().__mock.refunds.get(pay.refundId).speed_requested, "optimum");
   const bk = await Booking().findById(booking._id);
   assert.equal(bk.paymentStatus, "refunded");
   assert.ok(["cancelled", "rejected"].includes(bk.status));

@@ -46,7 +46,7 @@ function mockClient() {
         if (!p) throw Object.assign(new Error("mock: payment not found"), { statusCode: 400 });
         return p;
       },
-      async refund(paymentId, { amount }) {
+      async refund(paymentId, { amount, speed }) {
         calls.paymentsRefund += 1;
         if (fail.paymentsRefund) throw new Error("mock: razorpay payments.refund failed");
         const p = payments.get(paymentId);
@@ -54,7 +54,7 @@ function mockClient() {
         const already = [...refunds.values()].filter((r) => r.payment_id === paymentId).reduce((a, r) => a + r.amount, 0);
         if (already + amount > p.amount) throw Object.assign(new Error("mock: refund exceeds payment"), { statusCode: 400 });
         const id = `rfnd_mock${String(++seq).padStart(6, "0")}`;
-        const refund = { id, entity: "refund", payment_id: paymentId, amount, status: "processed" };
+        const refund = { id, entity: "refund", payment_id: paymentId, amount, status: "processed", speed_requested: speed };
         refunds.set(id, refund);
         return refund;
       },

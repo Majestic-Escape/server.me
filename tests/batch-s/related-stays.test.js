@@ -360,6 +360,81 @@ test("API: races between the pool scan and the card read", async () => {
   await ListingProperty().deleteMany({ _id: { $in: [sib._id, other._id] } });
 });
 
+test("[D8 race] a change between the first-band read and the full read: rows never duplicate, misattribute or misstate a distance", async () => {
+  // sparse source (1 eligible stay in the first band) → Q2a, then Q2b; the hook runs between them
+  const { distanceKm } = require("../../utils/places");
+  const L = ListingProperty();
+  const r = R();
+  const hostR = await h.makeUser({ role: "host", firstName: "Racehost", email: "racehost@related.test" });
+  const C = { lat: 25.3, lng: 85.1 };
+  const at = (km, n) => ({ street: `${n} Race Lane`, city: "Racecity", state: "Racestate", latitude: C.lat + km / KM_PER_DEG_LAT, longitude: C.lng });
+  const s0 = await h.makeListing(hostR, { title: "Race2 source", address: at(0, 1) });
+  const sibNear = await h.makeListing(hostR, { title: "Race2 host near", address: at(2, 2) });
+  const sibFar = await h.makeListing(hostR, { title: "Race2 host far", address: at(120, 3) });
+  const inBand = await h.makeListing(OTHER, { title: "Race2 in band", address: at(3, 4) });
+  const far1 = await h.makeListing(OTHER, { title: "Race2 far 40", address: at(40, 5) });
+  const far2 = await h.makeListing(OTHER, { title: "Race2 far 100", address: at(100, 6) });
+  const all = [s0, sibNear, sibFar, inBand, far1, far2];
+  const reset = () => Promise.all([
+    L.updateOne({ _id: sibNear._id }, { $set: { host: hostR._id, address: at(2, 2) } }),
+    L.updateOne({ _id: sibFar._id }, { $set: { host: hostR._id, address: at(120, 3) } }),
+    L.updateOne({ _id: inBand._id }, { $set: { host: OTHER._id, address: at(3, 4) } }),
+    L.updateOne({ _id: far1._id }, { $set: { host: OTHER._id, address: at(40, 5) } }),
+    L.updateOne({ _id: far2._id }, { $set: { host: OTHER._id, address: at(100, 6) } }),
+  ]);
+  const srcPoint = r.summarize(await L.findById(s0._id).lean()).point;
+  let between = 0;
+  const run = async (mutate) => {
+    await reset();
+    let once = false;
+    r.__setTestHooks({ betweenPools: async () => { between += 1; if (!once) { once = true; await mutate(); } } });
+    try { return await raw(`/properties/${s0._id}/related`); } finally { r.__setTestHooks(null); }
+  };
+  const ids = (res) => [...res.json.host, ...res.json.nearby].map((c) => String(c._id));
+  const sound = async (res, label) => {
+    assert.equal(res.status, 200, label);
+    const all = ids(res);
+    assert.equal(new Set(all).size, all.length, `${label}: no stay twice (${all})`);
+    for (const c of res.json.host) assert.equal(String((await L.findById(c._id).lean()).host), String(hostR._id), `${label}: host row = the source's host only`);
+    for (const c of res.json.nearby) {
+      const d = distanceKm(srcPoint, { lat: c.address.latitude, lng: c.address.longitude });
+      assert.ok(Math.abs(c.distanceKm - Math.round(d * 10) / 10) <= 0.11, `${label}: distance ${c.distanceKm} agrees with the emitted point (${d.toFixed(2)})`);
+      assert.ok(!res.json.host.some((x) => String(x._id) === String(c._id)), `${label}: never in both rows`);
+    }
+  };
+  const has = (res, l) => ids(res).includes(String(l._id));
+  try {
+    // baseline: the fallback path runs (one stay in the first band)
+    let res = await run(async () => {});
+    assert.ok(between >= 1, "the full read ran (sparse source)");
+    await sound(res, "baseline");
+    // 1. a stay moves INTO the first band between the reads → in neither read (allowed: rows not optimal)
+    res = await run(() => L.updateOne({ _id: far1._id }, { $set: { address: at(1, 5) } }));
+    await sound(res, "moved into the band");
+    console.log(`[D8 race] moved into the band between the reads: ${has(res, far1) ? "shown" : "missed (documented)"}`);
+    // 2. a stay moves OUT of the first band → read by both → shown once, with its new distance
+    res = await run(() => L.updateOne({ _id: inBand._id }, { $set: { address: at(100.5, 4) } }));
+    await sound(res, "moved out of the band");
+    const moved = res.json.nearby.find((c) => String(c._id) === String(inBand._id));
+    assert.ok(!moved || moved.distanceKm > 90, `read twice, emitted once at its new place (${moved && moved.distanceKm})`);
+    // 3. a stay is given TO the source's host between the reads → in neither read (allowed)
+    res = await run(() => L.updateOne({ _id: far2._id }, { $set: { host: hostR._id } }));
+    await sound(res, "given to the source host");
+    console.log(`[D8 race] given to the source host between the reads: ${has(res, far2) ? "shown" : "missed (documented)"}`);
+    // 4. a host stay inside the band is taken AWAY → leaves the host row, not refilled into nearby
+    res = await run(() => L.updateOne({ _id: sibNear._id }, { $set: { host: OTHER._id } }));
+    await sound(res, "near host stay reassigned");
+    assert.ok(!res.json.host.some((c) => String(c._id) === String(sibNear._id)), "no longer the source host's");
+    // 5. a FAR host stay is taken away → read by both reads (as the host's, then as another's) → never in the host row, at most once
+    res = await run(() => L.updateOne({ _id: sibFar._id }, { $set: { host: OTHER._id } }));
+    await sound(res, "far host stay reassigned");
+    assert.ok(!res.json.host.some((c) => String(c._id) === String(sibFar._id)), "no longer the source host's");
+  } finally {
+    r.__setTestHooks(null);
+    await L.deleteMany({ _id: { $in: all.map((x) => x._id) } });
+  }
+});
+
 test("prefilter: API rows equal a full-inventory ranking (seeded, incl. 249–252 km edges)", async () => {
   const L = ListingProperty();
   const hostX = await h.makeUser({ role: "host", firstName: "Eqx", email: "eqx@related.test" });

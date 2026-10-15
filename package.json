@@ -8,6 +8,7 @@
     "dev": "nodemon index.js",
     "railway": "node index.js",
     "test": "node --test --test-timeout=120000 --test-force-exit \"tests/batch-s/*.test.js\"",
+    "perf:related": "node --test --test-timeout=600000 --test-force-exit \"tests/perf/*.perf.js\"",
     "check:js": "node scripts/check-js-identifiers.mjs"
   },
   "keywords": [],

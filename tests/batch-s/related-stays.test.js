@@ -3,7 +3,7 @@
 //   pure ranking — golden boundaries (25 / 250 km, ±35 % price, ±2 guests,
 //   5 km bands), host ordering, scope, seeded randomized invariants
 //   API — input, public inventory only, card allow-list + masking + public
-//   points, caching headers, ≤ 3 queries, races between the scan and the
+//   points, caching headers, ≤ 4 queries, races between the scan and the
 //   card read, driver commands + documents examined (sparse and dense).
 // Latency lives in tests/perf/related-stays.perf.js (npm run perf:related):
 // a timing budget does not belong in a suite that runs files in parallel.
@@ -307,7 +307,7 @@ test("API: a database failure → 500 without cache headers or internals", async
   }
 });
 
-test("API: at most 3 listing queries per request", async () => {
+test("API: at most 4 listing queries per request (source, first band, the full box only when the first band is short, cards)", async () => {
   const extra = [await h.makeListing(HOST, { address: addr(2, 500) }), await h.makeListing(OTHER, { address: addr(4, 501) })];
   const ops = [];
   mongoose.set("debug", (coll, method) => ops.push(`${coll}.${method}`));
@@ -315,7 +315,7 @@ test("API: at most 3 listing queries per request", async () => {
   mongoose.set("debug", false);
   assert.equal(r.status, 200);
   const lp = ops.filter((o) => o.startsWith("listingproperties."));
-  assert.ok(lp.length <= 3, lp.join(", "));
+  assert.ok(lp.length <= 4, lp.join(", "));
   assert.equal(ops.filter((o) => !o.startsWith("listingproperties.")).length, 0, `no other collection: ${ops.join(", ")}`);
   await ListingProperty().deleteMany({ _id: { $in: extra.map((l) => l._id) } });
 });
@@ -358,6 +358,81 @@ test("API: races between the pool scan and the card read", async () => {
   assert.ok(!r.json.host.some((c) => String(c._id) === String(sib._id)), "no longer this host's");
   assert.ok(!r.json.nearby.some((c) => String(c._id) === String(sib._id)), "and not refilled into nearby");
   await ListingProperty().deleteMany({ _id: { $in: [sib._id, other._id] } });
+});
+
+test("[D8 race] a change between the first-band read and the full read: rows never duplicate, misattribute or misstate a distance", async () => {
+  // sparse source (1 eligible stay in the first band) → Q2a, then Q2b; the hook runs between them
+  const { distanceKm } = require("../../utils/places");
+  const L = ListingProperty();
+  const r = R();
+  const hostR = await h.makeUser({ role: "host", firstName: "Racehost", email: "racehost@related.test" });
+  const C = { lat: 25.3, lng: 85.1 };
+  const at = (km, n) => ({ street: `${n} Race Lane`, city: "Racecity", state: "Racestate", latitude: C.lat + km / KM_PER_DEG_LAT, longitude: C.lng });
+  const s0 = await h.makeListing(hostR, { title: "Race2 source", address: at(0, 1) });
+  const sibNear = await h.makeListing(hostR, { title: "Race2 host near", address: at(2, 2) });
+  const sibFar = await h.makeListing(hostR, { title: "Race2 host far", address: at(120, 3) });
+  const inBand = await h.makeListing(OTHER, { title: "Race2 in band", address: at(3, 4) });
+  const far1 = await h.makeListing(OTHER, { title: "Race2 far 40", address: at(40, 5) });
+  const far2 = await h.makeListing(OTHER, { title: "Race2 far 100", address: at(100, 6) });
+  const all = [s0, sibNear, sibFar, inBand, far1, far2];
+  const reset = () => Promise.all([
+    L.updateOne({ _id: sibNear._id }, { $set: { host: hostR._id, address: at(2, 2) } }),
+    L.updateOne({ _id: sibFar._id }, { $set: { host: hostR._id, address: at(120, 3) } }),
+    L.updateOne({ _id: inBand._id }, { $set: { host: OTHER._id, address: at(3, 4) } }),
+    L.updateOne({ _id: far1._id }, { $set: { host: OTHER._id, address: at(40, 5) } }),
+    L.updateOne({ _id: far2._id }, { $set: { host: OTHER._id, address: at(100, 6) } }),
+  ]);
+  const srcPoint = r.summarize(await L.findById(s0._id).lean()).point;
+  let between = 0;
+  const run = async (mutate) => {
+    await reset();
+    let once = false;
+    r.__setTestHooks({ betweenPools: async () => { between += 1; if (!once) { once = true; await mutate(); } } });
+    try { return await raw(`/properties/${s0._id}/related`); } finally { r.__setTestHooks(null); }
+  };
+  const ids = (res) => [...res.json.host, ...res.json.nearby].map((c) => String(c._id));
+  const sound = async (res, label) => {
+    assert.equal(res.status, 200, label);
+    const all = ids(res);
+    assert.equal(new Set(all).size, all.length, `${label}: no stay twice (${all})`);
+    for (const c of res.json.host) assert.equal(String((await L.findById(c._id).lean()).host), String(hostR._id), `${label}: host row = the source's host only`);
+    for (const c of res.json.nearby) {
+      const d = distanceKm(srcPoint, { lat: c.address.latitude, lng: c.address.longitude });
+      assert.ok(Math.abs(c.distanceKm - Math.round(d * 10) / 10) <= 0.11, `${label}: distance ${c.distanceKm} agrees with the emitted point (${d.toFixed(2)})`);
+      assert.ok(!res.json.host.some((x) => String(x._id) === String(c._id)), `${label}: never in both rows`);
+    }
+  };
+  const has = (res, l) => ids(res).includes(String(l._id));
+  try {
+    // baseline: the fallback path runs (one stay in the first band)
+    let res = await run(async () => {});
+    assert.ok(between >= 1, "the full read ran (sparse source)");
+    await sound(res, "baseline");
+    // 1. a stay moves INTO the first band between the reads → in neither read (allowed: rows not optimal)
+    res = await run(() => L.updateOne({ _id: far1._id }, { $set: { address: at(1, 5) } }));
+    await sound(res, "moved into the band");
+    console.log(`[D8 race] moved into the band between the reads: ${has(res, far1) ? "shown" : "missed (documented)"}`);
+    // 2. a stay moves OUT of the first band → read by both → shown once, with its new distance
+    res = await run(() => L.updateOne({ _id: inBand._id }, { $set: { address: at(100.5, 4) } }));
+    await sound(res, "moved out of the band");
+    const moved = res.json.nearby.find((c) => String(c._id) === String(inBand._id));
+    assert.ok(!moved || moved.distanceKm > 90, `read twice, emitted once at its new place (${moved && moved.distanceKm})`);
+    // 3. a stay is given TO the source's host between the reads → in neither read (allowed)
+    res = await run(() => L.updateOne({ _id: far2._id }, { $set: { host: hostR._id } }));
+    await sound(res, "given to the source host");
+    console.log(`[D8 race] given to the source host between the reads: ${has(res, far2) ? "shown" : "missed (documented)"}`);
+    // 4. a host stay inside the band is taken AWAY → leaves the host row, not refilled into nearby
+    res = await run(() => L.updateOne({ _id: sibNear._id }, { $set: { host: OTHER._id } }));
+    await sound(res, "near host stay reassigned");
+    assert.ok(!res.json.host.some((c) => String(c._id) === String(sibNear._id)), "no longer the source host's");
+    // 5. a FAR host stay is taken away → read by both reads (as the host's, then as another's) → never in the host row, at most once
+    res = await run(() => L.updateOne({ _id: sibFar._id }, { $set: { host: OTHER._id } }));
+    await sound(res, "far host stay reassigned");
+    assert.ok(!res.json.host.some((c) => String(c._id) === String(sibFar._id)), "no longer the source host's");
+  } finally {
+    r.__setTestHooks(null);
+    await L.deleteMany({ _id: { $in: all.map((x) => x._id) } });
+  }
 });
 
 test("prefilter: API rows equal a full-inventory ranking (seeded, incl. 249–252 km edges)", async () => {
@@ -404,6 +479,90 @@ test("prefilter: API rows equal a full-inventory ranking (seeded, incl. 249–25
     }
   } finally {
     await L.deleteMany({ _id: { $in: [...ids, ...srcs.map((x) => x._id)] } });
+  }
+});
+
+test("[D8] dense first band: ≥ 8 eligible stays within 5 km → the pool read is the first band (+ the host's stays), rows equal a full-inventory ranking; sparse → the full read, same rows", async () => {
+  const L = ListingProperty();
+  const r = R();
+  const { publicListingFilter } = require("../../utils/listingProjection");
+  const hostD = await h.makeUser({ role: "host", firstName: "Densehost", email: "densehost@related.test" });
+  let seed = 11;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const C = { lat: 12.3, lng: 76.6 };
+  const pt = (km, t) => ({ city: "Densecity", state: "Densestate", latitude: C.lat + (km / KM_PER_DEG_LAT) * Math.cos(t), longitude: C.lng + (km / (KM_PER_DEG_LAT * Math.cos((C.lat * Math.PI) / 180))) * Math.sin(t) });
+  const doc = (i, host, km, extra = {}) => ({
+    title: `Dense ${i}`, host, hostEmail: "dense@related.test", status: rnd() < 0.92 ? "active" : "processing",
+    propertyType: ["villa", "flat", "cottage"][i % 3], basePrice: 2000 + Math.floor(rnd() * 6000), guests: 1 + (i % 8),
+    averageRating: rnd() < 0.5 ? Math.round(rnd() * 50) / 10 : undefined, reviewCount: Math.floor(rnd() * 30),
+    address: pt(km, rnd() * 2 * Math.PI), createdAt: new Date(Date.now() - i * 1000), ...extra,
+  });
+  const docs = [];
+  let i = 0;
+  for (let k = 0; k < 20; k++) docs.push(doc(i++, hostD._id, k < 5 ? rnd() * 4.5 : 100 + rnd() * 100)); // the source host: 5 close, 15 anywhere
+  for (let k = 0; k < 30; k++) docs.push(doc(i++, OTHER._id, rnd() * 4.8)); // dense first band
+  for (let k = 0; k < 12; k++) docs.push(doc(i++, OTHER._id, 4.9 + rnd() * 0.2)); // straddling the 5 km band edge
+  for (let k = 0; k < 600; k++) docs.push(doc(i++, OTHER._id, 6 + rnd() * 234)); // the rest of the 250 km box
+  const ins = await L.collection.insertMany(docs);
+  const ids = Object.values(ins.insertedIds);
+  // source 1's host has a small portfolio; a big portfolio is read whole (the host row ranks all of it) — cost report
+  const hostE = await h.makeUser({ role: "host", firstName: "Smallhost", email: "smallhost@related.test" });
+  const dense = [await h.makeListing(hostD, { title: "Dense source 0", address: pt(0, 0) }), await h.makeListing(hostE, { title: "Dense source 1", address: pt(1.5, 2) }), await h.makeListing(hostE, { title: "Dense source 1 sibling", address: pt(150, 3) })];
+  const sparse = await h.makeListing(OTHER, { title: "Sparse source", address: pt(60, 1) });
+  const live = await L.countDocuments(publicListingFilter());
+  const client = mongoose.connection.getClient();
+  let finds = [];
+  const onOk = (e) => { if (e.commandName === "find" || e.commandName === "getMore") finds.push(((e.reply.cursor || {}).firstBatch || (e.reply.cursor || {}).nextBatch || []).length); };
+  client.on("commandSucceeded", onOk);
+  try {
+    const full = (await L.find(publicListingFilter()).select(r.POOL_PROJECTION).lean()).map(r.summarize);
+    const expected = (s) => {
+      const me = full.find((c) => c.id === String(s._id));
+      const hostRow = r.rankHost(me, full);
+      const near = r.rankNearby(me, full, { exclude: new Set(hostRow.map((c) => c.id)) });
+      return { host: hostRow.map((c) => c.id), nearby: near.items.map((x) => x.c.id), scope: near.scope };
+    };
+    for (const s of [dense[0], dense[1], sparse]) {
+      finds = [];
+      const res = await raw(`/properties/${s._id}/related`);
+      const want = expected(s);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.json.host.map((c) => String(c._id)), want.host, `host row (${s.title})`);
+      assert.deepEqual(res.json.nearby.map((c) => String(c._id)), want.nearby, `nearby row (${s.title})`);
+      assert.equal(res.json.nearbyScope, want.scope);
+      const returned = finds.reduce((a, b) => a + b, 0);
+      console.log(`[D8] ${s.title}: ${finds.length} finds, ${returned} documents returned, ${live} live`);
+      if (dense.includes(s)) {
+        assert.equal(finds.length, 3, `dense: source + first band + cards (${finds.join(",")})`);
+        assert.ok(returned < 120, `dense: the first band and the host's stays, not the 250 km box (${returned} of ${live})`);
+      } else {
+        assert.equal(finds.length, 4, `sparse: the first band is short → one full read (${finds.join(",")})`);
+      }
+    }
+    // seeded positions 0–20 km out, alternating hosts: both paths (first band decides / short) and the 5 km edge
+    const extra = [];
+    let firstOnly = 0;
+    for (let k = 0; k < 12; k++) {
+      extra.push(await h.makeListing([hostD, hostE, OTHER][k % 3], { title: `Dense probe ${k}`, address: pt(rnd() * 20, rnd() * 2 * Math.PI) }));
+    }
+    const fullNow = (await L.find(publicListingFilter()).select(r.POOL_PROJECTION).lean()).map(r.summarize);
+    for (const s of extra) {
+      finds = [];
+      const res = await raw(`/properties/${s._id}/related`);
+      const me = fullNow.find((c) => c.id === String(s._id));
+      const hostRow = r.rankHost(me, fullNow);
+      const near = r.rankNearby(me, fullNow, { exclude: new Set(hostRow.map((c) => c.id)) });
+      assert.deepEqual(res.json.host.map((c) => String(c._id)), hostRow.map((c) => c.id), `host row (${s.title})`);
+      assert.deepEqual(res.json.nearby.map((c) => String(c._id)), near.items.map((x) => x.c.id), `nearby row (${s.title})`);
+      assert.equal(res.json.nearbyScope, near.scope);
+      if (finds.length === 3) firstOnly += 1;
+    }
+    console.log(`[D8] seeded probes: ${firstOnly} of ${extra.length} decided by the first band, all equal to the full ranking`);
+    assert.ok(firstOnly > 0 && firstOnly < extra.length, "both paths were exercised");
+    await L.deleteMany({ _id: { $in: extra.map((x) => x._id) } });
+  } finally {
+    client.off("commandSucceeded", onOk);
+    await L.deleteMany({ _id: { $in: [...ids, ...dense.map((x) => x._id), sparse._id] } });
   }
 });
 

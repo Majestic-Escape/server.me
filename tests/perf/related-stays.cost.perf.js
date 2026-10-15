@@ -1,7 +1,9 @@
 // Cost report for GET /properties/:id/related — what each request costs the
 // database and the process, measured (npm run perf:related; not in npm test).
 //   per scenario: Mongoose queries, driver commands (incl. getMore), documents
-//   and index keys MongoDB examines for Q2 (explain executionStats), documents
+//   and index keys MongoDB examines for EACH pool query the service actually
+//   runs — Q2a (first band + host), and Q2b (rest of the box) only when the
+//   first band does not decide — with totals (explain executionStats); documents
 //   and BSON bytes returned to Node, ranking time, response bytes, heap delta,
 //   latency p50 / p95 (3 rounds × 15 after one warm-up request)
 //   scenarios: sparse and dense inventory at 2,000 and 5,000 live listings, a
@@ -87,11 +89,34 @@ test("cost report: sparse / dense × 2,000 / 5,000, big host portfolio, unknown 
         : { city: "Far", state: "Far", latitude: 25 + (i % 150) / 20, longitude: 85 + (i % 90) / 20 }, // > 1,000 km away
       createdAt: new Date(Date.now() - i * 1000),
     }));
-  const plan = async () => {
+  // The pool queries relatedFor actually runs for this source (same filters, same decision), each explained, with the
+  // actual pool they return. Cross-checked against the live request's measured query count below.
+  const actualPools = async () => {
     const s = R.summarize(await L.findById(src._id).lean());
-    const ex = await L.find(R.poolFilter(s)).select(R.POOL_PROJECTION).lean().explain("executionStats");
-    const stages = JSON.stringify(ex.queryPlanner.winningPlan).match(/"stage":"[A-Z_]+"|"indexName":"[^"]+"/g).join(" ");
-    return { docsExamined: ex.executionStats.totalDocsExamined, keysExamined: ex.executionStats.totalKeysExamined, returned: ex.executionStats.nReturned, plan: stages };
+    const full = R.poolFilter(s);
+    const first = s.point ? R.poolFilter(s, R.NEAR_BAND_KM) : null;
+    const explain = async (q, f) => {
+      const ex = await L.find(f).select(R.POOL_PROJECTION).lean().explain("executionStats");
+      const stages = JSON.stringify(ex.queryPlanner.winningPlan).match(/"stage":"[A-Z_]+"|"indexName":"[^"]+"/g).join(" ");
+      return { query: q, docsExamined: ex.executionStats.totalDocsExamined, keysExamined: ex.executionStats.totalKeysExamined, returned: ex.executionStats.nReturned, plan: stages };
+    };
+    const read = async (f) => (await L.find(f).select(R.POOL_PROJECTION).lean()).map(R.summarize);
+    const queries = [];
+    let pool;
+    if (first && first.$or) {
+      queries.push(await explain("Q2a first 5 km band + the source host's stays", first));
+      pool = await read(first);
+      const picked = R.rankHost(s, pool);
+      if (!R.firstBandDecides(s, pool, new Set(picked.map((c) => c.id)))) {
+        const rest = { ...full, $nor: first.$or };
+        queries.push(await explain("Q2b rest of the 250 km box", rest));
+        pool = pool.concat(await read(rest));
+      }
+    } else {
+      queries.push(await explain("Q2 whole box (no public point / pole / antimeridian)", full));
+      pool = await read(full);
+    }
+    return { src: s, pool, report: { queries, total: { docsExamined: queries.reduce((a, q) => a + q.docsExamined, 0), keysExamined: queries.reduce((a, q) => a + q.keysExamined, 0), returned: queries.reduce((a, q) => a + q.returned, 0) } } };
   };
   const one = async (fn) => {
     cmds = [];
@@ -101,15 +126,20 @@ test("cost report: sparse / dense × 2,000 / 5,000, big host portfolio, unknown 
     const ms = performance.now() - t0;
     return { out, ms, mongooseQueries: mq, driverCommands: cmds.map((c) => c.name).join(","), docsReturned: cmds.reduce((a, c) => a + c.docs, 0), bytesReturned: cmds.reduce((a, c) => a + c.bytes, 0) };
   };
+  // ranking time on the ACTUAL pool, and — labelled hypothetical — on the old combined 250 km pool for comparison
   const rankTime = async () => {
-    const s = R.summarize(await L.findById(src._id).lean());
-    const pool = (await L.find(R.poolFilter(s)).select(R.POOL_PROJECTION).lean());
+    const { src: s, pool } = await actualPools();
+    const docs = (await L.find(R.poolFilter(s)).select(R.POOL_PROJECTION).lean());
+    const time = (rows) => {
+      const t0 = performance.now();
+      const hr = R.rankHost(s, rows);
+      R.rankNearby(s, rows, { exclude: new Set(hr.map((c) => c.id)) });
+      return +(performance.now() - t0).toFixed(1);
+    };
     const t0 = performance.now();
-    const sums = pool.map(R.summarize);
-    const t1 = performance.now();
-    const hr = R.rankHost(s, sums);
-    R.rankNearby(s, sums, { exclude: new Set(hr.map((c) => c.id)) });
-    return { summarizeMs: +(t1 - t0).toFixed(1), rankMs: +(performance.now() - t1).toFixed(1), poolSize: sums.length };
+    const sumsFull = docs.map(R.summarize);
+    const summarizeFullMs = +(performance.now() - t0).toFixed(1);
+    return { actual: { poolSize: pool.length, rankMs: time(pool) }, hypotheticalCombinedPool: { poolSize: sumsFull.length, summarizeMs: summarizeFullMs, rankMs: time(sumsFull) } };
   };
   const http = async () => {
     const r = await fetch(`${h.baseUrl()}/properties/${src._id}/related`);
@@ -120,8 +150,10 @@ test("cost report: sparse / dense × 2,000 / 5,000, big host portfolio, unknown 
     for (const total of [2000, 5000]) {
       await L.deleteMany({ title: /^Bulk / });
       await L.collection.insertMany(bulk(total, dense));
-      const p = await plan();
+      const p = (await actualPools()).report;
       const cur = await one(() => R.relatedFor(String(src._id)));
+      // the explained pool queries are the ones the request ran: Q1 + pool queries + Q3
+      assert.equal(cur.mongooseQueries, p.queries.length + 2, `${shape} ${total}: pool queries explained = pool queries run (${cur.mongooseQueries} queries)`);
       const old = await one(() => base.relatedFor(String(src._id)));
       assert.deepEqual(cur.out.body, old.out.body, `${shape} ${total}: identical rows to the whole-inventory baseline`);
       const res = await http();
@@ -129,8 +161,8 @@ test("cost report: sparse / dense × 2,000 / 5,000, big host portfolio, unknown 
       const svcNew = await measure(`${shape} ${total} service (current)`, () => R.relatedFor(String(src._id)));
       const svcOld = await measure(`${shape} ${total} service (baseline a2b431f)`, () => base.relatedFor(String(src._id)));
       const rt = await rankTime();
-      report.scenarios.push({ scenario: `${shape} ${total}`, live: total + 1, explainQ2: p, current: { mongooseQueries: cur.mongooseQueries, driverCommands: cur.driverCommands, docsReturned: cur.docsReturned, bytesReturned: cur.bytesReturned }, baseline: { mongooseQueries: old.mongooseQueries, driverCommands: old.driverCommands, docsReturned: old.docsReturned, bytesReturned: old.bytesReturned }, ranking: rt, responseBytes: res.bytes, latency: { http: lat, serviceCurrent: svcNew, serviceBaseline: svcOld } });
-      assert.ok(cur.mongooseQueries <= 3, "≤ 3 Mongoose queries");
+      report.scenarios.push({ scenario: `${shape} ${total}`, live: total + 1, poolQueries: p, current: { mongooseQueries: cur.mongooseQueries, driverCommands: cur.driverCommands, docsReturned: cur.docsReturned, bytesReturned: cur.bytesReturned }, baseline: { mongooseQueries: old.mongooseQueries, driverCommands: old.driverCommands, docsReturned: old.docsReturned, bytesReturned: old.bytesReturned }, ranking: rt, responseBytes: res.bytes, latency: { http: lat, serviceCurrent: svcNew, serviceBaseline: svcOld } });
+      assert.ok(cur.mongooseQueries <= 4, "≤ 4 Mongoose queries (the full box only when the first band is short)");
       assert.ok(!cur.driverCommands.includes("getMore"), `no getMore chain (${cur.driverCommands})`);
       assert.ok(res.bytes < 40000);
       if (shape === "sparse") assert.ok(cur.docsReturned < old.docsReturned, "the box returns fewer documents to Node than the whole-inventory baseline");
@@ -144,9 +176,11 @@ test("cost report: sparse / dense × 2,000 / 5,000, big host portfolio, unknown 
   {
     const cur = await one(() => R.relatedFor(String(src._id)));
     const lat = await measure("host owns 1,000 HTTP", http);
-    report.scenarios.push({ scenario: "source host owns 1,000 stays (+1,000 nearby)", explainQ2: await plan(), current: { mongooseQueries: cur.mongooseQueries, driverCommands: cur.driverCommands, docsReturned: cur.docsReturned, bytesReturned: cur.bytesReturned }, latency: { http: lat } });
+    const p = (await actualPools()).report;
+    assert.equal(cur.mongooseQueries, p.queries.length + 2, "big portfolio: pool queries explained = pool queries run");
+    report.scenarios.push({ scenario: "source host owns 1,000 stays (+1,000 nearby)", poolQueries: p, current: { mongooseQueries: cur.mongooseQueries, driverCommands: cur.driverCommands, docsReturned: cur.docsReturned, bytesReturned: cur.bytesReturned }, latency: { http: lat } });
     assert.equal(cur.out.body.host.length, 12);
-    assert.ok(cur.mongooseQueries <= 3);
+    assert.ok(cur.mongooseQueries <= 4);
   }
 
   // unknown and non-public ids: one indexed read, then stop

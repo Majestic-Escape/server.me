@@ -4,15 +4,27 @@
 // APPROXIMATE public points (the same ones the cards show) — a listing's exact
 // location never influences what is returned or in which order.
 //
-// relatedFor(id) runs at most three listing queries:
+// relatedFor(id) runs at most FOUR listing queries per cache miss — three when
+// the first 5 km band decides the nearby row (the dense case), one for an
+// unknown / non-public source:
 //   Q1  the source, by _id (indexed) — a source that is not public ends here
-//   Q2  the ranking pool, minimal projection: the source host's public stays
-//       plus the public stays inside a box around the source's PUBLIC point
-//       that reaches past 250 km by more than the approximation offset — a
-//       superset of everything the nearby ring can keep, so the result is
-//       still a function of the public points alone (poolFilter)
+//   Q2a the source host's public stays + the public stays inside the box of
+//       the first 5 km band around the source's PUBLIC point (poolFilter with
+//       NEAR_BAND_KM); when ≥ 8 eligible stays are in that band they decide
+//       the nearby row (firstBandDecides) and Q2b is skipped
+//   Q2b otherwise: the rest of the box that reaches past 250 km by more than
+//       the approximation offset ($nor Q2a) — together a superset of
+//       everything the rows can keep, so the result is still a function of
+//       the public points alone (poolFilter). Without a spatial index EACH of
+//       Q2a / Q2b examines every live listing, so a sparse area's database
+//       work is two inventory scans (the fourth query returns little, but is
+//       not small for MongoDB)
 //   Q3  the picked cards plus the source again, with the card projection and
 //       the masking context — skipped when nothing was picked
+// Q2a and Q2b are not one snapshot: a stay changed between them can be in
+// neither (moved into the first band, or given to the source's host) or in
+// both (moved out of the band) — the rows may then be smaller or not optimal,
+// never wrong: Q3 reads unique ids and decides from the emitted documents.
 // Between Q2 and Q3 a listing may change. Q3 re-checks everything it shows:
 // the source must still be public with the same host and public point (else
 // fail closed — no rows), every card must still be public, host-row cards
@@ -195,11 +207,11 @@ function cardOf(sanitized, distance) {
  * most poleward latitude). Near a pole or across the antimeridian the box
  * is not a plain range: then the whole public inventory is the pool.
  */
-function poolFilter(src) {
+function poolFilter(src, reachKm = WIDE_KM) {
   const or = [];
   if (src.host) or.push({ host: src.host });
   if (src.point) {
-    const reach = WIDE_KM + PREFILTER_MARGIN_KM;
+    const reach = reachKm + PREFILTER_MARGIN_KM;
     const dLat = reach / KM_PER_DEG;
     const lat0 = src.point.lat - dLat;
     const lat1 = src.point.lat + dLat;
@@ -213,6 +225,28 @@ function poolFilter(src) {
   }
   if (!or.length) return null;
   return publicListingFilter({ $or: or });
+}
+
+/**
+ * True when the pool decides the nearby row exactly without a wider read:
+ * at least NEARBY_LIMIT eligible stays (not the source, not in the host row)
+ * have their PUBLIC point in the first 5 km band. Bands sort first, so the
+ * row is then the first band's best NEARBY_LIMIT, and with ≥ MIN_NEAR near
+ * stays the wide ring is never appended — the stays further out cannot
+ * change it. `pool` must contain every listing whose public point lies in
+ * the first band (poolFilter(src, NEAR_BAND_KM) guarantees it) and all of
+ * the source host's stays (the host row is computed from the same pool).
+ */
+function firstBandDecides(src, pool, hostIds) {
+  if (!src.point) return true; // no public point → no nearby row; the host's stays are all in the pool
+  let n = 0;
+  for (const c of pool) {
+    if (c.id === src.id || hostIds.has(c.id) || !c.point) continue;
+    const d = distanceKm(src.point, c.point);
+    // the same band test as rankNearby: band 0 ⇔ floor((d + EPS) / 5) === 0
+    if (Number.isFinite(d) && Math.floor((d + EPS) / NEAR_BAND_KM) === 0 && ++n >= NEARBY_LIMIT) return true;
+  }
+  return false;
 }
 
 // --- orchestration -----------------------------------------------------------
@@ -246,10 +280,28 @@ async function relatedFor(id) {
   // batchSize: the default 101 + 1,000-per-getMore turns a dense box into a
   // chain of round trips; 10 fields per document, so one batch is ~1.5 MB
   // for 5,000 listings (the server caps a batch at 16 MB and then continues)
-  const pool = (await ListingProperty.find(filter).select(POOL_PROJECTION).batchSize(POOL_BATCH).maxTimeMS(QUERY_MAX_MS).lean()).map(summarize);
+  const readPool = async (f) => (await ListingProperty.find(f).select(POOL_PROJECTION).batchSize(POOL_BATCH).maxTimeMS(QUERY_MAX_MS).lean()).map(summarize);
+  // Q2 in two steps, same rows as one read of the 250 km box: first the 5 km
+  // band (+ the host's stays). Where at least 8 eligible stays are that close
+  // they decide the nearby row (firstBandDecides) — a dense area costs its
+  // first band, not its whole 250 km box. Otherwise the rest of the box is
+  // read ($nor Q2a: without concurrent changes no document twice, and the two
+  // reads are the full box; with them see the header — Q3 decides).
+  const first = src.point ? poolFilter(src, NEAR_BAND_KM) : null;
+  let pool = null;
+  let hostPicked = null;
+  if (first && first.$or) {
+    const near = await readPool(first);
+    const picked = rankHost(src, near);
+    if (firstBandDecides(src, near, new Set(picked.map((c) => c.id)))) [pool, hostPicked] = [near, picked];
+    else {
+      if (typeof hooks.betweenPools === "function") await hooks.betweenPools({ id });
+      pool = near.concat(await readPool({ ...filter, $nor: first.$or }));
+    }
+  } else pool = await readPool(filter);
+  if (!hostPicked) hostPicked = rankHost(src, pool);
   if (typeof hooks.afterPool === "function") await hooks.afterPool({ id });
 
-  const hostPicked = rankHost(src, pool);
   const hostIds = new Set(hostPicked.map((c) => c.id));
   const nearPicked = rankNearby(src, pool, { exclude: hostIds }).items;
   const picked = [...hostIds, ...nearPicked.map((x) => x.c.id)];
@@ -298,6 +350,7 @@ module.exports = {
   cardOf,
   scopeOf,
   poolFilter,
+  firstBandDecides,
   POOL_PROJECTION,
   CARD_READ,
   QUERY_MAX_MS,
@@ -305,6 +358,7 @@ module.exports = {
   HOST_LIMIT,
   NEARBY_LIMIT,
   NEAR_KM,
+  NEAR_BAND_KM,
   WIDE_KM,
   MIN_NEAR,
   __setTestHooks,

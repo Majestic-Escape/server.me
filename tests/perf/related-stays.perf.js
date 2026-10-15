@@ -46,8 +46,22 @@ async function get(path) {
   return { status: r.status, text, json: JSON.parse(text) };
 }
 
+// PERF_PRIORITY=high: a declared controlled condition on a shared machine — this process and the MongoDB it
+// started (its own child processes only, never another program's) run at the OS "high" priority class.
+async function raisePriority() {
+  const pids = [process.pid];
+  if (process.platform === "win32") {
+    const { execFileSync } = require("node:child_process");
+    const out = execFileSync("powershell", ["-NoProfile", "-Command", `(Get-CimInstance Win32_Process -Filter "ParentProcessId=${process.pid}" | Where-Object { $_.Name -like 'mongod*' }).ProcessId`], { encoding: "utf8" });
+    pids.push(...out.split(/\s+/).filter(Boolean).map(Number));
+  }
+  for (const pid of pids) os.setPriority(pid, os.constants.priority.PRIORITY_HIGH);
+  return pids.map((pid) => `${pid}:${os.getPriority(pid)}`).join(" ");
+}
+
 test.before(async () => {
   await h.start();
+  if (process.env.PERF_PRIORITY === "high") console.log(`[perf] priority raised (pid:priority): ${await raisePriority()}`);
   HOST = await h.makeUser({ role: "host", firstName: "Perfhost", email: "perfhost@perf.test" });
   OTHER = await h.makeUser({ role: "host", firstName: "Perfother", email: "perfother@perf.test" });
   src = await h.makeListing(HOST, { title: "Perf source", propertyType: "villa", address: { city: "Panaji", state: "Goa", latitude: PANAJI.lat, longitude: PANAJI.lng } });

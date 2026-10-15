@@ -70,13 +70,26 @@ after the purge while the edge refetches).
   "within 25 km" or "closest".
 
 ## Reads and races
-`relatedFor(id)` runs at most **three** listing queries and nothing else:
+`relatedFor(id)` runs at most **four** listing queries per cache miss and nothing else
+(three when the first 5 km band decides the nearby row — the dense case; one for an
+unknown / non-public source). The four-query budget is owner-approved (2026-10-15).
+Driver-command counts are measured at the tested sizes (one command per query), not a
+guarantee for arbitrarily large cursors:
 
 | | Query | Notes |
 |---|---|---|
 | Q1 | `findOne({_id, status:"active", ban≠true})`, ranking projection | `_id` index; a non-public source ends here (1 read) |
 | Q2 | `find({status:"active", ban≠true, $or:[{host: source host}, {lat/lng in the box}]})`, ranking projection (10 fields) | index `{status, createdAt, _id}`; no titles, text or photos; the box (`poolFilter`) is centred on the source's **public** point and reaches 250 km + 1 km (> the 350 m maximum approximation offset), so every stay whose public point can be within 250 km is in the pool and the result is the same as ranking the whole inventory (tested); near a pole or across the antimeridian the whole public inventory is the pool |
+| Q2a / Q2b | Q2 in two steps, **same rows as one read of the box** (tested: seeded sources on both paths and across the 5 km edge equal a whole-inventory ranking). Q2a reads the host's stays + the box of the **first 5 km band** (5 km + 1 km). When at least 8 eligible stays (not the source, not in the host row) have their public point in that band, they decide the nearby row: bands sort first, so the row is the band's best 8, and with ≥ 4 near stays the wide ring is never appended (`firstBandDecides`). Otherwise Q2b reads the **rest** of the 250 km box (`$nor` the Q2a filter — without concurrent changes the two reads do not overlap) | a dense area costs its first band + the host's stays instead of its whole 250 km box. A sparse area pays an extra round trip that returns little **but is a second full scan for MongoDB**: without a spatial index Q2a and Q2b each examine every live listing (5,001 live → 10,002 examined) |
 | Q3 | `find({_id ∈ picked + source, status:"active", ban≠true})`, card projection + mask context + `host`, `photos` sliced to the first | skipped when nothing was picked; the description stays in the read because masking treats title + description + rules as one text (identical to the search cards) |
+
+Q2a and Q2b are **not one snapshot**. A stay changed between them can be in
+neither read (moved into the first band; given to the source's host) or in both
+(moved out of the band; taken from the source's host while outside the band).
+The rows may then be smaller or not optimal; they are never wrong — Q3 reads
+unique ids and the rows are rebuilt from the emitted documents (tested: five
+between-read cases — no duplicates, no other host's stay in the host row,
+every distance agrees with the emitted point).
 
 A listing may change between Q2 and Q3. Q3 re-checks everything it shows:
 - the source must still be public with the **same host and the same public
@@ -96,13 +109,31 @@ and correctly attributed.
 **What is bounded, and what is not** (measured: `tests/batch-s/related-stays.test.js`
 "cost", driver command monitoring + `explain("executionStats")`).
 
-| | Sparse inventory (5,001 live, 11 candidates) | Dense (5,001 live, all candidates) |
+| (5,001 live listings, two-step read; cost report 2026-10-15) | Sparse (few stays within 5 km) | Dense (every stay inside the box) |
 |---|---|---|
-| Mongoose queries | ≤ 3 | ≤ 3 |
-| Driver commands (`find` + `getMore`) | 3 (one per query) | 3 — Q2 uses `batchSize(20000)`; before, 8 (`find`, `find`, 5 × `getMore`, `find`) |
-| Documents returned to Node by Q2 | 11 | 5,001 |
-| **Documents MongoDB examines for Q2** | **5,001** (IXSCAN `status_1_createdAt_-1__id_-1`, then FETCH applying the host-or-box predicate) | 5,001 |
+| Mongoose queries | 4 (Q1, Q2a, Q2b, Q3) | 3 (Q1, Q2a, Q3) — the first band decides |
+| Driver commands (`find` + `getMore`) | 4 (one per query; pool reads use `batchSize(20000)`) | 3 |
+| Documents returned to Node by the pool reads | 101 (Q2a) + 0 (Q2b) | 211 (Q2a; the old single read returned 5,001) |
+| **Documents MongoDB examines for the pool reads** | **10,002** (Q2a 5,001 + Q2b 5,001 — two full scans: IXSCAN `status_1_createdAt_-1__id_-1`, then FETCH applying the predicate) | **5,001** (Q2a) |
 
+- **Two-step read, per pool query** (cost report `poolQueries`, explain executionStats of the queries actually run):
+  sparse 5,000 → Q2a examined 5,001 / returned 101 + Q2b examined 5,001 / returned 0 = **10,002 examined**;
+  dense 5,000 → Q2a only, 5,001 examined / 211 returned; a host owning 1,000 stays → 2,001 + 2,001 examined.
+- **Measured after the two-step read** (`npm run perf:related`, cost report, `PERF_PRIORITY=high`, 2026-10-15):
+  dense 5,000 → 3 queries, 233 documents / 50 KB returned to Node (was 5,023 / 850 KB), service p50 / p95
+  26 / 32 ms; dense 2,000 → 93 documents; sparse 2,000 / 5,000 → 4 queries, same documents as before
+  (55 / 115); a host owning 1,000 stays → 2,023 documents (unchanged, no document read twice); 20 concurrent
+  dense-2,000 requests 0.30 s wall (was ~1.03 s). Perf gate, 5 interleaved runs each: 5,000-dense median p95
+  41–53 ms (old read 108–154 ms, same runs).
+- **Dense areas (perf gate D8).** Before the two-step read a dense box was
+  transferred and ranked whole (5,001 documents in the perf fixture). Now a
+  source with ≥ 8 eligible stays within 5 km reads that band + its host's
+  stays only. What this does **not** fix: a source whose own host owns a
+  large portfolio still reads all of it (the host row ranks every one of the
+  host's stays); a first band holding thousands of stays is still read whole;
+  and MongoDB still *examines* every live listing for each read (no spatial
+  index — see the scale path; an index alone would not have fixed the dense
+  case either, because every stay in a dense box is a candidate).
 - The box **reduces what is transferred to Node and ranked** for spread
   inventory. It does **not** reduce what MongoDB examines: with the declared
   indexes (`{status, createdAt, _id}`, `{host}`) the spatial branch has no
@@ -160,7 +191,7 @@ no self or duplicates, near before wide, input not mutated — a failure
 prints its seed); input validation; non-public sources (processing,
 inactive, `active` + `ban:true`, unknown); card allow-list, masking of an
 address inside a title, public points and distances that agree with them;
-cache headers; ≤ 3 queries; races (source delisted / reassigned / moved —
+cache headers; ≤ 4 queries; the first-band read (dense sources read the band + the host's stays, sparse ones the rest of the box, rows equal a whole-inventory ranking on both paths); races (source delisted / reassigned / moved —
 answered `unavailable` — candidate delisted / moved past 250 km /
 reassigned); response-filter and DB failures; the box contains every point
 within 250 km + the offset at six latitudes and 72 bearings, falls back at

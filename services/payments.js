@@ -371,7 +371,9 @@ async function refundBookingPayment({ booking, reason }) {
   try {
     refund = await getRazorpay().payments.refund(payment.paymentId, {
       amount: payment.amount,
-      speed: "normal",
+      // "optimum": instant where the guest's bank supports it (flat fee per
+      // refund, paid by us), otherwise Razorpay falls back to normal on its own.
+      speed: "optimum",
       notes: { notes_key_1: "Full Refund", reason: reason || "" },
       receipt: `Refund No. ${bookingId}`,
     });

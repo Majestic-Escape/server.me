@@ -1608,6 +1608,8 @@ exports.createListingProperty = async (req, res) => {
       ...propertyData,
       // _id: new mongoose.Types.ObjectId(),
       host: user._id,
+      // stripped from a host body above; the copy the admin list shows is the account's
+      hostEmail: user.email,
       status: "incomplete",
     });
 

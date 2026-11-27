@@ -174,6 +174,7 @@ test("create-listing-property ignores the same fields from a host", async () => 
   assert.equal(stored.bankDetails ?? false, false);
   assert.equal(stored.ban ?? false, false);
   assert.equal(String(stored.host), String(HOST._id));
+  assert.equal(stored.hostEmail, HOST.email, "hostEmail is the host account's (admin list Email column)");
 });
 
 test("GET /prop-listing/?hostEmail= is the host's own (or an admin's) — no e-mail oracle", async () => {

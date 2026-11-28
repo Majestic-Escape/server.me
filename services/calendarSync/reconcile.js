@@ -441,7 +441,8 @@ async function reconcile({ conn, listing, parsed, now = new Date(), mode = "incr
   // Full reconciliation also clears night rows left by released rows.
   if (mode === "full") {
     const released = await Booking.find({ "external.connectionId": conn._id, "external.state": { $nin: LIVE } }).select("_id").lean();
-    if (released.length) await BookingNight.deleteMany({ bookingId: { $in: released.map((r) => r._id) } });
+    const owners = released.length ? await BookingNight.distinct("bookingId", { bookingId: { $in: released.map((r) => r._id) } }) : [];
+    for (const id of owners) await ledger.releaseAll(id);
   }
 
   // owed admin flags of stays not over yet (a past stay cannot be re-checked)

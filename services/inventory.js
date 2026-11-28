@@ -186,8 +186,105 @@ async function finalizeNights({ bookingId, nights }) {
   return BookingNight.countDocuments({ bookingId, date: { $in: nights } });
 }
 
-async function releaseNights(bookingId) {
-  await BookingNight.deleteMany({ bookingId });
+// Frees a booking's nights (all of them, or those not in `keep`). A night that
+// a live imported booking still covers is HANDED to that import instead: the
+// existing row changes owner in one atomic update, so the ledger (and the
+// search that reads it) never shows that night free. Before this, the night
+// stayed rowless until the next full calendar pass while /booking refused it
+// (importedOverlap): search offered a night checkout would not sell (A9).
+// Heirs are exactly the bookings importedOverlap treats as blocking.
+//
+// Every write is followed by a check, because a sync can change imports at any
+// moment (the importer writes its booking first and its nights second):
+//   handed over → the heir is re-read; nights it no longer covers are given back;
+//   deleted     → imports are looked up again; one that arrived meanwhile (it
+//                 could only share the night while our row existed) gets it.
+const TERMINAL_STATUSES = ["cancelled", "rejected"];
+
+function coversNight(b, t) {
+  return !!b && !TERMINAL_STATUSES.includes(b.status) && utcDay(b.checkIn).getTime() <= t && t < utcDay(b.checkOut).getTime();
+}
+
+// Live imports on `propertyId` overlapping [first, last] nights, lowest _id first.
+// While the releasing booking stays live (an admin date move, a clean-up), an import
+// that merely mirrors it (importedOverlap's echo rule) is not an heir; once it is
+// cancelled or deleted, its mirror blocks everyone else and does take over.
+async function findHeirs(propertyId, releasingId, first, last, stillLive) {
+  const found = await Booking.find({
+    propertyId: new mongoose.Types.ObjectId(String(propertyId)),
+    _id: { $ne: releasingId },
+    source: { $in: ["ical", "ical_parked"] },
+    status: { $nin: TERMINAL_STATUSES },
+    checkIn: { $lt: new Date(last + DAY_MS) },
+    checkOut: { $gte: new Date(first + DAY_MS) },
+  })
+    .select("_id status checkIn checkOut external.echo.suspect external.conflict.withBookingIds")
+    .sort({ _id: 1 })
+    .lean();
+  if (!stillLive) return found;
+  return found.filter((h) => {
+    const ext = h.external || {};
+    return !(ext.echo && ext.echo.suspect && ((ext.conflict && ext.conflict.withBookingIds) || []).some((id) => String(id) === String(releasingId)));
+  });
+}
+
+// After night t was given to heirId: re-read the heir and give back what it no longer covers.
+async function settleHeir(heirId, t) {
+  const now = await Booking.findById(heirId).select("status checkIn checkOut").lean();
+  if (coversNight(now, t)) return;
+  const live = now && !TERMINAL_STATUSES.includes(now.status);
+  await releaseNights(heirId, live ? { keep: nightsBetween(now.checkIn, now.checkOut) } : {});
+}
+
+// Returns the rows handed to imports ({ rowId, to }): a move that then fails takes them back (takeBack).
+async function releaseNights(bookingId, { keep } = {}) {
+  const filter = keep ? { bookingId, date: { $nin: keep } } : { bookingId };
+  const rows = await BookingNight.find(filter).select("_id propertyId date").lean();
+  const handed = [];
+  if (!rows.length) return handed;
+  const self = await Booking.findById(bookingId).select("status").lean();
+  const stillLive = !!self && !TERMINAL_STATUSES.includes(self.status);
+  const byProperty = new Map();
+  for (const r of rows) {
+    const k = String(r.propertyId);
+    if (!byProperty.has(k)) byProperty.set(k, []);
+    byProperty.get(k).push(r);
+  }
+  for (const [pid, list] of byProperty) {
+    const times = list.map((r) => r.date.getTime());
+    const heirs = await findHeirs(pid, bookingId, Math.min(...times), Math.max(...times), stillLive);
+    for (const row of list) {
+      const t = row.date.getTime();
+      const heir = heirs.find((h) => coversNight(h, t));
+      if (heir) {
+        // Conditional on the row still being ours: a row that changed hands meanwhile is left alone.
+        const res = await BookingNight.updateOne({ _id: row._id, bookingId }, { $set: { bookingId: heir._id, kind: "ical", expiresAt: null } });
+        if (res.modifiedCount) {
+          handed.push({ rowId: row._id, to: heir._id });
+          await settleHeir(heir._id, t);
+        }
+        continue;
+      }
+      const del = await BookingNight.deleteOne({ _id: row._id, bookingId });
+      if (!del.deletedCount) continue;
+      const late = (await findHeirs(pid, bookingId, t, t, stillLive)).find((h) => coversNight(h, t));
+      if (!late) continue;
+      try {
+        const doc = await BookingNight.create({ propertyId: row.propertyId, date: row.date, bookingId: late._id, kind: "ical", expiresAt: null });
+        handed.push({ rowId: doc._id, to: late._id });
+        await settleHeir(late._id, t);
+      } catch (err) {
+        if (!isDuplicateKeyError(err)) throw err; // someone took the night meanwhile: theirs
+      }
+    }
+  }
+  return handed;
+}
+
+// A change that did not happen (a failed admin move) takes back the nights its release handed
+// to imports: only rows the import still holds, in place, permanent as they were.
+async function takeBack(handed, bookingId, kind) {
+  for (const h of handed || []) await BookingNight.updateOne({ _id: h.rowId, bookingId: h.to }, { $set: { bookingId, kind, expiresAt: null } });
 }
 
 // Re-arms the unpaid hold of a booking that is about to be paid: extends it
@@ -204,7 +301,7 @@ async function secureHold({ propertyId, bookingId, nights, now = new Date() }) {
     const pid = new mongoose.Types.ObjectId(String(propertyId));
     const imported = await importedOverlap(pid, nights, bookingId);
     if (imported) {
-      await BookingNight.deleteMany({ bookingId });
+      await releaseNights(bookingId);
       return { ok: false, conflicts: [{ bookingId: imported._id, propertyId: pid, kind: "ical", date: null }] };
     }
     return { ok: true, extended: true };
@@ -243,6 +340,7 @@ module.exports = {
   extendHold,
   finalizeNights,
   releaseNights,
+  takeBack,
   secureHold,
   securePermanent,
   isDuplicateKeyError,

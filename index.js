@@ -250,7 +250,7 @@ app.use("/api/v1/accounts", accountsRoutes);
 app.use("/api/v1/kyc", kycRoutes);
 app.use("/api/v1/booking", bookingRoutes);
 app.use("/api/v1/uploads", uploadRoutes);
-// Admin-managed homepage banner (docs/site-hero.md)
+// Admin-managed homepage banner (docs/site-hero.md) + website sections switches
 app.use("/api/v1/site", siteRoutes);
 // app.use("/api/v1/host-bank", uploadRoutes);
 app.use("/api/v1/property-registration-no", propertyRegistrationNoRoutes);

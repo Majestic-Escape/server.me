@@ -23,6 +23,8 @@ const ACTIONS = [
   "site.hero.alt",
   "site.hero.reset",
   "site.hero.draft_expire",
+  // website sections switches (services/siteSections.js); target: SiteSetting "site_sections", details { before, after }
+  "site.sections.update",
 ];
 // Targets that are singleton documents with a string id instead of an ObjectId.
 const KEYED_TARGETS = ["SiteSetting"];

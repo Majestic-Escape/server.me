@@ -1,13 +1,15 @@
 // Site-wide settings the admin manages without a deploy (docs/site-hero.md).
-// One document per setting with a string _id, like OpsFlag. Today only
-// "home_hero": the homepage banner — live desktop/mobile artwork + one
-// shared description, the drafts being prepared, retired objects waiting
-// for the sweep, the operation receipts that make admin actions safe to
-// retry, and the lease that admits one image job at a time.
+// One document per setting with a string _id, like OpsFlag:
+//  - "home_hero": the homepage banner — live desktop/mobile artwork + one
+//    shared description, the drafts being prepared, retired objects waiting
+//    for the sweep, the operation receipts that make admin actions safe to
+//    retry, and the lease that admits one image job at a time.
+//  - "site_sections": which optional sections the site shows
+//    (`experiences`, `services`, `version`, `updatedBy`, `updatedAt`),
+//    written by services/siteSections.js.
 //
-// Every write is a compare-and-set done by services/siteHero.js (on
-// `version`, a draft's opId or the lease token) through the native
-// collection; this schema documents the shape and serves reads.
+// Every write is a compare-and-set or a transaction done by those services
+// through the native collection; this schema documents the shape and serves reads.
 const mongoose = require("mongoose");
 const { Schema } = mongoose;
 
@@ -66,6 +68,9 @@ const siteSettingSchema = new Schema(
     receipts: { type: [receipt], default: [] },
     lease: { type: lease, default: null },
     lastSweepAt: { type: Date, default: null },
+    // "site_sections" only (no defaults: the banner document never gets them)
+    experiences: { type: Boolean },
+    services: { type: Boolean },
     updatedBy: { type: Schema.Types.ObjectId, default: null },
     updatedAt: { type: Date, default: null },
   },

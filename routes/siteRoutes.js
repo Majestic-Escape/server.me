@@ -1,5 +1,6 @@
 // Site settings the admin manages without a deploy — the homepage banner
-// (docs/site-hero.md). Authentication and the admin check run before any
+// (docs/site-hero.md) and which optional sections the site shows
+// (services/siteSections.js). Authentication and the admin check run before any
 // multipart parsing; the image parser has explicit, tight limits and answers
 // its own errors in the API shape (utils/multipart.js).
 const express = require("express");
@@ -41,5 +42,8 @@ router.post("/admin/hero/restore-default", ...admin, site.restoreDefault);
 router.post("/admin/hero/:slot/draft", ...admin, slotParam, handleUpload(heroUpload.single("image")), site.stageDraft);
 router.delete("/admin/hero/:slot/draft", ...admin, slotParam, site.discardDraft);
 router.get("/cron/hero-sweep", cronAuth, site.cronSweep);
+router.get("/sections", site.getPublicSections);
+router.get("/admin/sections", ...admin, site.getAdminSections);
+router.patch("/admin/sections", ...admin, site.updateSections);
 
 module.exports = router;

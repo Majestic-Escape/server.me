@@ -827,6 +827,7 @@ const ADMIN_LISTING_SORT = {
   status: "status",
   kycStatus: "kycStatus",
   hostEmail: "host.email",
+  hostName: "host.firstName",
   hostKyc: "host.kyc",
   hostBank: "host.bank",
   createdAt: "createdAt",
@@ -835,7 +836,9 @@ const ADMIN_LISTING_SORT = {
 
 exports.getFilteredListingsForAdmin = async (req, res) => {
   try {
-    const { search, status } = req.query;
+    const { search } = req.query;
+    // ?status[$in][]=… parses to an object: only a plain string may reach $match.
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
 
     const { page, limit, skip, sort, sortKey } = parseListQuery(req.query, {
       sortable: ADMIN_LISTING_SORT,
@@ -855,12 +858,23 @@ exports.getFilteredListingsForAdmin = async (req, res) => {
 
     const term = searchRegex(search);
     if (term) {
+      // Title, the host's account e-mail, the listing's own e-mail copy (what
+      // the table's Email column shows) and the host's name, "First Last".
       matchStage.$or = [
         { title: { $regex: term } },
+        { hostEmail: { $regex: term } },
         {
           $expr: {
             $regexMatch: {
               input: { $ifNull: ["$host.email", ""] },
+              regex: term,
+            },
+          },
+        },
+        {
+          $expr: {
+            $regexMatch: {
+              input: { $concat: [{ $ifNull: ["$host.firstName", ""] }, " ", { $ifNull: ["$host.lastName", ""] }] },
               regex: term,
             },
           },

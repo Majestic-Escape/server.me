@@ -52,7 +52,10 @@ async function sharedNightScenario(offset) {
   assert.strictEqual(await BookingNight.countDocuments({ bookingId: imp._id }), 0, "it shares the night with the host block (no night row of its own)");
   const un = await H.api("POST", `/booking/unblock-dates/${listing._id}`, { token: hostToken, body: { selectedDate: S.day(offset) } });
   assert.strictEqual(un.status, 200, JSON.stringify(un.body));
-  assert.strictEqual(await BookingNight.countDocuments({ propertyId: listing._id }), 0, "the ledger now shows the night free");
+  // A9 fix: the import takes the night over in place, so the ledger never shows it free.
+  assert.deepStrictEqual((await BookingNight.find({ propertyId: listing._id }).lean()).map((r) => String(r.bookingId)), [String(imp._id)], "the import now owns the night");
+  // Recreate a hole written before the fix, so the tests below keep exercising the booking-side defence.
+  await BookingNight.deleteMany({ propertyId: listing._id });
   return { listing, guest, gToken, pending: pending.body.data, imp, connId: conn.body.id };
 }
 

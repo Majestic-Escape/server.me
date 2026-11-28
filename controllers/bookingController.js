@@ -733,9 +733,11 @@ exports.modifyBooking = async (req, res) => {
       }
     }
     if (blocksInventory && moved) {
-      await inventory.releaseNights(current._id);
+      const handed = await inventory.releaseNights(current._id);
       const reserved = await inventory.reserveNights({ propertyId: targetProperty, nights: newNights, bookingId: current._id, kind: current.action === "host" ? "block" : "booking", permanent: true });
       if (!reserved.ok) {
+        // The move did not happen: nights the release handed to an import come back first.
+        await inventory.takeBack(handed, current._id, current.action === "host" ? "block" : "booking");
         // Put the original nights back (still ours unless another booking took them meanwhile).
         await inventory.ensureNightsBestEffort({ propertyId: current.propertyId, nights: inventory.nightsBetween(current.checkIn, current.checkOut), bookingId: current._id, kind: current.action === "host" ? "block" : "booking" });
         return res.status(409).json({ success: false, code: "DATES_UNAVAILABLE", message: "The new dates overlap with an existing booking" });

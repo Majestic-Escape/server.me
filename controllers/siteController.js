@@ -1,8 +1,10 @@
-// Homepage banner endpoints (docs/site-hero.md). The public read is cached
-// at the edge like the catalogue; every admin endpoint answers no-store (the
-// global default) and requires [authMiddleware, requireAdmin] in the router.
+// Homepage banner endpoints (docs/site-hero.md) and the website sections
+// switches (services/siteSections.js). The public reads are cached at the
+// edge like the catalogue; every admin endpoint answers no-store (the global
+// default) and requires [authMiddleware, requireAdmin] in the router.
 const authz = require("../middleware/authz");
 const hero = require("../services/siteHero");
+const sections = require("../services/siteSections");
 const { sweep } = require("../services/siteHeroSweep");
 const { catalogueCache } = require("../utils/httpCache");
 const { ImageRejected } = require("../services/imageSanitizer");
@@ -111,5 +113,39 @@ exports.cronSweep = async (req, res) => {
     return res.json({ success: true, ...(await sweep({})) });
   } catch (err) {
     return sendError(res, err, "sweep");
+  }
+};
+
+// --- website sections (Experiences / Services) -------------------------------
+function sectionsError(res, err, what) {
+  console.error(`[site-sections] ${what} failed`, err && (err.code || err.name || err.message));
+  return fail(res, 500, "SERVER_ERROR", "Something went wrong. Please try again.");
+}
+
+// GET /site/sections: public; the site server reads it with ?fresh + secret.
+exports.getPublicSections = async (req, res) => {
+  if (!catalogueCache(req, res, { tag: sections.TAG })) return undefined;
+  try {
+    return res.json(await sections.getPublic());
+  } catch (err) {
+    return sectionsError(res, err, "public read");
+  }
+};
+
+// GET /site/admin/sections
+exports.getAdminSections = async (req, res) => {
+  try {
+    return res.json({ success: true, ...(await sections.getAdmin()) });
+  } catch (err) {
+    return sectionsError(res, err, "admin read");
+  }
+};
+
+// PATCH /site/admin/sections  { experiences?: boolean, services?: boolean }
+exports.updateSections = async (req, res) => {
+  try {
+    return send(res, await sections.update(req, await actorOf(req), req.body));
+  } catch (err) {
+    return sectionsError(res, err, "update");
   }
 };

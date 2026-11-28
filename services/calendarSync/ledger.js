@@ -17,7 +17,7 @@
 const mongoose = require("mongoose");
 const BookingNight = require("../../models/BookingNight");
 const Booking = require("../../models/Booking");
-const { isDuplicateKeyError } = require("../inventory");
+const { isDuplicateKeyError, releaseNights, utcDay } = require("../inventory");
 
 function key(d) {
   return new Date(d).toISOString().slice(0, 10);
@@ -82,6 +82,27 @@ async function claimNights({ propertyId, bookingId, nights, now = new Date() }) 
     }
   }
   if (retry.length) await insertFree(pid, bookingId, retry);
+  // A permanent row whose owner no longer covers the night (cancelled, deleted, or moved) is a
+  // release in progress or a leftover. Take it over in one conditional update rather than
+  // "sharing" it: the releasing side deletes only rows still its own, so the night is never
+  // shown free while this import covers it (A9; continuous, not just eventual).
+  const stale = (await BookingNight.find({ propertyId: pid, date: { $in: nights }, expiresAt: null, bookingId: { $ne: bookingId } }).lean());
+  if (stale.length) {
+    const ids = [...new Set(stale.map((r) => String(r.bookingId)))];
+    const live = new Map((await Booking.find({ _id: { $in: ids } }).select("_id status source checkIn checkOut").lean()).map((b) => [String(b._id), b]));
+    for (const r of stale) {
+      const o = live.get(String(r.bookingId));
+      // No booking document, or a live local booking whose dates do not cover the night: a block or
+      // booking being created or moved writes its nights BEFORE its document. Never take those over.
+      if (!o) continue;
+      const t = new Date(r.date).getTime();
+      const gone = ["cancelled", "rejected"].includes(o.status);
+      const movedImport = ["ical", "ical_parked"].includes(o.source) && !(utcDay(o.checkIn).getTime() <= t && t < utcDay(o.checkOut).getTime());
+      if (gone || movedImport) await BookingNight.updateOne({ _id: r._id, bookingId: r.bookingId, expiresAt: null }, { $set: { bookingId, kind: "ical", expiresAt: null } });
+    }
+  }
+  const me = await Booking.findById(bookingId).select("status").lean();
+  if (me && ["cancelled", "rejected"].includes(me.status)) await releaseNights(bookingId);
   owners = await BookingNight.find({ propertyId: pid, date: { $in: nights } }).lean();
   const others = owners.filter((r) => String(r.bookingId) !== String(bookingId));
   result.owned = owners.filter((r) => String(r.bookingId) === String(bookingId)).map((r) => r.date);
@@ -98,12 +119,13 @@ async function claimNights({ propertyId, bookingId, nights, now = new Date() }) 
   return result;
 }
 
-// Drops this row's nights that are not in `keep` (a modification).
+// Drops this row's nights that are not in `keep` (a modification). Like every
+// release, a night another live import still covers is handed to it, not freed.
 async function releaseOutside(bookingId, keep) {
-  await BookingNight.deleteMany({ bookingId, date: { $nin: keep } });
+  await releaseNights(bookingId, { keep });
 }
 async function releaseAll(bookingId) {
-  await BookingNight.deleteMany({ bookingId });
+  await releaseNights(bookingId);
 }
 
 module.exports = { claimNights, releaseOutside, releaseAll, key };

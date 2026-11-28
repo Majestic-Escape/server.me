@@ -1,4 +1,4 @@
-// A9 repair script (evidence/rag-v2/a9/repair-missing-import-nights.js), rig only:
+// A9 repair script (scripts/a9/repair-missing-import-nights.js) and detector, test database only:
 // what other writers see and do in the interval between the repair moving an expired
 // hold's row to the import and moving it back because the hold's booking was paid
 // meanwhile. Real API, sync engine and payment-side inventory calls.
@@ -7,7 +7,9 @@ const assert = require("node:assert");
 const S = require("./syncguard-helpers");
 const H = require("./setup");
 
-const REPAIR = process.env.A9_REPAIR || "D:/majestic-escape/evidence/rag-v2/a9/repair-missing-import-nights.js";
+const path = require("node:path");
+const REPAIR = process.env.A9_REPAIR || path.join(__dirname, "../../scripts/a9/repair-missing-import-nights.js");
+const DETECTOR = path.join(__dirname, "../../scripts/a9/find-missing-import-nights.js");
 const repair = require(REPAIR);
 const ota = new S.FakeOta();
 let Booking, BookingNight, engine, mongoose, inv, ledger;
@@ -145,4 +147,39 @@ test("repair interval: the import is released inside the interval; the paid gues
   assert.strictEqual(outcome, "restored_paid_owner", "the paid booking takes the freed night back");
   assert.deepStrictEqual(row, { owner: String(s.hold), expiresAt: null });
   assert.deepStrictEqual([after.offered, after.taken, guestCheckout], [false, true, 409], "nobody else can buy the paid guest's night");
+});
+
+test("two live imports cover the same rowless nights: one finding and one plan item per night (the lowest id); apply claims them with no skips", async () => {
+  const d = 560;
+  const host = await H.makeUser();
+  const listing = await H.makeListing(host);
+  const hostToken = H.userToken(host);
+  for (const channel of ["AIRBNB", "BOOKING"]) {
+    const p = `/rep-two-${++seq}.ics`;
+    ota.events(p, [ev(`TWO-${seq}`, d - 1, d + 2)]);
+    const conn = await H.api("POST", `/calendarSync/properties/${listing._id}/connections`, { token: hostToken, body: { channel, url: ota.url(p) } });
+    assert.strictEqual(conn.status, 201, JSON.stringify(conn.body));
+    await engine.syncConnection(conn.body.id, { force: true });
+  }
+  const imps = await Booking.find({ propertyId: listing._id, source: "ical" }).sort({ _id: 1 }).lean();
+  assert.strictEqual(imps.length, 2, "both imports are live and cover the same three nights");
+  const nights = [d - 1, d, d + 1];
+  await BookingNight.deleteMany({ propertyId: listing._id, date: { $in: nights.map(N) } }); // the A9 loss (data written before the fix)
+  const lowest = String(imps[0]._id);
+
+  const { execFileSync } = require("node:child_process");
+  const found = JSON.parse(execFileSync(process.execPath, [DETECTOR, "--uri", (await H.start()).uri, "--json"], { encoding: "utf8" })).filter((f) => f.propertyId === String(listing._id));
+  assert.deepStrictEqual(found.map((f) => [f.night, f.importId, f.state, f.alsoCoveredBy]), nights.map((n) => [S.day(n), lowest, "no_row", 1]), "the detector reports each night once");
+
+  const deps = { Booking, BookingNight, inv };
+  const p = await repair.plan(deps, new Date());
+  p.items = p.items.filter((i) => i.propertyId === String(listing._id));
+  assert.deepStrictEqual(p.items.map((i) => [i.night, i.importId]), nights.map((n) => [S.day(n), lowest]), "one plan item per night, for the lowest-id import");
+  const results = await repair.applyPlan(deps, p, new Date());
+  assert.deepStrictEqual(results.map((r) => r.outcome), ["claimed", "claimed", "claimed"], "a clean repair: nothing skipped, so the run exits 0");
+  for (const n of nights) {
+    const row = await owner({ listing }, n);
+    const after = await searchAndCheckDates({ listing }, n);
+    assert.deepStrictEqual([row && row.owner, after.offered, after.taken], [lowest, false, true]);
+  }
 });

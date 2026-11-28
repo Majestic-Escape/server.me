@@ -27,8 +27,11 @@ const utcDay = (d) => { const x = new Date(d); return Date.UTC(x.getUTCFullYear(
   const imports = await db.collection("bookings").find(
     { source: { $in: ["ical", "ical_parked"] }, status: { $nin: ["cancelled", "rejected"] }, checkOut: { $gt: new Date(today) } },
     { projection: { propertyId: 1, checkIn: 1, checkOut: 1, source: 1, "external.connectionId": 1, "external.channel": 1 } },
-  ).toArray();
+  ).sort({ _id: 1 }).toArray();
   const findings = [];
+  // One finding per listing night (several imports can cover one night: the lowest id is reported, the
+  // one inventory.releaseNights would pick; the others are counted in `alsoCoveredBy`).
+  const seen = new Map();
   for (const b of imports) {
     const nights = [];
     for (let t = Math.max(utcDay(b.checkIn), today); t < utcDay(b.checkOut); t += DAY) nights.push(new Date(t));
@@ -44,12 +47,16 @@ const utcDay = (d) => { const x = new Date(d); return Date.UTC(x.getUTCFullYear(
         const owner = await db.collection("bookings").findOne({ _id: r.bookingId }, { projection: { paymentStatus: 1, status: 1 } });
         if (owner && owner.paymentStatus === "paid" && !["cancelled", "rejected"].includes(owner.status)) continue;
       }
-      findings.push({ propertyId: String(b.propertyId), importId: String(b._id), connectionId: b.external?.connectionId ? String(b.external.connectionId) : null, source: b.source, night: n.toISOString().slice(0, 10), state, rowOwner: r ? String(r.bookingId) : null });
+      const key = `${b.propertyId}|${n.getTime()}`;
+      if (seen.has(key)) { seen.get(key).alsoCoveredBy += 1; continue; }
+      const f = { propertyId: String(b.propertyId), importId: String(b._id), connectionId: b.external?.connectionId ? String(b.external.connectionId) : null, source: b.source, night: n.toISOString().slice(0, 10), state, rowOwner: r ? String(r.bookingId) : null, alsoCoveredBy: 0 };
+      seen.set(key, f);
+      findings.push(f);
     }
   }
   await client.close();
   if (args.includes("--json")) { console.log(JSON.stringify(findings, null, 1)); return; }
   const listings = new Set(findings.map((f) => f.propertyId));
   console.log(`checked ${imports.length} live imported bookings; nights shown free but covered by an import: ${findings.length} (listings: ${listings.size})`);
-  for (const f of findings) console.log(`  ${f.night}  listing ${f.propertyId}  import ${f.importId}  ${f.state}${f.rowOwner ? ` (row owner ${f.rowOwner})` : ""}`);
+  for (const f of findings) console.log(`  ${f.night}  listing ${f.propertyId}  import ${f.importId}  ${f.state}${f.rowOwner ? ` (row owner ${f.rowOwner})` : ""}${f.alsoCoveredBy ? ` (+${f.alsoCoveredBy} more import${f.alsoCoveredBy > 1 ? "s" : ""})` : ""}`);
 })().catch((e) => { console.error("FAILED:", e.message); process.exit(1); });

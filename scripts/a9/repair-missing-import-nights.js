@@ -39,15 +39,22 @@ const paidAndLive = (b) => !!b && b.paymentStatus === "paid" && !["cancelled", "
 
 async function plan({ Booking, BookingNight, inv }, now) {
   const today = inv.utcDay(now);
-  const imports = await Booking.find({ ...LIVE_IMPORT, checkOut: { $gt: today } }).select("_id propertyId checkIn checkOut").lean();
+  // Lowest id first, and one item per listing night: when several imports cover a night the plan gives it to
+  // the one inventory.releaseNights would pick. (A plan with one item per import made apply report the second
+  // import of a night as "skipped, other owner" and exit 4 on a clean repair; found on staging, 2026-11-28.)
+  const imports = await Booking.find({ ...LIVE_IMPORT, checkOut: { $gt: today } }).select("_id propertyId checkIn checkOut").sort({ _id: 1 }).lean();
   const items = [];
+  const planned = new Set();
   for (const b of imports) {
     const nights = inv.nightsBetween(new Date(Math.max(inv.utcDay(b.checkIn).getTime(), today.getTime())), b.checkOut);
     if (!nights.length) continue;
     const rows = await BookingNight.find({ propertyId: b.propertyId, date: { $in: nights } }).lean();
     const byDay = new Map(rows.map((r) => [r.date.getTime(), r]));
     for (const n of nights) {
+      const key = `${b.propertyId}|${n.getTime()}`;
+      if (planned.has(key)) continue;
       const r = byDay.get(n.getTime());
+      if (!r || (r.expiresAt && r.expiresAt <= now)) planned.add(key);
       if (!r) { items.push({ importId: String(b._id), propertyId: String(b.propertyId), night: day(n), state: "no_row" }); continue; }
       if (!(r.expiresAt && r.expiresAt <= now)) continue; // owned by someone live
       if (paidAndLive(await Booking.findById(r.bookingId).select("paymentStatus status").lean())) continue; // a paid stay, not a hold

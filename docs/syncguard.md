@@ -151,7 +151,7 @@ logs for an hour and "why was Oct 12 blocked?" must be answerable later.
 | One event unreadable (bad date) | treated as present-but-unknown, never as absent |
 | 304 / unchanged meaning (hash of normalised events — Airbnb's body churns) | no reconciliation; a pending confirmation forces the next fetch to be unconditional |
 | Reappearance | confirmation count restarts |
-| A stay that has **already started** (check-in ≤ today on the property's calendar, India — not UTC) vanishes | `missing` (still blocking) but **never released by disappearance alone** (some feeds drop a stay at check-in); it ends at checkout, by an explicit `CANCELLED`, or by the host; it never counts towards an anomaly |
+| A stay that has **already started** (check-in ≤ today on the property's calendar, India — not UTC) vanishes | `missing` (still blocking) but **never released by disappearance alone** (some feeds drop a stay at check-in); it ends at checkout, by an explicit `CANCELLED`, or by the host; it never counts towards an anomaly. **Not a stay:** a started block under a provider's *verified* block marker (Airbnb `Airbnb (Not available)`) follows the rows above like a future event (§26) |
 | A live row whose `status` was changed outside SyncGuard (old client, manual edit) | repaired by the next reconciliation that sees the event (`status_repaired`, nights re-claimed) — the feed decides |
 
 Every row write is conditional on `external.rev`; a worker that was frozen
@@ -880,3 +880,33 @@ Accepted (documented, §8.3): a genuinely reset link whose stays all changed
 UIDs is added beside the dead one; the listing refuses direct bookings until
 the host disconnects the dead link in the web panel (availability loss, not
 a double booking).
+
+## 26. Stale started block (production, 2026-11-28)
+
+Found by a read-only production check: listing `…751e48` kept an old
+Airbnb `Not available` window (2026-08-12 → 2027-05-15, imported by the
+pre-SyncGuard code in May, adopted 2026-10-11) as a stay in progress:
+Airbnb had dropped it, but its check-in was in the past, so it was never
+released by disappearance. 65 nights free on Airbnb stayed blocked on
+Majestic (the date picker opened on November 2027). Airbnb also re-issues
+a started block every day from that day under a new UID, which left one
+old row `missing` per day.
+
+Fix (`reconcile.js`): the started-stay protection no longer covers a row
+whose kind is `blocked` under a provider's **verified** marker (Airbnb
+only, `channels.blockMarkerVerified`). Such a block follows the normal
+rule (≥ 3 syncs over ≥ 2 h) and counts towards the mass-disappearance
+anomaly (12 h) like a future event. Reservations, unlabelled entries and
+unverified markers (Booking.com `CLOSED - Not available` also covers
+reservations) keep the protection. A re-issued block leaves no gap: guests
+and direct bookings are refused from the live import row at once
+(`/booking/check-dates`, create-booking overlap check), and the daily full
+pass hands the nights to it in the ledger.
+
+The legacy row itself has kind `unknown` (the old import kept no summary),
+so the code change does not touch it: it was released once through the
+host/admin `release-blocks` action.
+
+Tests: `tests/batch-s/syncguard-started-blocks.test.js` (5); mutants
+(drop the verified check, drop the kind check, revert) each fail at least
+one test.

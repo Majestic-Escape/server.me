@@ -21,6 +21,9 @@
 //     that interval and the night is still free) and the night is reported;
 //   - a LIVE hold (e.g. a checkout started after the dry run) → skipped, never displaced;
 //   - any other owner → skipped.
+//   - after every write the import is read again: if a sync cancelled, shortened or moved it in the
+//     meantime, its row is released the normal way (handed to another covering import, or freed) and
+//     the night is reported as import_changed_after_write, never as claimed.
 // Exit code 4 when anything was skipped or restored, so such a run is never mistaken for a clean one.
 const fs = require("fs");
 const path = require("path");
@@ -64,6 +67,21 @@ async function plan({ Booking, BookingNight, inv }, now) {
   return { createdAt: now.toISOString(), liveImports: imports.length, items };
 }
 
+// Write, then validate the import. A sync can cancel, shorten or move the import after apply read it and
+// before (or just after) the row is written; the importer marks the change first and releases second, so its
+// release can run before this write and miss the row. Re-read the import: if it no longer covers the night,
+// release its rows the normal way (inventory.releaseNights: handed to another live import that covers the
+// night, or freed). Returns null when the import still covers it, else the night's owner afterwards.
+async function settleImport({ Booking, BookingNight, inv }, importId, propertyId, date) {
+  const t = date.getTime();
+  const now = await Booking.findById(importId).select("status checkIn checkOut").lean();
+  const live = !!now && !["cancelled", "rejected"].includes(now.status);
+  if (live && inv.utcDay(now.checkIn).getTime() <= t && t < inv.utcDay(now.checkOut).getTime()) return null;
+  await inv.releaseNights(importId, live ? { keep: inv.nightsBetween(now.checkIn, now.checkOut) } : {});
+  const row = await BookingNight.findOne({ propertyId, date }).lean();
+  return { importStatus: now ? now.status : "deleted", nightOwner: row ? String(row.bookingId) : null };
+}
+
 async function applyPlan({ Booking, BookingNight, inv }, p, now) {
   const results = [];
   for (const it of p.items) {
@@ -78,7 +96,8 @@ async function applyPlan({ Booking, BookingNight, inv }, p, now) {
       // The night has no row: insert one for the import (the unique index refuses a second owner).
       try {
         await BookingNight.create({ propertyId: it.propertyId, date, bookingId: it.importId, kind: "ical", expiresAt: null });
-        out("claimed");
+        const changed = await settleImport({ Booking, BookingNight, inv }, it.importId, it.propertyId, date);
+        out(changed ? "import_changed_after_write" : "claimed", changed || {});
       } catch (err) {
         if (!inv.isDuplicateKeyError(err)) throw err;
         const now2 = await BookingNight.findOne({ propertyId: it.propertyId, date }).lean();
@@ -118,7 +137,8 @@ async function applyPlan({ Booking, BookingNight, inv }, p, now) {
       }
       continue;
     }
-    out("claimed");
+    const changed = await settleImport({ Booking, BookingNight, inv }, it.importId, it.propertyId, date);
+    out(changed ? "import_changed_after_write" : "claimed", changed || {});
   }
   return results;
 }
@@ -147,7 +167,7 @@ async function main() {
     const results = await applyPlan(deps, p, now);
     const count = (o) => results.filter((r) => r.outcome === o).length;
     const flagged = results.filter((r) => r.outcome !== "claimed" && r.outcome !== "already_owned").length;
-    console.log(JSON.stringify({ mode: "apply", planned: p.items.length, claimed: count("claimed"), alreadyOwned: count("already_owned"), skippedLiveHold: count("skipped_live_hold"), skippedPaidOwner: count("skipped_paid_owner"), restoredPaidOwner: count("restored_paid_owner"), skippedChangedOwner: count("skipped_changed_owner"), skippedImportChanged: count("skipped_import_changed"), needsReview: count("paid_owner_lost_night_needs_review"), results }, null, 1));
+    console.log(JSON.stringify({ mode: "apply", planned: p.items.length, claimed: count("claimed"), alreadyOwned: count("already_owned"), skippedLiveHold: count("skipped_live_hold"), skippedPaidOwner: count("skipped_paid_owner"), restoredPaidOwner: count("restored_paid_owner"), skippedChangedOwner: count("skipped_changed_owner"), skippedImportChanged: count("skipped_import_changed"), importChangedAfterWrite: count("import_changed_after_write"), needsReview: count("paid_owner_lost_night_needs_review"), results }, null, 1));
     process.exitCode = flagged ? 4 : 0;
   }
   await deps.mongoose.disconnect();

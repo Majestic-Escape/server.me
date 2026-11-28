@@ -183,3 +183,149 @@ test("two live imports cover the same rowless nights: one finding and one plan i
     assert.deepStrictEqual([row && row.owner, after.offered, after.taken], [lowest, false, true]);
   }
 });
+
+// ---- The import changes between apply's read and its ledger write (owner repro on 345a1df: a cancelled
+// import was reported "claimed" and kept a row). After every write apply re-reads the import and releases a
+// night it no longer covers; these cases pause apply right before or right after that write.
+
+// A planned no_row repair: one import covers d - 1 .. d + 1; its row for d was lost before the fix.
+async function plannedNoRow(d) {
+  const host = await H.makeUser();
+  const listing = await H.makeListing(host);
+  const x = { host, listing, hostToken: H.userToken(host) };
+  const p = `/rep-chg-${++seq}.ics`;
+  const uid = `CHG-${seq}`;
+  ota.events(p, [ev(uid, d - 1, d + 2)]);
+  const conn = await H.api("POST", `/calendarSync/properties/${listing._id}/connections`, { token: x.hostToken, body: { channel: seq % 2 ? "AIRBNB" : "BOOKING", url: ota.url(p) } });
+  assert.strictEqual(conn.status, 201, JSON.stringify(conn.body));
+  await engine.syncConnection(conn.body.id, { force: true });
+  const imp = await Booking.findOne({ propertyId: listing._id, source: "ical" }).lean();
+  await BookingNight.deleteOne({ propertyId: listing._id, date: N(d), bookingId: imp._id });
+  return { x, imp, conn: conn.body.id, path: p, uid };
+}
+
+// Plan + apply for this night; `inInterval` runs once, just before or just after the repair's own write
+// for the import (create: a no_row night; updateOne: the in-place move of an expired hold's row).
+async function applyAround(s, d, { method, when, inInterval }) {
+  const deps = { Booking, BookingNight, inv };
+  const p = await repair.plan(deps, new Date());
+  p.items = p.items.filter((i) => i.propertyId === String(s.x.listing._id) && i.night === S.day(d));
+  assert.strictEqual(p.items.length, 1, "one planned item for the night");
+  const orig = BookingNight[method];
+  let seen = null;
+  BookingNight[method] = async function patched(...a) {
+    const mine = !seen && (method === "create"
+      ? a[0] && String(a[0].bookingId) === String(s.imp._id) && new Date(a[0].date).getTime() === N(d).getTime()
+      : a[1] && a[1].$set && String(a[1].$set.bookingId) === String(s.imp._id));
+    if (!mine) return orig.apply(this, a);
+    seen = {};
+    BookingNight[method] = orig; // the interval's own writers run unpatched
+    if (when === "before") Object.assign(seen, await inInterval());
+    const res = await orig.apply(this, a);
+    if (when === "after") { seen.afterWrite = await owner(s.x, d); Object.assign(seen, await inInterval()); }
+    return res;
+  };
+  let results;
+  try { results = await repair.applyPlan(deps, p, new Date()); } finally { BookingNight[method] = orig; }
+  assert.ok(seen, "the interval ran");
+  return { seen, result: results[0] };
+}
+const cancelImport = (s) => H.api("POST", `/calendarSync/connections/${s.conn}/disconnect`, { token: s.x.hostToken, body: { acknowledge: true, releaseBlocks: true } });
+async function shortenImport(s, d) { ota.events(s.path, [ev(s.uid, d - 1, d)]); await engine.syncConnection(s.conn, { force: true }); }
+async function agree(x, d) { const sc = await searchAndCheckDates(x, d); return { offered: sc.offered, taken: sc.taken, checkout: await checkout(x, d) }; }
+const FREE = { offered: true, taken: false, checkout: 201 };
+const TAKEN = { offered: false, taken: true, checkout: 409 };
+const rowsOf = (id) => BookingNight.countDocuments({ bookingId: id });
+
+test("repair: the import is CANCELLED after apply read it, before the ledger write: not claimed, no row for the cancelled import, all sources say free", async () => {
+  const d = 580;
+  const s = await plannedNoRow(d);
+  const { seen, result } = await applyAround(s, d, { method: "create", when: "before", inInterval: async () => ({ disconnect: (await cancelImport(s)).status }) });
+  const cancelled = await Booking.findById(s.imp._id).select("status").lean();
+  const final = { outcome: result.outcome, owner: await owner(s.x, d), importRows: await rowsOf(s.imp._id) };
+  const src = await agree(s.x, d);
+  console.log(`[changed: cancelled before write] ${JSON.stringify({ seen, cancelled, final, src })}`);
+  assert.strictEqual(seen.disconnect, 200);
+  assert.strictEqual(cancelled.status, "cancelled");
+  assert.deepStrictEqual(final, { outcome: "import_changed_after_write", owner: null, importRows: 0 });
+  assert.deepStrictEqual(src, FREE);
+});
+
+test("repair: the import is cancelled right AFTER the ledger write (before apply re-reads it): not claimed, no row left, all sources say free", async () => {
+  const d = 584;
+  const s = await plannedNoRow(d);
+  const { seen, result } = await applyAround(s, d, { method: "create", when: "after", inInterval: async () => ({ disconnect: (await cancelImport(s)).status }) });
+  const final = { outcome: result.outcome, owner: await owner(s.x, d), importRows: await rowsOf(s.imp._id) };
+  const src = await agree(s.x, d);
+  console.log(`[changed: cancelled after write] ${JSON.stringify({ seen, final, src })}`);
+  assert.strictEqual(seen.afterWrite.owner, String(s.imp._id), "the repair did write the row");
+  assert.deepStrictEqual(final, { outcome: "import_changed_after_write", owner: null, importRows: 0 });
+  assert.deepStrictEqual(src, FREE);
+});
+
+test("repair: the import is SHORTENED (still active) after apply read it, before the write: the night it no longer covers is freed; the nights it keeps stay its own", async () => {
+  const d = 588;
+  const s = await plannedNoRow(d);
+  const { result } = await applyAround(s, d, { method: "create", when: "before", inInterval: async () => { await shortenImport(s, d); return {}; } });
+  const imp = await Booking.findById(s.imp._id).select("status checkIn checkOut").lean();
+  const final = { outcome: result.outcome, owner: await owner(s.x, d), kept: await owner(s.x, d - 1) };
+  const src = await agree(s.x, d);
+  console.log(`[changed: shortened before write] ${JSON.stringify({ imp, final, src })}`);
+  assert.notStrictEqual(imp.status, "cancelled", "still a live import, only shorter");
+  assert.strictEqual(final.outcome, "import_changed_after_write");
+  assert.strictEqual(final.owner, null);
+  assert.strictEqual(final.kept && final.kept.owner, String(s.imp._id), "the night the import still covers stays its own");
+  assert.deepStrictEqual(src, FREE);
+});
+
+test("repair: import cancelled AND a guest checkout (live hold) in the interval before the write: the hold keeps the night, the cancelled import gets nothing", async () => {
+  const d = 592;
+  const s = await plannedNoRow(d);
+  const { seen, result } = await applyAround(s, d, { method: "create", when: "before", inInterval: async () => ({ disconnect: (await cancelImport(s)).status, guest: await checkout(s.x, d) }) });
+  const row = await owner(s.x, d);
+  const final = { outcome: result.outcome, importRows: await rowsOf(s.imp._id), holdLive: !!(row && row.expiresAt && new Date(row.expiresAt) > new Date()) };
+  const sc = await searchAndCheckDates(s.x, d);
+  console.log(`[changed: cancel + live hold before write] ${JSON.stringify({ seen, row, final, sc })}`);
+  assert.deepStrictEqual([seen.disconnect, seen.guest], [200, 201], "the guest's checkout took the freed night");
+  assert.deepStrictEqual(final, { outcome: "skipped_live_hold", importRows: 0, holdLive: true });
+  assert.strictEqual(sc.offered, false, "a live checkout hold is not offered to another guest");
+});
+
+test("repair: import cancelled and a guest checkout tried right AFTER the write: afterwards the night is free everywhere or held by that guest, never left with the cancelled import", async () => {
+  const d = 596;
+  const s = await plannedNoRow(d);
+  const { seen, result } = await applyAround(s, d, { method: "create", when: "after", inInterval: async () => ({ disconnect: (await cancelImport(s)).status, guestInInterval: await checkout(s.x, d) }) });
+  const final = { outcome: result.outcome, importRows: await rowsOf(s.imp._id) };
+  const row = await owner(s.x, d);
+  console.log(`[changed: cancel + checkout after write] ${JSON.stringify({ seen, final, row })}`);
+  assert.deepStrictEqual(final, { outcome: "import_changed_after_write", importRows: 0 });
+  if (seen.guestInInterval === 201) {
+    assert.ok(row && row.expiresAt, "the guest's live hold owns the night");
+  } else {
+    assert.strictEqual(row, null, "no row is left for the cancelled import");
+    assert.deepStrictEqual(await agree(s.x, d), FREE);
+  }
+});
+
+test("repair: expired-hold plan, import cancelled and the hold PAID before the in-place move: the paid guest keeps the night, permanent", async () => {
+  const d = 600;
+  const s = await plannedState(d);
+  const { seen, result } = await applyAround(s, d, { method: "updateOne", when: "before", inInterval: async () => { const r = await cancelImport(s); await markPaid(s.hold); return { disconnect: r.status }; } });
+  const row = await owner(s.x, d);
+  const src = await agree(s.x, d);
+  console.log(`[changed: cancel + paid before move] ${JSON.stringify({ seen, outcome: result.outcome, row, src })}`);
+  assert.strictEqual(result.outcome, "restored_paid_owner");
+  assert.deepStrictEqual(row, { owner: String(s.hold), expiresAt: null });
+  assert.deepStrictEqual(src, TAKEN);
+});
+
+test("repair: expired-hold plan, import cancelled before the in-place move, hold still unpaid: the row is not left with the cancelled import; the night is free everywhere", async () => {
+  const d = 604;
+  const s = await plannedState(d);
+  const { seen, result } = await applyAround(s, d, { method: "updateOne", when: "before", inInterval: async () => ({ disconnect: (await cancelImport(s)).status }) });
+  const final = { outcome: result.outcome, owner: await owner(s.x, d), importRows: await rowsOf(s.imp._id) };
+  const src = await agree(s.x, d);
+  console.log(`[changed: cancel before move] ${JSON.stringify({ seen, final, src })}`);
+  assert.deepStrictEqual(final, { outcome: "import_changed_after_write", owner: null, importRows: 0 });
+  assert.deepStrictEqual(src, FREE);
+});

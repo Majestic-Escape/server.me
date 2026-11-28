@@ -16,7 +16,9 @@
 //   unreadable event counts as present; reappearance resets the count.
 //   A stay that has already started is never released by disappearance
 //   alone (some feeds drop a stay at check-in): it ends at checkout, by an
-//   explicit CANCELLED, or by the host.
+//   explicit CANCELLED, or by the host. Not a stay: a started block under a
+//   provider's VERIFIED block marker (Airbnb "Not available") follows the
+//   rules above like a future event.
 //
 // Invariants:
 //   * one Booking row per (connection, key) — unique index + E11000 = "lost a race";
@@ -387,7 +389,10 @@ async function reconcile({ conn, listing, parsed, now = new Date(), mode = "incr
   // is judged on the property's own calendar (India is ahead of UTC: just
   // after midnight there, a check-in-day stay has started already).
   const localToday = Math.max(today, localDay(now.getTime(), DEFAULT_TZ));
-  const started = (r) => utcDayNumber(r.checkIn) <= localToday;
+  // A block under the provider's VERIFIED marker (Airbnb "Not available") is
+  // nobody's stay: when the host reopens started dates on the OTA they reopen
+  // here too (a stale one used to hold them until its checkout, months away).
+  const started = (r) => utcDayNumber(r.checkIn) <= localToday && !(verifiedMarker && r.external.kind === "blocked");
   const absent = live.filter((r) => !feedKeys.has(r.external.key) && !unreadable.has(r.external.uid) && !unreadable.has(r.external.key));
   // A possible echo whose nights are still covered — by what Majestic sends
   // this OTA or by another channel's live import — protects nothing on its
